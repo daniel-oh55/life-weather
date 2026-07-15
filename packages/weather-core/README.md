@@ -8,9 +8,12 @@ a common internal weather state, and other weather-domain calculations.
 - **Freshness** (`freshness.ts`): `classifyFreshness`, a pure, deterministic function that
   classifies an observation as `FRESH`, `STALE`, `FUTURE`, or `UNKNOWN` relative to a
   caller-supplied reference instant. Timestamps must be timezone-qualified ISO 8601
-  datetimes (UTC `Z` or a numeric offset); timezone-less, date-only, or non-ISO strings are
-  rejected — an invalid `referenceAt` throws `RangeError`, an invalid `observedAt` yields
-  `UNKNOWN`. It never reads the system clock (`referenceAt` is an input), throws
+  datetimes (UTC `Z` or a numeric offset); timezone-less, date-only, non-ISO, and impossible
+  calendar dates (e.g. `2026-02-30`, `2025-02-29`, `24:00:00`) are rejected — an invalid
+  `referenceAt` throws `RangeError`, an invalid `observedAt` yields `UNKNOWN`. It validates
+  each date/time component directly (month, day with the 4/100/400 leap-year rule, hour,
+  minute, second, offset) so `Date.parse`'s silent roll-over cannot slip through. It never
+  reads the system clock (`referenceAt` is an input), throws
   `RangeError` on invalid configuration, and does not mutate its input. The
   `FreshnessStatus` constant/type is defined locally.
 

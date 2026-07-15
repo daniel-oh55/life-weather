@@ -200,6 +200,40 @@ describe('classifyFreshness — absolute ISO datetime validation', () => {
   });
 });
 
+describe('classifyFreshness — non-existent calendar dates', () => {
+  const invalidDates = [
+    '2026-02-30T10:00:00Z', // Feb 30 never exists
+    '2026-04-31T10:00:00Z', // April has 30 days
+    '2025-02-29T10:00:00Z', // 2025 is not a leap year
+    '2026-01-01T24:00:00Z', // hour out of range
+    '2026-01-01T10:60:00Z', // minute out of range
+    '2026-01-01T10:00:60Z', // second out of range
+  ];
+
+  it.each(invalidDates)('throws RangeError for %s as referenceAt', (value) => {
+    expect(() =>
+      classifyFreshness({ ...base, referenceAt: value, observedAt: referenceAt }),
+    ).toThrow(RangeError);
+  });
+
+  it.each(invalidDates)('returns UNKNOWN for %s as observedAt', (value) => {
+    expect(classifyFreshness({ ...base, observedAt: value })).toBe(
+      FreshnessStatus.UNKNOWN,
+    );
+  });
+
+  it('accepts a valid leap day (2024-02-29)', () => {
+    expect(
+      classifyFreshness({
+        referenceAt: '2024-02-29T10:30:00Z',
+        observedAt: '2024-02-29T10:00:00Z',
+        staleAfterMinutes: 60,
+        futureToleranceMinutes: 5,
+      }),
+    ).toBe(FreshnessStatus.FRESH);
+  });
+});
+
 describe('classifyFreshness — purity', () => {
   it('does not mutate its input object', () => {
     const input: ClassifyFreshnessInput = {
