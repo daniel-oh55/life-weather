@@ -35,15 +35,38 @@ export const isoDate = z.iso.date();
 export const nonEmptyString = z.string().min(1);
 
 /**
- * A valid IANA time zone name (e.g. `Asia/Seoul`).
+ * A fixed UTC-offset time-zone identifier such as `+09:00`, `-05:30`, `+0900` or `+09`.
  *
- * Validity is checked by asking the runtime's `Intl` database to resolve the zone, so this
- * tracks the platform's IANA data without bundling a time-zone library. `Intl` throws a
- * `RangeError` for an unknown zone; constructing the formatter is a pure computation with no
- * external side effect. Rejects non-IANA strings such as `Seoul` and the empty string.
+ * ECMA-402 `Intl.DateTimeFormat` accepts these offset strings as a `timeZone`, but they are
+ * *not* named IANA zones — they carry no DST rules and no history of a region's past/future
+ * offset changes. We reject them so `ianaTimeZone` only admits named zones (see below). The
+ * pattern matches the offset forms V8/ECMA-402 actually accepts (`±HH`, `±HHMM`, `±HH:MM`)
+ * and never matches a named zone like `Asia/Seoul` or `Etc/GMT+9`.
+ */
+const UTC_OFFSET_TIME_ZONE = /^[+-]\d{2}(?::?\d{2})?$/;
+
+/**
+ * A valid **named** IANA time zone (e.g. `Asia/Seoul`, `UTC`).
+ *
+ * `WeatherLocation.timezone` must be a named zone so consumers can apply the region's DST and
+ * its historical/future offset rules — a fixed UTC offset (`+09:00`) cannot. Validation has
+ * two steps:
+ *
+ * 1. Fixed UTC-offset identifiers are rejected explicitly (see `UTC_OFFSET_TIME_ZONE`), since
+ *    modern `Intl` would otherwise resolve them.
+ * 2. Any other value is checked by asking the runtime's `Intl` database to resolve the zone,
+ *    so this tracks the platform's IANA data without bundling a time-zone library. `Intl`
+ *    throws a `RangeError` for an unknown zone; constructing the formatter is a pure
+ *    computation with no external side effect.
+ *
+ * Rejects the empty string, offset identifiers, and non-IANA strings such as `Seoul`.
  */
 export const ianaTimeZone = z.string().min(1).refine(
   (value) => {
+    if (UTC_OFFSET_TIME_ZONE.test(value)) {
+      return false;
+    }
+
     try {
       new Intl.DateTimeFormat('en-US', { timeZone: value });
       return true;
@@ -51,7 +74,7 @@ export const ianaTimeZone = z.string().min(1).refine(
       return false;
     }
   },
-  { message: 'must be a valid IANA time zone' },
+  { message: 'must be a valid named IANA time zone' },
 );
 
 // ---------------------------------------------------------------------------

@@ -120,16 +120,26 @@ describe('numeric range schemas', () => {
 });
 
 describe('ianaTimeZone', () => {
-  it.each(['Asia/Seoul', 'Asia/Tokyo', 'America/New_York'])(
-    'accepts the valid IANA zone %s',
+  it.each(['Asia/Seoul', 'Asia/Tokyo', 'America/New_York', 'UTC'])(
+    'accepts the valid named IANA zone %s',
     (zone) => {
       expect(ianaTimeZone.safeParse(zone).success).toBe(true);
     },
   );
 
-  it.each(['Not/AZone', 'Seoul', ''])('rejects the invalid zone %j', (zone) => {
-    expect(ianaTimeZone.safeParse(zone).success).toBe(false);
-  });
+  it.each(['+09:00', '-05:30', '+0900'])(
+    'rejects the fixed UTC-offset identifier %j',
+    (zone) => {
+      expect(ianaTimeZone.safeParse(zone).success).toBe(false);
+    },
+  );
+
+  it.each(['Seoul', 'Not/AZone', ''])(
+    'rejects the invalid zone %j',
+    (zone) => {
+      expect(ianaTimeZone.safeParse(zone).success).toBe(false);
+    },
+  );
 });
 
 describe('weatherLocation', () => {
@@ -194,6 +204,12 @@ describe('weatherLocation', () => {
     expect(weatherLocation.safeParse({ ...seoul, timezone: 'Seoul' }).success).toBe(
       false,
     );
+  });
+
+  it('rejects a fixed UTC-offset timezone', () => {
+    expect(
+      weatherLocation.safeParse({ ...seoul, timezone: '+09:00' }).success,
+    ).toBe(false);
   });
 
   it('strips unknown extra fields such as kmaGrid', () => {
