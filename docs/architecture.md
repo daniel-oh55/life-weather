@@ -9,10 +9,12 @@
   외부 공공데이터 API를 직접 호출하지 않습니다 (아래 참고).
 - `apps/api` — Hono 기반 백엔드. 외부 공공데이터 API 호출, API 키 보관, 응답 정규화를 담당할
   위치입니다. **현재 상태**: `GET /health`만 존재하며, 실제 외부 호출은 아직 없습니다.
-- `packages/contracts` — 모바일과 API가 공유할 요청/응답 타입의 위치입니다. **현재 상태**:
-  컴파일 가능한 빈 스켈레톤만 존재합니다.
+- `packages/contracts` — 모바일과 API가 공유할 정규화 요청/응답 계약의 위치입니다. **현재
+  상태**: PR #2에서 Zod 4 기반 공유 기상 데이터 계약을 정의했습니다. 자세한 내용은
+  [contracts.md](./contracts.md) 참고.
 - `packages/weather-core` — 공급자별 날씨 코드를 공통 날씨 상태로 정규화하고 기상 도메인 계산을
-  수행할 위치입니다. **현재 상태**: 스켈레톤만 존재합니다.
+  수행할 위치입니다. **현재 상태**: PR #2에서 결정론적 freshness 판정 함수(`classifyFreshness`)
+  하나를 구현했습니다. 코드 매핑 등 Provider 정규화는 아직 미구현입니다.
 - `packages/lifestyle-engine` — 생활 날씨 지수(우산, 마스크, 옷차림 등)를 순수 함수로 계산할
   위치입니다. **현재 상태**: 스켈레톤만 존재합니다.
 - `packages/config` — 비밀이 아닌 공유 설정/상수의 위치입니다. **현재 상태**: 스켈레톤만
@@ -44,6 +46,29 @@
 우산/마스크/옷차림/빨래/세차/운동/출퇴근 등 생활 날씨 판단 로직은 `packages/lifestyle-engine`에
 순수 TypeScript 함수로 구현할 예정입니다. React Native나 Node.js 런타임에 종속되지 않게 하여,
 모바일과 API 양쪽에서 동일한 로직을 재사용하고 독립적으로 테스트할 수 있도록 합니다.
+
+## 패키지 의존 방향 (PR #2 기준)
+
+패키지 의존은 아래 방향만 허용하며, **순환 의존을 금지**합니다.
+
+현재 상태:
+
+```text
+contracts    → zod
+weather-core → (PR #2에서는 런타임 의존 없음)
+```
+
+향후 허용 방향:
+
+```text
+apps/api          → contracts, weather-core
+apps/mobile       → contracts
+lifestyle-engine  → contracts
+```
+
+`weather-core`는 이번 PR에서 `contracts`에 의존하지 않습니다. 생활지수 엔진이 실제로 freshness
+기능을 필요로 할 때에만 `weather-core` 의존을 추가합니다. 불필요한 workspace 의존을 미리 추가하지
+않습니다.
 
 ## PR #1 시점의 실제 상태 요약
 
