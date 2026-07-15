@@ -1,0 +1,17 @@
+{
+  "name": "life-weather",
+  "private": true,
+  "version": "0.0.0",
+  "engines": {
+    "node": "22.x"
+  },
+  "packageManager": "pnpm@11.13.0",
+  "scripts": {
+    "dev:mobile": "pnpm --filter @life-weather/mobile dev",
+    "dev:api": "pnpm --filter @life-weather/api dev",
+    "lint": "pnpm -r --if-present run lint",
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "test": "pnpm -r --if-present run test",
+    "check": "pnpm run lint && pnpm run typecheck && pnpm run test"
+  }
+}
