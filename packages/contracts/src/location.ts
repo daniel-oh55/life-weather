@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { latitude, longitude, nonEmptyString } from './common';
+import { ianaTimeZone, latitude, longitude, nonEmptyString } from './common';
 
 /**
  * A location the weather data describes.
@@ -25,8 +25,8 @@ export const weatherLocation = z.object({
   adminArea3: z.string().nullable(),
   latitude,
   longitude,
-  /** Non-empty IANA timezone name (e.g. `Asia/Seoul`). */
-  timezone: nonEmptyString,
+  /** Valid IANA timezone name (e.g. `Asia/Seoul`). */
+  timezone: ianaTimeZone,
 });
 
 export type WeatherLocation = z.infer<typeof weatherLocation>;

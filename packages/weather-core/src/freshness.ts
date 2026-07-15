@@ -9,6 +9,31 @@
 const MINUTE_IN_MS = 60_000;
 
 /**
+ * ISO 8601 datetime with a **required** timezone designator: a date, `T`, a `HH:MM:SS` time
+ * (optional fractional seconds), then `Z` or a numeric `±HH:MM` offset. This rejects
+ * timezone-less local datetimes (`2026-07-15T10:00:00`), date-only strings (`2026-07-15`),
+ * and non-ISO formats (`07/15/2026 10:00`).
+ */
+const ABSOLUTE_ISO_DATETIME =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+/**
+ * Parse an absolute ISO datetime to epoch milliseconds, or return `null` if it is not a
+ * timezone-qualified ISO datetime or does not denote a real calendar instant.
+ *
+ * The format (and required timezone) is checked first, then `Date.parse` both computes the
+ * absolute instant — independent of the host timezone/locale because the offset is explicit —
+ * and rejects impossible calendar dates (e.g. month 13) by returning `NaN`.
+ */
+function parseAbsoluteInstantMs(value: string): number | null {
+  if (!ABSOLUTE_ISO_DATETIME.test(value)) {
+    return null;
+  }
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/**
  * The freshness of an observation relative to a reference instant.
  *
  * - `FRESH`   — recent enough to use.
@@ -47,7 +72,8 @@ function assertNonNegativeFinite(value: number, label: string): void {
  * Classify how fresh `observedAt` is relative to `referenceAt`.
  *
  * @throws RangeError if `staleAfterMinutes` or `futureToleranceMinutes` is negative, NaN or
- *   infinite, or if `referenceAt` cannot be parsed as a date.
+ *   infinite, or if `referenceAt` is not a timezone-qualified ISO 8601 datetime. An
+ *   `observedAt` that is `null` or not such a datetime yields `UNKNOWN`.
  */
 export function classifyFreshness(input: ClassifyFreshnessInput): FreshnessStatus {
   const { observedAt, referenceAt, staleAfterMinutes, futureToleranceMinutes } =
@@ -56,17 +82,19 @@ export function classifyFreshness(input: ClassifyFreshnessInput): FreshnessStatu
   assertNonNegativeFinite(staleAfterMinutes, 'staleAfterMinutes');
   assertNonNegativeFinite(futureToleranceMinutes, 'futureToleranceMinutes');
 
-  const referenceMs = Date.parse(referenceAt);
-  if (Number.isNaN(referenceMs)) {
-    throw new RangeError(`referenceAt is not a valid date: ${referenceAt}`);
+  const referenceMs = parseAbsoluteInstantMs(referenceAt);
+  if (referenceMs === null) {
+    throw new RangeError(
+      `referenceAt must be an ISO 8601 datetime with a timezone: ${referenceAt}`,
+    );
   }
 
   if (observedAt === null) {
     return FreshnessStatus.UNKNOWN;
   }
 
-  const observedMs = Date.parse(observedAt);
-  if (Number.isNaN(observedMs)) {
+  const observedMs = parseAbsoluteInstantMs(observedAt);
+  if (observedMs === null) {
     return FreshnessStatus.UNKNOWN;
   }
 

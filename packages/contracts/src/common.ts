@@ -34,6 +34,26 @@ export const isoDate = z.iso.date();
 /** A non-empty string. Used for opaque identifiers and human-readable labels. */
 export const nonEmptyString = z.string().min(1);
 
+/**
+ * A valid IANA time zone name (e.g. `Asia/Seoul`).
+ *
+ * Validity is checked by asking the runtime's `Intl` database to resolve the zone, so this
+ * tracks the platform's IANA data without bundling a time-zone library. `Intl` throws a
+ * `RangeError` for an unknown zone; constructing the formatter is a pure computation with no
+ * external side effect. Rejects non-IANA strings such as `Seoul` and the empty string.
+ */
+export const ianaTimeZone = z.string().min(1).refine(
+  (value) => {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: value });
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  { message: 'must be a valid IANA time zone' },
+);
+
 // ---------------------------------------------------------------------------
 // Numeric ranges
 //

@@ -129,6 +129,77 @@ describe('classifyFreshness — invalid input', () => {
   });
 });
 
+describe('classifyFreshness — absolute ISO datetime validation', () => {
+  it('throws RangeError for a referenceAt with no timezone', () => {
+    expect(() =>
+      classifyFreshness({
+        ...base,
+        referenceAt: '2026-07-15T12:00:00',
+        observedAt: '2026-07-15T11:30:00Z',
+      }),
+    ).toThrow(RangeError);
+  });
+
+  it('returns UNKNOWN for an observedAt with no timezone', () => {
+    expect(
+      classifyFreshness({ ...base, observedAt: '2026-07-15T11:30:00' }),
+    ).toBe(FreshnessStatus.UNKNOWN);
+  });
+
+  it('throws RangeError for a date-only referenceAt', () => {
+    expect(() =>
+      classifyFreshness({
+        ...base,
+        referenceAt: '2026-07-15',
+        observedAt: '2026-07-15T11:30:00Z',
+      }),
+    ).toThrow(RangeError);
+  });
+
+  it('returns UNKNOWN for a date-only observedAt', () => {
+    expect(classifyFreshness({ ...base, observedAt: '2026-07-15' })).toBe(
+      FreshnessStatus.UNKNOWN,
+    );
+  });
+
+  it('rejects a non-ISO string that Date.parse would otherwise accept', () => {
+    // Date.parse('07/15/2026 10:00') succeeds in V8, but it has no timezone and is not ISO.
+    expect(() =>
+      classifyFreshness({
+        ...base,
+        referenceAt: '07/15/2026 10:00',
+        observedAt: '2026-07-15T11:30:00Z',
+      }),
+    ).toThrow(RangeError);
+    expect(
+      classifyFreshness({ ...base, observedAt: '07/15/2026 10:00' }),
+    ).toBe(FreshnessStatus.UNKNOWN);
+  });
+
+  it('accepts a UTC Z referenceAt and observedAt', () => {
+    expect(
+      classifyFreshness({
+        referenceAt: '2026-07-15T12:00:00Z',
+        observedAt: '2026-07-15T11:30:00Z',
+        staleAfterMinutes: 60,
+        futureToleranceMinutes: 5,
+      }),
+    ).toBe(FreshnessStatus.FRESH);
+  });
+
+  it('accepts a negative UTC offset', () => {
+    // 2026-07-15T22:30:00-05:00 === 2026-07-16T03:30:00Z.
+    expect(
+      classifyFreshness({
+        referenceAt: '2026-07-16T04:00:00Z',
+        observedAt: '2026-07-15T22:30:00-05:00',
+        staleAfterMinutes: 60,
+        futureToleranceMinutes: 5,
+      }),
+    ).toBe(FreshnessStatus.FRESH);
+  });
+});
+
 describe('classifyFreshness — purity', () => {
   it('does not mutate its input object', () => {
     const input: ClassifyFreshnessInput = {

@@ -131,12 +131,32 @@ Provider는 이 둘을 절대 혼동하지 않아야 합니다.
 missing 표기와 정확히 대응해야 하기 때문입니다. 리스트 섹션은 "조회 성공했지만 데이터 없음"이
 정당하므로, "missing인데 데이터가 있음"만 모순으로 봅니다.
 
+### section 배열의 중복 검사와 UNKNOWN 축약
+
+`SourceMetadata.sections`와 `missingSections`는 forward-compatible 매핑 **이전의 raw 문자열**
+기준으로 중복을 검사합니다. compatible 변환을 먼저 적용하면 서로 다른 신규 문자열(예: `UV`,
+`POLLEN`)이 모두 `UNKNOWN`이 되어 잘못 중복으로 거부되기 때문입니다. 규칙:
+
+- 요소는 반드시 문자열이어야 합니다(숫자·null·boolean·object 거부).
+- 동일한 raw 문자열이 중복되면 거부합니다. 서로 다른 신규 문자열은 허용합니다.
+- 검사 후 각 요소를 compatible enum으로 매핑하고, `UNKNOWN` 충돌은 하나로 축약합니다. 예:
+  `['UV', 'POLLEN']` → `['UNKNOWN']`, `['HOURLY', 'UV']` → `['HOURLY', 'UNKNOWN']`.
+- `SourceMetadata.sections`는 최소 한 항목이 필요하고, `missingSections`는 빈 배열을 허용합니다.
+
+### DailyForecast 온도 불변식
+
+`minimumTemperatureCelsius`와 `maximumTemperatureCelsius`가 **모두 null이 아닐 때** 최저기온이
+최고기온보다 크면 거부합니다. 둘 중 하나라도 `null`이면 검사하지 않습니다.
+
 ## 날짜·시간 형식
 
 - **절대 시각**(`isoDateTime`): timezone offset이 반드시 있는 ISO 8601. UTC `Z` 형태와 `+09:00`
   같은 숫자 offset을 허용합니다. timezone이 없는 로컬 datetime은 거부합니다.
   - 서버의 **정상 출력 규범은 UTC `Z` 형태**입니다. (예: `2026-07-15T01:00:00Z`)
 - **지역 일자**(`isoDate`): ISO 8601 `YYYY-MM-DD`.
+- **timezone**(`ianaTimeZone`): `WeatherLocation.timezone`은 유효한 IANA timezone 이름이어야
+  합니다(예: `Asia/Seoul`). 런타임 `Intl`의 timezone 데이터베이스로 검증하며(별도 timezone
+  라이브러리 미사용), `Seoul` 같은 비-IANA 문자열이나 빈 문자열은 거부합니다.
 - 계약에는 `Date` 객체를 포함하지 않으며, `z.coerce`를 사용하지 않습니다. 시각은 항상 문자열로
   전달됩니다.
 

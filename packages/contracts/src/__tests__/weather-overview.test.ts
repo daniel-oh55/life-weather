@@ -155,3 +155,48 @@ describe('WeatherOverview — contradictory payloads are rejected', () => {
     expect(issuePaths(overview)).toContain('missingSections');
   });
 });
+
+describe('WeatherOverview — missingSections (forward-compatible section array)', () => {
+  // Build a raw payload whose missingSections carries arbitrary (possibly unknown) values.
+  function withMissing(missingSections: unknown[]) {
+    return weatherOverview.safeParse({ ...fullOverview(), missingSections });
+  }
+
+  it('accepts distinct unknown sections without a false duplicate error', () => {
+    const result = withMissing(['UV', 'POLLEN']);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Both unknowns collapse to a single UNKNOWN, which invariant checks ignore.
+      expect(result.data.missingSections).toEqual(['UNKNOWN']);
+    }
+  });
+
+  it('collapses a real UNKNOWN together with an unknown string', () => {
+    const result = withMissing(['UNKNOWN', 'UV']);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.missingSections).toEqual(['UNKNOWN']);
+    }
+  });
+
+  it('rejects a duplicate raw string (known or unknown)', () => {
+    // ['HOURLY','HOURLY'] would otherwise contradict the empty-hourly rule; use empty hourly.
+    const dupKnown = weatherOverview.safeParse({
+      ...fullOverview(),
+      hourly: [],
+      missingSections: ['HOURLY', 'HOURLY'],
+    });
+    expect(dupKnown.success).toBe(false);
+    expect(withMissing(['UV', 'UV']).success).toBe(false);
+  });
+
+  it('rejects non-string elements', () => {
+    expect(withMissing([123]).success).toBe(false);
+    expect(withMissing([null]).success).toBe(false);
+    expect(withMissing([true]).success).toBe(false);
+  });
+
+  it('allows an empty missingSections array', () => {
+    expect(withMissing([]).success).toBe(true);
+  });
+});

@@ -19,6 +19,37 @@ import {
 import { weatherLocation } from './location';
 
 /**
+ * Build a schema for a list of {@link weatherDataSection} values.
+ *
+ * Duplicate detection runs on the **raw** input strings *before* the forward-compatible
+ * mapping. Otherwise two distinct unknown sections (e.g. `'UV'`, `'POLLEN'`) would both map
+ * to `UNKNOWN` and be wrongly rejected as duplicates. After the raw check, each element is
+ * mapped through the compatible enum and any fallback (`UNKNOWN`) collisions collapse to a
+ * single entry, so `['UV', 'POLLEN']` → `['UNKNOWN']`. Non-string elements (numbers, `null`,
+ * booleans, objects) are rejected. The output type is `WeatherDataSection[]`.
+ *
+ * @param nonEmpty require at least one element (used by `sourceMetadata.sections`).
+ */
+function weatherSectionArray(nonEmpty: boolean) {
+  const rawArray = nonEmpty ? z.array(z.string()).min(1) : z.array(z.string());
+
+  return rawArray
+    .superRefine((rawSections, ctx) => {
+      if (new Set(rawSections).size !== rawSections.length) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'must not contain duplicate sections',
+        });
+      }
+    })
+    .transform((rawSections) => [
+      ...new Set<WeatherDataSection>(
+        rawSections.map((section) => weatherDataSection.compatible.parse(section)),
+      ),
+    ]);
+}
+
+/**
  * Provenance for a slice of the weather payload.
  *
  * `sourceId` is an app-internal identifier — provider-native source codes are not exposed
@@ -29,13 +60,8 @@ import { weatherLocation } from './location';
 export const sourceMetadata = z.object({
   sourceId: nonEmptyString,
   provider: sourceProvider.compatible,
-  /** Sections this source contributed; at least one, no duplicates. */
-  sections: z
-    .array(weatherDataSection.compatible)
-    .min(1)
-    .refine((sections) => new Set(sections).size === sections.length, {
-      message: 'sections must not contain duplicate values',
-    }),
+  /** Sections this source contributed; at least one, no duplicate raw values. */
+  sections: weatherSectionArray(true),
   issuedAt: isoDateTime.nullable(),
   observedAt: isoDateTime.nullable(),
   fetchedAt: isoDateTime,
@@ -100,16 +126,32 @@ export type ForecastPeriod = z.infer<typeof forecastPeriod>;
  * `morning`/`afternoon`. All three periods may be `null` — a day with temperatures but no
  * condition data.
  */
-export const dailyForecast = z.object({
-  date: isoDate,
-  minimumTemperatureCelsius: temperatureCelsius.nullable(),
-  maximumTemperatureCelsius: temperatureCelsius.nullable(),
-  overall: forecastPeriod.nullable(),
-  morning: forecastPeriod.nullable(),
-  afternoon: forecastPeriod.nullable(),
-  sunriseAt: isoDateTime.nullable(),
-  sunsetAt: isoDateTime.nullable(),
-});
+export const dailyForecast = z
+  .object({
+    date: isoDate,
+    minimumTemperatureCelsius: temperatureCelsius.nullable(),
+    maximumTemperatureCelsius: temperatureCelsius.nullable(),
+    overall: forecastPeriod.nullable(),
+    morning: forecastPeriod.nullable(),
+    afternoon: forecastPeriod.nullable(),
+    sunriseAt: isoDateTime.nullable(),
+    sunsetAt: isoDateTime.nullable(),
+  })
+  .superRefine((day, ctx) => {
+    // When both temperatures are present, the minimum must not exceed the maximum.
+    if (
+      day.minimumTemperatureCelsius !== null &&
+      day.maximumTemperatureCelsius !== null &&
+      day.minimumTemperatureCelsius > day.maximumTemperatureCelsius
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['minimumTemperatureCelsius'],
+        message:
+          'minimumTemperatureCelsius must not exceed maximumTemperatureCelsius',
+      });
+    }
+  });
 
 export type DailyForecast = z.infer<typeof dailyForecast>;
 
@@ -132,22 +174,15 @@ export const weatherOverview = z
       daily: z.array(dailyAirQualityForecast),
     }),
     alerts: z.array(weatherAlert),
-    missingSections: z.array(weatherDataSection.compatible),
+    // Raw-duplicate detection and UNKNOWN collapse happen in the field schema; by the time
+    // this superRefine runs, missingSections is already a deduplicated WeatherDataSection[].
+    missingSections: weatherSectionArray(false),
     sources: z.array(sourceMetadata),
   })
   .superRefine((overview, ctx) => {
     const missingSet = new Set<WeatherDataSection>(overview.missingSections);
     const isMissing = (section: WeatherDataSection): boolean =>
       missingSet.has(section);
-
-    // No duplicate sections in missingSections.
-    if (overview.missingSections.length !== missingSet.size) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['missingSections'],
-        message: 'missingSections must not contain duplicate sections',
-      });
-    }
 
     // current <-> CURRENT (biconditional).
     if (overview.current === null && !isMissing('CURRENT')) {

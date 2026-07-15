@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import {
+  ianaTimeZone,
   isoDate,
   isoDateTime,
   latitude,
@@ -118,6 +119,19 @@ describe('numeric range schemas', () => {
   });
 });
 
+describe('ianaTimeZone', () => {
+  it.each(['Asia/Seoul', 'Asia/Tokyo', 'America/New_York'])(
+    'accepts the valid IANA zone %s',
+    (zone) => {
+      expect(ianaTimeZone.safeParse(zone).success).toBe(true);
+    },
+  );
+
+  it.each(['Not/AZone', 'Seoul', ''])('rejects the invalid zone %j', (zone) => {
+    expect(ianaTimeZone.safeParse(zone).success).toBe(false);
+  });
+});
+
 describe('weatherLocation', () => {
   const seoul: WeatherLocation = {
     id: 'loc_seoul_jung',
@@ -172,6 +186,12 @@ describe('weatherLocation', () => {
 
   it('rejects a lowercase country code', () => {
     expect(weatherLocation.safeParse({ ...seoul, countryCode: 'kr' }).success).toBe(
+      false,
+    );
+  });
+
+  it('rejects an invalid IANA timezone', () => {
+    expect(weatherLocation.safeParse({ ...seoul, timezone: 'Seoul' }).success).toBe(
       false,
     );
   });
