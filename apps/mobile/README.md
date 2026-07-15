@@ -1,56 +1,34 @@
-# Welcome to your Expo app 👋
+# @life-weather/mobile
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Life Weather의 모바일 앱입니다. Expo SDK 57 + Expo Router 기반이며, Expo Go가 아닌
+**Development Build**(`expo-dev-client`) 방식으로 개발합니다.
 
-## Get started
+## 실행
 
-1. Install dependencies
-
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+의존성 설치는 항상 **저장소 루트**에서 합니다. 이 디렉터리에서 개별적으로 install을 실행하지
+마세요 — lockfile은 루트에 하나만 존재해야 합니다.
 
 ```bash
-npm run reset-project
+pnpm install
+pnpm dev:mobile
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+`pnpm dev:mobile`은 `expo start --dev-client`를 실행합니다.
 
-### Other setup steps
+## 코드 위치
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+- 화면과 라우팅: `apps/mobile/src/app` (Expo Router file-based routing)
+- 라우트가 아닌 코드는 `src` 아래의 다른 디렉터리에 둡니다.
 
-## Learn more
+## Development Build
 
-To learn more about developing your project with Expo, look at the following resources:
+- `eas.json`에 최소한의 `development` 프로파일이 정의되어 있습니다.
+- 실제 Development Build(로컬 또는 EAS)는 Android package name과 EAS project ID가 확정된 후
+  진행합니다. 현재는 둘 다 미확정 상태입니다.
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+## 주의
 
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+- Continuous Native Generation을 유지합니다. `android/`, `ios/` 디렉터리는 로컬에서
+  `expo prebuild`로 생성할 수 있지만 **커밋하지 않습니다** (`.gitignore`에 포함됨).
+- 기상청/에어코리아 등 외부 API 키를 이 앱에 절대 추가하지 마세요. 외부 API 호출은
+  `apps/api`를 통해서만 합니다.
