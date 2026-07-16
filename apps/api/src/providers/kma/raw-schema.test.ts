@@ -152,25 +152,37 @@ describe('kmaForecastItemSchema — time validation (HHmm)', () => {
   });
 });
 
-describe('kmaForecastItemSchema — category validation', () => {
-  it('rejects an empty category', () => {
-    expect(kmaForecastItemSchema.safeParse({ ...validShortForecastItem(), category: '' }).success).toBe(
-      false,
-    );
+describe('kmaForecastItemSchema — category validation (ASCII uppercase/digit only)', () => {
+  const acceptedCategories = ['TMP', 'RN1', 'ZZZ', 'A', 'A1B2', 'PTY', 'SKY'];
+
+  it.each(acceptedCategories)('accepts the official/future code shape %s', (category) => {
+    expect(kmaForecastItemSchema.safeParse({ ...validShortForecastItem(), category }).success).toBe(true);
   });
 
-  it('rejects a whitespace-only category', () => {
-    expect(kmaForecastItemSchema.safeParse({ ...validShortForecastItem(), category: '   ' }).success).toBe(
-      false,
-    );
+  const rejectedCategories: readonly [string, string][] = [
+    ['empty string', ''],
+    ['single space', ' '],
+    ['leading space', ' TMP'],
+    ['trailing space', 'TMP '],
+    ['whitespace only', '   '],
+    ['internal space', 'T MP'],
+    ['internal tab', 'T\tMP'],
+    ['internal newline', 'T\nMP'],
+    ['leading control char', '\x1fTMP'],
+    ['lowercase', 'tmp'],
+    ['mixed case', 'Tmp'],
+    ['hyphen', 'TMP-1'],
+    ['underscore', 'TMP_1'],
+    ['hangul', '기온'],
+  ];
+
+  it.each(rejectedCategories)('rejects a category with %s', (_label, category) => {
+    expect(kmaForecastItemSchema.safeParse({ ...validShortForecastItem(), category }).success).toBe(false);
   });
 
-  it('rejects a category with surrounding whitespace rather than trimming it', () => {
-    expect(kmaForecastItemSchema.safeParse({ ...validShortForecastItem(), category: ' TMP' }).success).toBe(
-      false,
-    );
-    expect(kmaForecastItemSchema.safeParse({ ...validShortForecastItem(), category: 'TMP ' }).success).toBe(
-      false,
+  it('still accepts an unknown/future code as long as it is [A-Z0-9]+ (not an enum)', () => {
+    expect(kmaForecastItemSchema.safeParse({ ...validShortForecastItem(), category: 'QWERTY9' }).success).toBe(
+      true,
     );
   });
 });
@@ -240,11 +252,33 @@ describe('kmaForecastItemSchema — grid coordinates (nx, ny)', () => {
   });
 });
 
-describe('kmaResponseHeaderSchema', () => {
+describe('kmaResponseHeaderSchema — resultCode (exactly two digits)', () => {
   it('accepts string resultCode / resultMsg', () => {
     expect(
       kmaResponseHeaderSchema.safeParse({ resultCode: '00', resultMsg: 'NORMAL_SERVICE' }).success,
     ).toBe(true);
+  });
+
+  const acceptedCodes = ['00', '03', '30', '99', '01', '22'];
+
+  it.each(acceptedCodes)('accepts the two-digit code %s (structural, not an enum)', (resultCode) => {
+    expect(kmaResponseHeaderSchema.safeParse({ resultCode, resultMsg: 'X' }).success).toBe(true);
+  });
+
+  const rejectedCodes: readonly [string, string][] = [
+    ['empty string', ''],
+    ['one digit', '0'],
+    ['three digits', '000'],
+    ['letters', 'AB'],
+    ['surrounding spaces', ' 03 '],
+    ['trailing space', '03 '],
+    ['leading space', ' 03'],
+    ['signed', '+3'],
+    ['non-digit', '0x'],
+  ];
+
+  it.each(rejectedCodes)('rejects a malformed resultCode with %s', (_label, resultCode) => {
+    expect(kmaResponseHeaderSchema.safeParse({ resultCode, resultMsg: 'X' }).success).toBe(false);
   });
 
   it('rejects a non-string resultCode (no numeric coercion of the success code)', () => {
@@ -292,6 +326,87 @@ describe('kmaForecastBodySchema — pagination', () => {
   it('does not assume totalCount equals the current page item count', () => {
     // One item on the page, but totalCount 809 — valid, no cross-field equality assertion.
     expect(kmaForecastBodySchema.safeParse(validBody()).success).toBe(true);
+  });
+
+  it('accepts a normal full page (numOfRows 100, totalCount 809, 3 items)', () => {
+    const body = {
+      ...validBody(),
+      numOfRows: 100,
+      totalCount: 809,
+      items: {
+        item: [validShortForecastItem(), validUltraShortForecastItem(), validShortForecastItem()],
+      },
+    };
+    expect(kmaForecastBodySchema.safeParse(body).success).toBe(true);
+  });
+
+  it('accepts a last page holding fewer items than numOfRows (2 items, numOfRows 100)', () => {
+    const body = {
+      ...validBody(),
+      numOfRows: 100,
+      totalCount: 809,
+      items: { item: [validShortForecastItem(), validUltraShortForecastItem()] },
+    };
+    expect(kmaForecastBodySchema.safeParse(body).success).toBe(true);
+  });
+
+  it('rejects an obvious contradiction: totalCount 0 but items present', () => {
+    const body = { ...validBody(), totalCount: 0, items: { item: [validShortForecastItem()] } };
+    expect(kmaForecastBodySchema.safeParse(body).success).toBe(false);
+  });
+
+  it('rejects item count greater than numOfRows', () => {
+    const body = {
+      ...validBody(),
+      numOfRows: 1,
+      totalCount: 809,
+      items: { item: [validShortForecastItem(), validUltraShortForecastItem()] },
+    };
+    expect(kmaForecastBodySchema.safeParse(body).success).toBe(false);
+  });
+
+  it('rejects item count greater than totalCount', () => {
+    const body = {
+      ...validBody(),
+      numOfRows: 100,
+      totalCount: 1,
+      items: { item: [validShortForecastItem(), validUltraShortForecastItem()] },
+    };
+    expect(kmaForecastBodySchema.safeParse(body).success).toBe(false);
+  });
+
+  it('accepts totalCount greater than the page item count (normal pagination)', () => {
+    const body = { ...validBody(), numOfRows: 100, totalCount: 809, items: { item: [validShortForecastItem()] } };
+    expect(kmaForecastBodySchema.safeParse(body).success).toBe(true);
+  });
+
+  it('accepts totalCount > 0 with an empty item array (no official sample; allowed defensively)', () => {
+    // Policy: there is no confirmed official empty-success-page sample, so this is allowed
+    // defensively (not a merge-blocking rule) and re-evaluated against a real response in PR #5.
+    const body = { ...validBody(), numOfRows: 100, totalCount: 809, items: { item: [] } };
+    expect(kmaForecastBodySchema.safeParse(body).success).toBe(true);
+  });
+});
+
+describe('kmaForecastBodySchema — dataType (literal "JSON")', () => {
+  function validBody() {
+    return {
+      dataType: 'JSON',
+      pageNo: 1,
+      numOfRows: 12,
+      totalCount: 809,
+      items: { item: [validShortForecastItem()] },
+    };
+  }
+
+  it('accepts dataType "JSON"', () => {
+    expect(kmaForecastBodySchema.safeParse(validBody()).success).toBe(true);
+  });
+
+  const rejectedDataTypes = ['XML', '', 'json', 'UNKNOWN', 'Json', 'JSON '];
+
+  it.each(rejectedDataTypes)('rejects dataType %o', (dataType) => {
+    expect(kmaForecastBodySchema.safeParse({ ...validBody(), dataType }).success).toBe(false);
   });
 });
 

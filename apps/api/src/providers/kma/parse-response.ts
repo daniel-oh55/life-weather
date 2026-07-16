@@ -9,19 +9,23 @@
  *
  * Decision order:
  *
- * 1. **Not even a KMA envelope** — no valid `response.header` (`resultCode`/`resultMsg` strings)
- *    → `INVALID_RESPONSE`.
- * 2. **Valid header, non-success `resultCode`** → `UPSTREAM_ERROR`, preserving the raw
- *    `resultCode`/`resultMsg`. This covers `03` (NODATA_ERROR) and every other official error
+ * 1. **Not even a KMA envelope** — no valid `response.header` (a two-digit `resultCode` and a
+ *    `resultMsg` string) → `INVALID_RESPONSE`. A structurally malformed `resultCode` (e.g. `''`,
+ *    `'0'`, `'000'`, `'AB'`, `' 03 '`) fails here and is an invalid response, *not* mistaken for a
+ *    genuine upstream error.
+ * 2. **Valid header, non-success `resultCode`** → `UPSTREAM_ERROR`, preserving only the official
+ *    two-digit `resultCode`. This covers `03` (NODATA_ERROR) and every other two-digit error
  *    code, and it holds even when the error response carries no usable body.
  * 3. **Success `resultCode` (`'00'`)** → the full body is validated. A missing or malformed body
  *    under a success code is an `INVALID_RESPONSE`, not a silent empty page.
  *
  * Security: neither the raw input value nor any service key can appear in an error. An
- * `UPSTREAM_ERROR` carries only the two official header strings; an `INVALID_RESPONSE` carries
- * only issue *paths* and Zod's type-level messages — never the offending values, the response
- * body, or a stack trace. (A service key lives in the request URL, never the response, so it is
- * structurally impossible for one to reach these results.)
+ * `UPSTREAM_ERROR` carries only the official two-digit `resultCode` — the untrusted raw
+ * `resultMsg` is deliberately dropped, so a secret-shaped token, CR/LF, or log-injection payload
+ * in an upstream message can never reach this surface. An `INVALID_RESPONSE` carries only issue
+ * *paths* and Zod's type-level messages — never the offending values, the response body, or a
+ * stack trace. (A service key lives in the request URL, never the response, so it is structurally
+ * impossible for one to reach these results.)
  */
 
 import type { z } from 'zod';
@@ -51,7 +55,7 @@ export interface KmaResponseIssue {
  * itself does not say which operation produced it.
  */
 export interface KmaForecastPage {
-  readonly dataType: string;
+  readonly dataType: 'JSON';
   readonly pageNo: number;
   readonly numOfRows: number;
   readonly totalCount: number;
@@ -60,13 +64,18 @@ export interface KmaForecastPage {
 
 /**
  * A structurally valid KMA header whose `resultCode` is not the success code — the upstream
- * service reported a problem (or "no data"). The original code and message are preserved so the
- * caller can log or map them; nothing else from the response is carried.
+ * service reported a problem (or "no data"). Only the official two-digit `resultCode` is
+ * preserved so the caller can map it; the raw `resultMsg` is **not** carried. `resultMsg` is an
+ * untrusted upstream string that could contain a secret-shaped token, CR/LF, a log-injection
+ * payload, or an unexpectedly long/internal message, so it must never be copied onto this public
+ * error surface. A safe, caller-owned canonical message can be derived from `resultCode` when one
+ * is needed; a raw upstream message is never re-exposed here (security logging with length and
+ * control-character limits, if ever wanted, is a separate PR #5 design). Nothing else from the
+ * response is carried.
  */
 export interface KmaUpstreamError {
   readonly kind: 'UPSTREAM_ERROR';
   readonly resultCode: string;
-  readonly resultMessage: string;
 }
 
 /** A response that is not a well-formed KMA success/error envelope, reduced to safe issues. */
@@ -116,7 +125,8 @@ function toSanitizedIssues(error: z.ZodError): readonly KmaResponseIssue[] {
 export function parseKmaForecastResponse(
   input: unknown,
 ): ParseKmaForecastResponseResult {
-  // 1. Is this a KMA envelope at all? (header with string resultCode/resultMsg)
+  // 1. Is this a KMA envelope at all? (header with a two-digit resultCode and a resultMsg string).
+  //    A malformed resultCode fails here and is an INVALID_RESPONSE, never an upstream error.
   const envelope = kmaResponseEnvelopeSchema.safeParse(input);
   if (!envelope.success) {
     return {
@@ -125,16 +135,16 @@ export function parseKmaForecastResponse(
     };
   }
 
-  const { resultCode, resultMsg } = envelope.data.response.header;
+  const { resultCode } = envelope.data.response.header;
 
   // 2. Structurally valid header but not a success code → upstream error (incl. NODATA_ERROR).
+  //    Only the official two-digit resultCode is exposed; the untrusted raw resultMsg is dropped.
   if (resultCode !== KMA_SUCCESS_RESULT_CODE) {
     return {
       ok: false,
       error: {
         kind: 'UPSTREAM_ERROR',
         resultCode,
-        resultMessage: resultMsg,
       },
     };
   }

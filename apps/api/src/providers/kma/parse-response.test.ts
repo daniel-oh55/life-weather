@@ -69,7 +69,7 @@ describe('parseKmaForecastResponse — success', () => {
 });
 
 describe('parseKmaForecastResponse — upstream error', () => {
-  it('classifies NODATA_ERROR (03) as UPSTREAM_ERROR, preserving code and message', () => {
+  it('classifies NODATA_ERROR (03) as UPSTREAM_ERROR, preserving only the code (no raw message)', () => {
     const response = {
       response: { header: { resultCode: '03', resultMsg: 'NO_DATA' } },
     };
@@ -77,7 +77,9 @@ describe('parseKmaForecastResponse — upstream error', () => {
     expect(result.ok).toBe(false);
     if (!result.ok && result.error.kind === 'UPSTREAM_ERROR') {
       expect(result.error.resultCode).toBe('03');
-      expect(result.error.resultMessage).toBe('NO_DATA');
+      // The raw resultMsg is not carried on the public error surface at all.
+      expect('resultMessage' in result.error).toBe(false);
+      expect(Object.keys(result.error).sort()).toEqual(['kind', 'resultCode']);
     } else {
       expect.fail('expected UPSTREAM_ERROR');
     }
@@ -96,7 +98,21 @@ describe('parseKmaForecastResponse — upstream error', () => {
     }
   });
 
-  it('does not restrict the set of upstream error codes', () => {
+  it.each(['03', '30', '99', '01', '22'])(
+    'classifies the valid two-digit non-success code %s as UPSTREAM_ERROR',
+    (resultCode) => {
+      const response = { response: { header: { resultCode, resultMsg: 'X' } } };
+      const result = parseKmaForecastResponse(response);
+      expect(result.ok).toBe(false);
+      if (!result.ok && result.error.kind === 'UPSTREAM_ERROR') {
+        expect(result.error.resultCode).toBe(resultCode);
+      } else {
+        expect.fail('expected UPSTREAM_ERROR');
+      }
+    },
+  );
+
+  it('does not restrict the set of upstream error codes (unknown 99 still upstream)', () => {
     const response = {
       response: { header: { resultCode: '99', resultMsg: 'UNKNOWN_ERROR' } },
     };
@@ -107,6 +123,124 @@ describe('parseKmaForecastResponse — upstream error', () => {
     } else {
       expect.fail('expected UPSTREAM_ERROR');
     }
+  });
+
+  it('never copies an untrusted raw resultMsg (secret marker / CR-LF) onto the public error', () => {
+    const response = {
+      response: {
+        header: {
+          resultCode: '03',
+          resultMsg: 'aBcD1234%2BFakeSecret%3D\r\nInjected-Line',
+        },
+      },
+    };
+    const result = parseKmaForecastResponse(response);
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.error.kind === 'UPSTREAM_ERROR') {
+      expect(result.error.resultCode).toBe('03');
+      const serialized = JSON.stringify(result.error);
+      expect(serialized).not.toContain('FakeSecret');
+      expect(serialized).not.toContain('%2B');
+      expect(serialized).not.toContain('Injected-Line');
+      expect(serialized).not.toContain('\r');
+      expect(serialized).not.toContain('\n');
+      expect('resultMessage' in result.error).toBe(false);
+    } else {
+      expect.fail('expected UPSTREAM_ERROR');
+    }
+  });
+
+  it('does not copy even a normal official resultMsg onto the public error', () => {
+    const response = {
+      response: { header: { resultCode: '03', resultMsg: 'NODATA_ERROR' } },
+    };
+    const result = parseKmaForecastResponse(response);
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.error.kind === 'UPSTREAM_ERROR') {
+      expect(JSON.stringify(result.error)).not.toContain('NODATA_ERROR');
+    } else {
+      expect.fail('expected UPSTREAM_ERROR');
+    }
+  });
+});
+
+describe('parseKmaForecastResponse — malformed resultCode is invalid, not upstream', () => {
+  it.each(['', '0', '000', 'AB', ' 03 ', '03 ', '+3'])(
+    'classifies malformed resultCode %o as INVALID_RESPONSE (never UPSTREAM_ERROR)',
+    (resultCode) => {
+      const response = { response: { header: { resultCode, resultMsg: 'X' } } };
+      const result = parseKmaForecastResponse(response);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.kind).toBe('INVALID_RESPONSE');
+      }
+    },
+  );
+});
+
+describe('parseKmaForecastResponse — dataType must be literal "JSON"', () => {
+  it.each(['XML', '', 'json', 'UNKNOWN'])(
+    'classifies a success body with dataType %o as INVALID_RESPONSE',
+    (dataType) => {
+      const response = validSuccessResponse();
+      response.response.body.dataType = dataType;
+      const result = parseKmaForecastResponse(response);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.kind).toBe('INVALID_RESPONSE');
+      }
+    },
+  );
+
+  it('accepts dataType "JSON"', () => {
+    const result = parseKmaForecastResponse(validSuccessResponse());
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe('parseKmaForecastResponse — pagination contradictions are invalid', () => {
+  it('classifies totalCount 0 with items present as INVALID_RESPONSE', () => {
+    const response = validSuccessResponse();
+    response.response.body.totalCount = 0;
+    // items.item still has one item from validSuccessResponse()
+    const result = parseKmaForecastResponse(response);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe('INVALID_RESPONSE');
+    }
+  });
+
+  it('classifies item count > numOfRows as INVALID_RESPONSE', () => {
+    const response = validSuccessResponse();
+    response.response.body.numOfRows = 1;
+    response.response.body.totalCount = 809;
+    response.response.body.items.item = [validItem(), validItem()];
+    const result = parseKmaForecastResponse(response);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe('INVALID_RESPONSE');
+    }
+  });
+
+  it('classifies item count > totalCount as INVALID_RESPONSE', () => {
+    const response = validSuccessResponse();
+    response.response.body.numOfRows = 100;
+    response.response.body.totalCount = 1;
+    response.response.body.items.item = [validItem(), validItem()];
+    const result = parseKmaForecastResponse(response);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe('INVALID_RESPONSE');
+    }
+  });
+
+  it('accepts normal pagination where totalCount exceeds the page item count', () => {
+    const response = validSuccessResponse();
+    response.response.body.numOfRows = 100;
+    response.response.body.totalCount = 809;
+    response.response.body.items.item = [validItem()];
+    const result = parseKmaForecastResponse(response);
+    expect(result.ok).toBe(true);
   });
 });
 
@@ -184,7 +318,10 @@ describe('parseKmaForecastResponse — invalid response', () => {
     }
   });
 
-  it('orders issues deterministically', () => {
+  it('orders issues deterministically by an explicit, pinned path order', () => {
+    // A fixture with several field-level failures, including a nested array index (item 0) and
+    // string keys, so the pinned order exercises both segment kinds. The pagination superRefine
+    // does not run here (the base fields fail first), so only field-level issues are emitted.
     const bad = {
       response: {
         header: { resultCode: '00', resultMsg: 'NORMAL_SERVICE' },
@@ -199,22 +336,22 @@ describe('parseKmaForecastResponse — invalid response', () => {
     };
     const first = parseKmaForecastResponse(bad);
     const second = parseKmaForecastResponse(bad);
+    // Determinism: identical input yields an identical result.
     expect(first).toEqual(second);
+
     if (!first.ok && first.error.kind === 'INVALID_RESPONSE') {
-      expect(first.error.issues.length).toBeGreaterThan(1);
-      // The issues are already emitted in sorted (path, then message) order.
-      const resorted = [...first.error.issues].sort((a, b) => {
-        const pathA = a.path.join('');
-        const pathB = b.path.join('');
-        if (pathA !== pathB) {
-          return pathA < pathB ? -1 : 1;
-        }
-        if (a.message !== b.message) {
-          return a.message < b.message ? -1 : 1;
-        }
-        return 0;
-      });
-      expect(first.error.issues).toEqual(resorted);
+      // The exact production ordering, pinned explicitly rather than re-derived with a
+      // reimplemented comparator. Sorting is by joined path (with a segment separator) then
+      // message, so item-0.category precedes item-0.nx, and both precede the body-level keys
+      // (numOfRows, pageNo, totalCount) — the leading 'i' of "items" sorts before 'n'/'p'/'t'.
+      const expectedPaths: readonly (string | number)[][] = [
+        ['response', 'body', 'items', 'item', 0, 'category'],
+        ['response', 'body', 'items', 'item', 0, 'nx'],
+        ['response', 'body', 'numOfRows'],
+        ['response', 'body', 'pageNo'],
+        ['response', 'body', 'totalCount'],
+      ];
+      expect(first.error.issues.map((issue) => issue.path)).toEqual(expectedPaths);
     } else {
       expect.fail('expected INVALID_RESPONSE');
     }

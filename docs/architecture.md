@@ -11,7 +11,12 @@
   위치입니다. **현재 상태**: `GET /health`에 더해, PR #4에서 기상청(KMA) **원본 응답 경계**
   (`src/providers/kma`)를 구현했습니다 — 단기·초단기예보 원본 JSON의 Zod 런타임 검증, 성공·
   upstream error·invalid response 분류, forecast slot 그룹화 및 field-presence(ABSENT/NULL/
-  VALUE) 모델. 실제 HTTP 호출·`KMA_SERVICE_KEY` 읽기는 아직 없습니다(PR #5 예정). 자세한 내용은
+  VALUE) 모델. 경계는 방어적으로 강화되어 `dataType`는 정확히 `"JSON"`, `resultCode`는 정확히
+  2자리 숫자(malformed → invalid response), `category`는 `[A-Z0-9]+`만 허용하고, 명백한
+  pagination 모순을 거부하며, upstream error에는 **2자리 `resultCode`만** 노출하고 untrusted raw
+  `resultMsg`는 공개 오류에 포함하지 않습니다. 공식 예시는 XML 중심이라 JSON scalar·빈 success
+  page·`fcstValue` literal null은 방어적 정책으로 두고 PR #5 실제 JSON 응답에서 재검증합니다.
+  실제 HTTP 호출·`KMA_SERVICE_KEY` 읽기는 아직 없습니다(PR #5 예정). 자세한 내용은
   [kma-response-boundary.md](./kma-response-boundary.md) 참고.
 - `packages/contracts` — 모바일과 API가 공유할 정규화 요청/응답 계약의 위치입니다. **현재
   상태**: PR #2에서 Zod 4 기반 공유 기상 데이터 계약을 정의했습니다. 자세한 내용은
