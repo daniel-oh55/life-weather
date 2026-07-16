@@ -200,6 +200,82 @@ describe('classifyFreshness — absolute ISO datetime validation', () => {
   });
 });
 
+describe('classifyFreshness — timestamp precision', () => {
+  // Policy: seconds are required, and fractional seconds are either absent or exactly
+  // 3 digits (milliseconds). This matches isoDateTime in @life-weather/contracts.
+
+  it.each([
+    // observedAt, expected — each is 30 min before referenceAt (12:00:00Z) -> FRESH.
+    ['2026-07-15T11:30:00Z', 'seconds precision, UTC'],
+    ['2026-07-15T11:30:00.500Z', 'milliseconds precision, UTC'],
+    ['2026-07-15T20:30:00+09:00', 'seconds precision, numeric offset'],
+    ['2026-07-15T20:30:00.500+09:00', 'milliseconds precision, numeric offset'],
+  ])('accepts %j (%s) as observedAt', (observedAt) => {
+    expect(classifyFreshness({ ...base, observedAt })).toBe(
+      FreshnessStatus.FRESH,
+    );
+  });
+
+  it.each([
+    '2026-07-15T12:00:00Z', // seconds precision, UTC
+    '2026-07-15T12:00:00.000Z', // milliseconds precision, UTC
+    '2026-07-15T21:00:00+09:00', // seconds precision, numeric offset
+    '2026-07-15T21:00:00.000+09:00', // milliseconds precision, numeric offset
+  ])('accepts %j as referenceAt (does not throw)', (value) => {
+    expect(() =>
+      classifyFreshness({ ...base, referenceAt: value, observedAt: value }),
+    ).not.toThrow();
+  });
+
+  const wrongPrecision = [
+    '2026-07-15T12:00Z', // no seconds (minute precision)
+    '2026-07-15T12:00:00.1Z', // 1 fractional digit
+    '2026-07-15T12:00:00.12Z', // 2 fractional digits
+    '2026-07-15T12:00:00.0001Z', // 4 fractional digits (sub-millisecond)
+    '2026-07-15T12:00:00.1234Z', // 4 fractional digits
+  ];
+
+  it.each(wrongPrecision)(
+    'throws RangeError for the wrong-precision %j as referenceAt',
+    (value) => {
+      expect(() =>
+        classifyFreshness({ ...base, referenceAt: value, observedAt: referenceAt }),
+      ).toThrow(RangeError);
+    },
+  );
+
+  it.each(wrongPrecision)(
+    'returns UNKNOWN for the wrong-precision %j as observedAt',
+    (value) => {
+      expect(classifyFreshness({ ...base, observedAt: value })).toBe(
+        FreshnessStatus.UNKNOWN,
+      );
+    },
+  );
+
+  it('resolves a 1 ms lead beyond a 0-minute future tolerance as FUTURE', () => {
+    expect(
+      classifyFreshness({
+        referenceAt: '2026-07-15T12:00:00.000Z',
+        observedAt: '2026-07-15T12:00:00.001Z',
+        staleAfterMinutes: 60,
+        futureToleranceMinutes: 0,
+      }),
+    ).toBe(FreshnessStatus.FUTURE);
+  });
+
+  it('treats an identical millisecond instant as FRESH, not FUTURE', () => {
+    expect(
+      classifyFreshness({
+        referenceAt: '2026-07-15T12:00:00.000Z',
+        observedAt: '2026-07-15T12:00:00.000Z',
+        staleAfterMinutes: 60,
+        futureToleranceMinutes: 0,
+      }),
+    ).toBe(FreshnessStatus.FRESH);
+  });
+});
+
 describe('classifyFreshness — non-existent calendar dates', () => {
   const invalidDates = [
     '2026-02-30T10:00:00Z', // Feb 30 never exists

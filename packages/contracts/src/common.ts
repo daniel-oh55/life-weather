@@ -13,16 +13,33 @@ import { z } from 'zod';
 // ---------------------------------------------------------------------------
 
 /**
- * An absolute instant, ISO 8601 with a required timezone designator.
+ * An absolute instant, ISO 8601 with a required timezone designator and a fixed
+ * timestamp precision.
  *
- * Accepts:
- * - `2026-07-15T01:00:00Z` (UTC — the server's normative output form)
- * - `2026-07-15T10:00:00+09:00` (numeric offset)
+ * Accepts exactly two precisions:
+ * - **Seconds** — `2026-07-15T12:00:00Z`, `2026-07-15T21:00:00+09:00`
+ * - **Milliseconds** (exactly 3 fractional digits) — `2026-07-15T12:00:00.123Z`,
+ *   `2026-07-15T21:00:00.123+09:00`
  *
- * Rejects a local datetime with no timezone (e.g. `2026-07-15T10:00:00`) and any
- * malformed ISO string. Producers should emit the UTC `Z` form.
+ * Rejects:
+ * - a minute-precision datetime with no seconds (`2026-07-15T12:00Z`),
+ * - any other fractional-second precision (`...00.1Z`, `...00.12Z`, `...00.0001Z`,
+ *   `...00.1234Z`),
+ * - a local datetime with no timezone (`2026-07-15T10:00:00`), and any malformed ISO string.
+ *
+ * Seconds are required and fractional seconds are either absent or exactly 3 digits. This
+ * mirrors `classifyFreshness`, whose freshness comparison is millisecond-resolution and which
+ * requires the same precision — an arbitrary-precision timestamp would either lose
+ * sub-millisecond information or pass the contract yet be rejected downstream. Producers
+ * should emit the UTC `Z` form at seconds or milliseconds precision. The internal
+ * per-precision schemas are not exported; the public surface remains a single `isoDateTime`.
  */
-export const isoDateTime = z.iso.datetime({ offset: true });
+const isoDateTimeSeconds = z.iso.datetime({ offset: true, precision: 0 });
+const isoDateTimeMilliseconds = z.iso.datetime({ offset: true, precision: 3 });
+export const isoDateTime = z.union([
+  isoDateTimeSeconds,
+  isoDateTimeMilliseconds,
+]);
 
 /** A local calendar date, ISO 8601 `YYYY-MM-DD` (e.g. `2026-07-15`). */
 export const isoDate = z.iso.date();

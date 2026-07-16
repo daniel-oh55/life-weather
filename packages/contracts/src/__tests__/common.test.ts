@@ -69,6 +69,28 @@ describe('date and time schemas', () => {
     );
   });
 
+  // Timestamp precision policy: seconds are required, and fractional seconds are
+  // either absent or exactly 3 digits (milliseconds). This mirrors classifyFreshness,
+  // which requires the same precision. See docs/contracts.md.
+  it.each([
+    '2026-07-15T12:00:00Z', // seconds precision, UTC
+    '2026-07-15T12:00:00.123Z', // milliseconds precision, UTC
+    '2026-07-15T21:00:00+09:00', // seconds precision, numeric offset
+    '2026-07-15T21:00:00.123+09:00', // milliseconds precision, numeric offset
+  ])('accepts the seconds/milliseconds-precision datetime %j', (value) => {
+    expect(isoDateTime.safeParse(value).success).toBe(true);
+  });
+
+  it.each([
+    '2026-07-15T12:00Z', // no seconds (minute precision)
+    '2026-07-15T12:00:00.1Z', // 1 fractional digit
+    '2026-07-15T12:00:00.12Z', // 2 fractional digits
+    '2026-07-15T12:00:00.0001Z', // 4 fractional digits (sub-millisecond)
+    '2026-07-15T12:00:00.1234Z', // 4 fractional digits
+  ])('rejects the wrong-precision datetime %j', (value) => {
+    expect(isoDateTime.safeParse(value).success).toBe(false);
+  });
+
   it('rejects a datetime with no timezone', () => {
     expect(isoDateTime.safeParse('2026-07-15T10:00:00').success).toBe(false);
   });

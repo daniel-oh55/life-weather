@@ -14,6 +14,32 @@ invariants, units, and provider-normalization principles.
 - **Common primitives** (`common.ts`): ISO datetime/date schemas, bounded numeric schemas,
   and `createForwardCompatibleEnum` plus every enum (each exposing a `strict` and a
   `compatible` schema).
+
+### Absolute timestamp precision
+
+`isoDateTime` is an ISO 8601 instant with a **required** timezone designator (`Z` or a
+numeric `±HH:MM` offset) and a **fixed precision**: seconds are required, and fractional
+seconds are either absent or **exactly 3 digits** (milliseconds). Arbitrary-precision
+timestamps are not allowed.
+
+| Accepted | Rejected |
+| --- | --- |
+| `2026-07-15T12:00:00Z` | `2026-07-15T12:00Z` (no seconds) |
+| `2026-07-15T12:00:00.123Z` | `2026-07-15T12:00:00.1Z` (1 digit) |
+| `2026-07-15T21:00:00+09:00` | `2026-07-15T12:00:00.12Z` (2 digits) |
+| `2026-07-15T21:00:00.123+09:00` | `2026-07-15T12:00:00.0001Z` / `...1234Z` (4+ digits) |
+
+Implemented as `z.union` of a seconds schema (`precision: 0`) and a milliseconds schema
+(`precision: 3`). This keeps the contract aligned with the JavaScript runtime's time
+representation and with `classifyFreshness` in `@life-weather/weather-core`, whose freshness
+comparison is millisecond-resolution and rejects any other precision — so a timestamp that
+passes the contract can never be silently dropped or truncated downstream. Producers should
+emit the UTC `Z` form at seconds or milliseconds precision.
+
+This absolute-timestamp precision policy is **separate** from the timezone policy: an
+absolute instant carries a numeric `Z`/`±HH:MM` offset, whereas `WeatherLocation.timezone`
+(`ianaTimeZone`) must be a **named** IANA zone (e.g. `Asia/Seoul`) — a fixed offset is not a
+valid zone identifier there. They are different concepts.
 - **Location** (`location.ts`): `weatherLocation`.
 - **Weather** (`weather.ts`): `sourceMetadata`, `currentWeather`, `hourlyForecast`,
   `forecastPeriod`, `dailyForecast`, and the aggregate `weatherOverview` (with cross-field

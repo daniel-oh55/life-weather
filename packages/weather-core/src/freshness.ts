@@ -9,14 +9,20 @@
 const MINUTE_IN_MS = 60_000;
 
 /**
- * ISO 8601 datetime with a **required** timezone designator, capturing each component for
- * range validation: `(year)-(month)-(day)T(hour):(minute):(second)` (optional fractional
- * seconds) then `Z` or a numeric `(sign)(offsetHour):(offsetMinute)` offset. The shape alone
- * rejects timezone-less local datetimes (`2026-07-15T10:00:00`), date-only strings
+ * ISO 8601 datetime with a **required** timezone designator and a fixed timestamp precision,
+ * capturing each component for range validation:
+ * `(year)-(month)-(day)T(hour):(minute):(second)` then optional fractional seconds — either
+ * absent or **exactly 3 digits** (milliseconds) — then `Z` or a numeric
+ * `(sign)(offsetHour):(offsetMinute)` offset. Seconds are required, and the fractional part
+ * is all-or-nothing at millisecond resolution, matching `isoDateTime` in
+ * `@life-weather/contracts`: 1, 2 or 4+ fractional digits are rejected so a
+ * sub-millisecond-precision timestamp cannot silently lose information in the ms-resolution
+ * comparison below. The shape alone also rejects timezone-less local datetimes
+ * (`2026-07-15T10:00:00`), minute-precision datetimes (`2026-07-15T12:00Z`), date-only strings
  * (`2026-07-15`), and non-ISO formats (`07/15/2026 10:00`).
  */
 const ABSOLUTE_ISO_DATETIME =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{3})?(?:Z|([+-])(\d{2}):(\d{2}))$/;
 
 function isLeapYear(year: number): boolean {
   return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
