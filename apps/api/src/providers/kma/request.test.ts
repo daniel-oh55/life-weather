@@ -5,6 +5,7 @@ import {
   buildKmaForecastRequestUrl,
   validateKmaForecastRequest,
   type KmaForecastRequest,
+  type ValidateKmaForecastRequestResult,
 } from './request';
 
 /** An obviously fake decoded service key with the three characters that must be percent-encoded. */
@@ -192,6 +193,42 @@ describe('validateKmaForecastRequest — invalid inputs', () => {
         'ny',
       ]);
     }
+  });
+});
+
+describe('validateKmaForecastRequest — runtime totality on non-object input', () => {
+  it.each([
+    ['null', null],
+    ['undefined', undefined],
+    ['a string', 'not-a-request'],
+    ['a number', 42],
+    ['a boolean', true],
+    ['an array', []],
+    ['a function', () => undefined],
+  ])('flags all five fields INVALID (never throws) for %s', (_label, input) => {
+    let result: ValidateKmaForecastRequestResult;
+    expect(() => {
+      result = validateKmaForecastRequest(input);
+    }).not.toThrow();
+    expect(result!.ok).toBe(false);
+    if (!result!.ok) {
+      expect(result!.issues.map((issue) => issue.field)).toEqual([
+        'product',
+        'baseDate',
+        'baseTime',
+        'nx',
+        'ny',
+      ]);
+      for (const issue of result!.issues) {
+        expect(issue.reason).toBe('INVALID');
+      }
+    }
+  });
+
+  it('does not expose the raw non-object input', () => {
+    const secret = 'SECRET_REQUEST_INPUT_MARKER';
+    const result = validateKmaForecastRequest(secret);
+    expect(JSON.stringify(result)).not.toContain(secret);
   });
 });
 

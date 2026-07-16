@@ -1,10 +1,10 @@
 /**
  * The KMA (기상청) HTTP forecast provider: the one place that performs network I/O. It ties the
- * pieces together — request validation and URL building (`request.ts`), the `fetch` call with a
- * timeout and caller-abort handling, HTTP-status classification, size-limited body reading
- * (`read-response.ts`), gateway-XML detection (`gateway-error.ts`), the PR #4 response parser
- * (`parse-response.ts`), request/response correlation, and slot grouping
- * (`group-forecast-items.ts`).
+ * pieces together — request validation and URL building (`request.ts`), the `fetch` call under a
+ * timeout and caller-abort that span the full transport (response header *and* body read),
+ * HTTP-status classification, size-limited body reading (`read-response.ts`), gateway-XML detection
+ * (`gateway-error.ts`), the PR #4 response parser (`parse-response.ts`), request/response
+ * correlation, and slot grouping (`group-forecast-items.ts`).
  *
  * Everything except the `fetch` itself is deterministic: the same request + same mocked response
  * always produce the same result. No system clock is read, no environment variable is touched at
@@ -109,6 +109,24 @@ export type CreateKmaForecastProviderResult =
 /** Wrap an error variant into a failed result. */
 function fail(error: KmaForecastProviderError): KmaForecastProviderResult {
   return { ok: false, error };
+}
+
+/**
+ * Map the internal abort reason to a transport error. A caller abort wins as `ABORTED`, a timeout
+ * as `TIMEOUT`, and no abort (a plain fetch/body I/O failure) as `NETWORK_ERROR`. Used for both a
+ * rejected `fetch` and a `BODY_READ_ERROR` from the body stream, so the same reason that aborted
+ * the request classifies whatever failure it caused.
+ */
+function abortReasonToError(
+  abortReason: 'TIMEOUT' | 'ABORTED' | null,
+): KmaForecastProviderResult {
+  if (abortReason === 'ABORTED') {
+    return fail({ kind: 'ABORTED' });
+  }
+  if (abortReason === 'TIMEOUT') {
+    return fail({ kind: 'TIMEOUT' });
+  }
+  return fail({ kind: 'NETWORK_ERROR' });
 }
 
 /**
@@ -242,9 +260,14 @@ async function cancelBody(response: Response): Promise<void> {
 }
 
 /**
- * Perform one forecast fetch. See the module comment for the full contract. The timeout timer and
- * the caller-abort listener are always cleaned up (in `finally`), whether the fetch resolves,
- * rejects, or is aborted.
+ * Perform one forecast fetch. See the module comment for the full contract.
+ *
+ * The timeout timer and the caller-abort listener stay armed across the **whole** transport — the
+ * `fetch`, the HTTP-status decision, *and* the full body read — so a header that arrives before the
+ * body stalls or aborts is still bounded. They are cleaned up exactly once, in `finally`, on every
+ * return/throw path. A body stream that fails while a timeout or caller abort had already fired is
+ * reported as `TIMEOUT` / `ABORTED` respectively (not `NETWORK_ERROR`); the JSON parse and the pure
+ * classification after the body is read are synchronous and need no timeout.
  */
 async function fetchForecast(
   config: ResolvedKmaProviderConfig,
@@ -288,41 +311,52 @@ async function fetchForecast(
     callerSignal.addEventListener('abort', onCallerAbort, { once: true });
   }
 
-  let response: Response;
   try {
-    response = await config.fetchImpl(built.url, {
+    const response = await config.fetchImpl(built.url, {
       method: 'GET',
       headers: { Accept: 'application/json' },
       redirect: 'error',
       signal: controller.signal,
     });
+
+    // A fetch impl that ignores the abort signal and resolves a Response anyway must not slip past
+    // a timeout/abort that has already fired: honour the fixed reason before touching the body.
+    if (abortReason !== null) {
+      await cancelBody(response);
+      return abortReasonToError(abortReason);
+    }
+
+    if (!response.ok) {
+      await cancelBody(response);
+      return fail({ kind: 'HTTP_ERROR', status: response.status });
+    }
+
+    const read = await readResponseTextWithLimit(response, config.maxResponseBytes);
+    if (!read.ok) {
+      // RESPONSE_TOO_LARGE is a hard cap and outranks a concurrent abort. A BODY_READ_ERROR is an
+      // internal transport failure mapped by whichever abort (if any) fired during the read.
+      if (read.error.kind === 'RESPONSE_TOO_LARGE') {
+        return fail({ kind: 'RESPONSE_TOO_LARGE' });
+      }
+      return abortReasonToError(abortReason);
+    }
+
+    // The body read completed; if a timeout/abort fired during it, do not treat it as success.
+    if (abortReason !== null) {
+      return abortReasonToError(abortReason);
+    }
+
+    return classifyBody(request, read.text);
   } catch {
-    // Classify the rejection by which internal abort (if any) fired — never by the raw exception.
-    if (abortReason === 'ABORTED') {
-      return fail({ kind: 'ABORTED' });
-    }
-    if (abortReason === 'TIMEOUT') {
-      return fail({ kind: 'TIMEOUT' });
-    }
-    return fail({ kind: 'NETWORK_ERROR' });
+    // fetch (or a synchronous throw) failed: classify by which internal abort (if any) fired —
+    // never by the raw exception.
+    return abortReasonToError(abortReason);
   } finally {
     clearTimeout(timeoutId);
     if (callerSignal !== undefined) {
       callerSignal.removeEventListener('abort', onCallerAbort);
     }
   }
-
-  if (!response.ok) {
-    await cancelBody(response);
-    return fail({ kind: 'HTTP_ERROR', status: response.status });
-  }
-
-  const read = await readResponseTextWithLimit(response, config.maxResponseBytes);
-  if (!read.ok) {
-    return fail({ kind: 'RESPONSE_TOO_LARGE' });
-  }
-
-  return classifyBody(request, read.text);
 }
 
 /** Build a provider bound to a resolved config. */

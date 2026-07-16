@@ -5,6 +5,7 @@ import {
   DEFAULT_TIMEOUT_MS,
   validateKmaProviderOptions,
   type KmaForecastProviderOptions,
+  type ValidateKmaProviderOptionsResult,
 } from './config';
 import {
   createKmaForecastProvider,
@@ -151,6 +152,26 @@ describe('validateKmaProviderOptions — determinism & immutability', () => {
   });
 });
 
+describe('validateKmaProviderOptions — runtime totality on non-object input', () => {
+  it.each([
+    ['null', null],
+    ['undefined', undefined],
+    ['a string', 'nope'],
+    ['a number', 42],
+    ['a boolean', true],
+    ['an array', []],
+  ])('returns CONFIG_ERROR(serviceKey, MISSING) without throwing for %s', (_label, input) => {
+    let result: ValidateKmaProviderOptionsResult;
+    expect(() => {
+      result = validateKmaProviderOptions(input);
+    }).not.toThrow();
+    expect(result!).toEqual({
+      ok: false,
+      error: { kind: 'CONFIG_ERROR', field: 'serviceKey', reason: 'MISSING' },
+    });
+  });
+});
+
 describe('createKmaForecastProvider', () => {
   it('returns a provider for valid options', () => {
     const result = createKmaForecastProvider({ serviceKey: FAKE_KEY });
@@ -165,6 +186,26 @@ describe('createKmaForecastProvider', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.kind).toBe('CONFIG_ERROR');
+    }
+  });
+
+  it.each([
+    ['null', null],
+    ['undefined', undefined],
+    ['a string', 'nope'],
+    ['an array', []],
+  ])('returns CONFIG_ERROR(serviceKey, MISSING) without throwing for runtime %s', (_label, input) => {
+    let result: ReturnType<typeof createKmaForecastProvider>;
+    expect(() => {
+      result = createKmaForecastProvider(input as unknown as KmaForecastProviderOptions);
+    }).not.toThrow();
+    expect(result!.ok).toBe(false);
+    if (!result!.ok) {
+      expect(result!.error).toEqual({
+        kind: 'CONFIG_ERROR',
+        field: 'serviceKey',
+        reason: 'MISSING',
+      });
     }
   });
 });

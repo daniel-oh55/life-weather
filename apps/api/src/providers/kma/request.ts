@@ -80,32 +80,59 @@ function isSupportedProduct(product: unknown): product is KmaForecastProduct {
   );
 }
 
+/** Whether `value` is a plain object we can read fields off — not `null`, an array, or a primitive. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 /**
- * Validate a forecast request at runtime. Collects every problem in a fixed field order
- * (`product`, `baseDate`, `baseTime`, `nx`, `ny`) so the issue list is deterministic regardless of
- * how many fields are wrong. No numeric coercion: a numeric-string date/time or a string `nx`/`ny`
- * is rejected, not converted. The official issuance *schedule* (e.g. 단기예보 발표시각) is **not**
- * enforced here — a structurally valid but non-canonical time such as `0615` is accepted; schedule
- * selection is a later PR's concern. The request object is only read, never mutated.
+ * The value-free issue list returned for a non-object request: every field flagged `INVALID`, in
+ * the same fixed order as an object request, so a `null`/string/array/etc. input is *total* rather
+ * than throwing on a property read.
+ */
+const NON_OBJECT_REQUEST_ISSUES: readonly KmaRequestIssue[] = [
+  { field: 'product', reason: 'INVALID' },
+  { field: 'baseDate', reason: 'INVALID' },
+  { field: 'baseTime', reason: 'INVALID' },
+  { field: 'nx', reason: 'INVALID' },
+  { field: 'ny', reason: 'INVALID' },
+];
+
+/**
+ * Validate a forecast request at runtime. The input is treated as `unknown` because a request
+ * crosses a trust boundary even though its TypeScript type says {@link KmaForecastRequest}: a
+ * non-object (`null`, `undefined`, a string/number/boolean, an array, a function) does not throw —
+ * it fails with every field flagged `INVALID` in the fixed order below.
+ *
+ * For an object input, collects every problem in a fixed field order (`product`, `baseDate`,
+ * `baseTime`, `nx`, `ny`) so the issue list is deterministic regardless of how many fields are
+ * wrong. No numeric coercion: a numeric-string date/time or a string `nx`/`ny` is rejected, not
+ * converted. The official issuance *schedule* (e.g. 단기예보 발표시각) is **not** enforced here — a
+ * structurally valid but non-canonical time such as `0615` is accepted; schedule selection is a
+ * later PR's concern. The request object is only read, never mutated.
  */
 export function validateKmaForecastRequest(
-  request: KmaForecastRequest,
+  input: unknown,
 ): ValidateKmaForecastRequestResult {
+  if (!isRecord(input)) {
+    return { ok: false, issues: NON_OBJECT_REQUEST_ISSUES };
+  }
+
   const issues: KmaRequestIssue[] = [];
 
-  if (!isSupportedProduct(request.product)) {
+  if (!isSupportedProduct(input.product)) {
     issues.push({ field: 'product', reason: 'INVALID' });
   }
-  if (typeof request.baseDate !== 'string' || !isCalendarDate(request.baseDate)) {
+  if (typeof input.baseDate !== 'string' || !isCalendarDate(input.baseDate)) {
     issues.push({ field: 'baseDate', reason: 'INVALID' });
   }
-  if (typeof request.baseTime !== 'string' || !isClockTime(request.baseTime)) {
+  if (typeof input.baseTime !== 'string' || !isClockTime(input.baseTime)) {
     issues.push({ field: 'baseTime', reason: 'INVALID' });
   }
-  if (!isNonNegativeSafeInteger(request.nx)) {
+  if (!isNonNegativeSafeInteger(input.nx)) {
     issues.push({ field: 'nx', reason: 'INVALID' });
   }
-  if (!isNonNegativeSafeInteger(request.ny)) {
+  if (!isNonNegativeSafeInteger(input.ny)) {
     issues.push({ field: 'ny', reason: 'INVALID' });
   }
 

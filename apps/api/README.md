@@ -55,6 +55,14 @@ a project on first run; that step is intentionally deferred to a later PR.
   - Node-native `fetch` (`redirect: 'error'`), a default 10s timeout, caller-`AbortSignal` support,
     and a default 4 MiB response-body cap — all project defensive defaults, no new dependency,
     **no retry / no cache**.
+  - The **timeout and caller-abort lifecycle spans the whole transport** — the `fetch`, the
+    HTTP-status decision, *and* the full response-body read — so a stalled or aborted body after a
+    header has arrived still resolves promptly (`TIMEOUT` / `ABORTED`), never hanging. A body-stream
+    failure resolves to `NETWORK_ERROR` (or `TIMEOUT` / `ABORTED` if an abort caused it), never a
+    rejected promise, and the raw stream/cancel error is never surfaced. A `Content-Length` that
+    already exceeds the cap cancels the body without reading a byte. Both runtime validators
+    (`validateKmaForecastRequest`, `validateKmaProviderOptions`) are **total** on non-object input:
+    a `null`/string/array/etc. yields `INVALID_REQUEST` / `CONFIG_ERROR` instead of throwing.
   - Classifies errors as `TIMEOUT` / `ABORTED` / `NETWORK_ERROR` / `HTTP_ERROR(status)` /
     `RESPONSE_TOO_LARGE` / `EMPTY_RESPONSE` / `NON_JSON_RESPONSE` / `INVALID_JSON` /
     `GATEWAY_ERROR` / `KMA_UPSTREAM_ERROR` / `KMA_INVALID_RESPONSE` / `RESPONSE_MISMATCH` /

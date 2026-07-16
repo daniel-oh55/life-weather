@@ -98,6 +98,61 @@ function fetchHangingUntilAbort(): typeof fetch {
     })) as unknown as typeof fetch;
 }
 
+/**
+ * A fetch that resolves a 200 Response immediately but whose body stream stalls (never enqueues)
+ * until the fetch's own abort signal fires — at which point the body errors, exactly as the
+ * platform's `fetch` body does when a request is aborted mid-stream. This exercises the case where
+ * the response *header* arrives fine but the *body* hangs, so the timeout/caller-abort lifecycle
+ * must still cover the body read. `bodyObservedAbort()` reports whether the body saw the abort.
+ */
+function fetchHeaderThenBodyTiedToSignal(): {
+  fetchImpl: typeof fetch;
+  bodyObservedAbort: () => boolean;
+} {
+  let observed = false;
+  const fetchImpl = ((_input: unknown, init?: RequestInit) => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        init?.signal?.addEventListener('abort', () => {
+          observed = true;
+          controller.error(new DOMException('The operation was aborted.', 'AbortError'));
+        });
+      },
+    });
+    return Promise.resolve(new Response(stream, { status: 200 }));
+  }) as unknown as typeof fetch;
+  return { fetchImpl, bodyObservedAbort: () => observed };
+}
+
+/** A fetch that resolves a 200 Response whose body stream fails (errors), never carrying data. */
+function fetchBodyStreamErrors(error: unknown, afterChunks = 0): typeof fetch {
+  const encoder = new TextEncoder();
+  return (() => {
+    let pulls = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        if (afterChunks === 0) {
+          controller.error(error);
+        }
+      },
+      pull(controller) {
+        if (pulls < afterChunks) {
+          pulls += 1;
+          controller.enqueue(encoder.encode('{'));
+          return;
+        }
+        controller.error(error);
+      },
+    });
+    return Promise.resolve(new Response(stream, { status: 200 }));
+  }) as unknown as typeof fetch;
+}
+
+/** A tiny delay to let the fetch resolve and the body read begin before the test acts. */
+function tick(ms = 10): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function providerWith(
   fetchImpl: typeof fetch,
   options: { timeoutMs?: number; maxResponseBytes?: number } = {},
@@ -246,6 +301,115 @@ describe('fetchForecast — timeout & caller abort', () => {
       controller.abort();
       expect(await promise).toEqual({ ok: false, error: { kind: 'ABORTED' } });
     }
+  });
+});
+
+describe('fetchForecast — timeout & caller abort cover the body read', () => {
+  it('enforces the timeout while the body stalls after the header arrives (→ TIMEOUT)', async () => {
+    const { fetchImpl, bodyObservedAbort } = fetchHeaderThenBodyTiedToSignal();
+    const result = await providerWith(fetchImpl, { timeoutMs: 10 }).fetchForecast(REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+    // The abort reached the body (not just the header): the timer was still armed during the read.
+    expect(bodyObservedAbort()).toBe(true);
+  });
+
+  it('does not reject its promise on a body timeout', async () => {
+    const { fetchImpl } = fetchHeaderThenBodyTiedToSignal();
+    await expect(
+      providerWith(fetchImpl, { timeoutMs: 10 }).fetchForecast(REQUEST),
+    ).resolves.toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+  });
+
+  it('clears the timeout timer and removes the caller-abort listener after a body timeout', async () => {
+    const clearSpy = vi.spyOn(globalThis, 'clearTimeout');
+    const { fetchImpl } = fetchHeaderThenBodyTiedToSignal();
+    const controller = new AbortController();
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+
+    await providerWith(fetchImpl, { timeoutMs: 10 }).fetchForecast(REQUEST, {
+      signal: controller.signal,
+    });
+
+    expect(clearSpy).toHaveBeenCalled();
+    expect(removeSpy).toHaveBeenCalled();
+    clearSpy.mockRestore();
+  });
+
+  it('applies a caller abort while the body is being read after the header arrives (→ ABORTED)', async () => {
+    const { fetchImpl, bodyObservedAbort } = fetchHeaderThenBodyTiedToSignal();
+    const controller = new AbortController();
+    const promise = providerWith(fetchImpl, { timeoutMs: 10_000 }).fetchForecast(REQUEST, {
+      signal: controller.signal,
+    });
+    // Let the fetch resolve and the body read begin, then abort mid-read.
+    await tick();
+    controller.abort();
+    expect(await promise).toEqual({ ok: false, error: { kind: 'ABORTED' } });
+    expect(bodyObservedAbort()).toBe(true);
+  });
+});
+
+describe('fetchForecast — body stream failures', () => {
+  it('maps a body stream error to NETWORK_ERROR', async () => {
+    const result = await providerWith(
+      fetchBodyStreamErrors(new Error('body boom')),
+    ).fetchForecast(REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'NETWORK_ERROR' } });
+  });
+
+  it('maps a mid-body stream error to NETWORK_ERROR', async () => {
+    const result = await providerWith(
+      fetchBodyStreamErrors(new Error('mid-body boom'), 2),
+    ).fetchForecast(REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'NETWORK_ERROR' } });
+  });
+
+  it('never exposes a raw body stream error message', async () => {
+    const secret = 'SECRET_BODY_STREAM_MARKER';
+    const result = await providerWith(
+      fetchBodyStreamErrors(new Error(secret)),
+    ).fetchForecast(REQUEST);
+    expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  it('does not reject its promise on a body stream error', async () => {
+    await expect(
+      providerWith(fetchBodyStreamErrors(new Error('boom'))).fetchForecast(REQUEST),
+    ).resolves.toEqual({ ok: false, error: { kind: 'NETWORK_ERROR' } });
+  });
+});
+
+describe('fetchForecast — runtime malformed request (validator totality)', () => {
+  it.each([
+    ['null', null],
+    ['undefined', undefined],
+    ['a string', 'not-a-request'],
+    ['a number', 42],
+    ['a boolean', true],
+    ['an array', []],
+  ])('returns INVALID_REQUEST without calling fetch for %s (never throws)', async (_label, malformed) => {
+    const spy = vi.fn(fetchReturning(jsonOk(body())));
+    let result: Awaited<ReturnType<KmaForecastProvider['fetchForecast']>>;
+    await expect(
+      (async () => {
+        result = await providerWith(spy as unknown as typeof fetch).fetchForecast(
+          malformed as unknown as KmaForecastRequest,
+        );
+      })(),
+    ).resolves.toBeUndefined();
+    expect(result!.ok).toBe(false);
+    if (!result!.ok) {
+      expect(result!.error.kind).toBe('INVALID_REQUEST');
+    }
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('does not expose the raw malformed input', async () => {
+    const secret = 'SECRET_MALFORMED_REQUEST_INPUT';
+    const result = await providerWith(fetchReturning(jsonOk(body()))).fetchForecast(
+      secret as unknown as KmaForecastRequest,
+    );
+    expect(JSON.stringify(result)).not.toContain(secret);
   });
 });
 

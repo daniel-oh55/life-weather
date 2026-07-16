@@ -84,8 +84,18 @@ function isPositiveInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0;
 }
 
+/** Whether `value` is a plain object we can read options off — not `null`, an array, or a primitive. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 /**
  * Validate and resolve provider options.
+ *
+ * The input is treated as `unknown`: a non-object (`null`, `undefined`, a string/number/boolean, an
+ * array) does not throw on a property read — it is reported as `CONFIG_ERROR(serviceKey, MISSING)`,
+ * the same as an object with no usable key, so the factories stay *total* under a runtime type
+ * bypass.
  *
  * `serviceKey` rules (never trimmed):
  * - not a string, `''`, or whitespace-only → `MISSING` (no usable key was supplied).
@@ -98,9 +108,14 @@ function isPositiveInteger(value: unknown): value is number {
  * `maxResponseBytes`) so the first error is deterministic. The input object is never mutated.
  */
 export function validateKmaProviderOptions(
-  options: ValidatableKmaProviderOptions,
+  input: unknown,
 ): ValidateKmaProviderOptionsResult {
-  const { serviceKey, fetchImpl, timeoutMs, maxResponseBytes } = options;
+  if (!isRecord(input)) {
+    return { ok: false, error: { kind: 'CONFIG_ERROR', field: 'serviceKey', reason: 'MISSING' } };
+  }
+
+  const { serviceKey, fetchImpl, timeoutMs, maxResponseBytes } =
+    input as ValidatableKmaProviderOptions;
 
   if (typeof serviceKey !== 'string' || serviceKey.trim() === '') {
     return { ok: false, error: { kind: 'CONFIG_ERROR', field: 'serviceKey', reason: 'MISSING' } };

@@ -19,7 +19,8 @@
   항목으로 남아 있습니다. PR #5에서는 이 경계를 실제 공공데이터포털 **HTTPS** 호출에 연결하는
   **KMA HTTP Provider**(`createKmaForecastProvider`/`…FromEnv`)를 구현했습니다 — 서버 전용
   `KMA_SERVICE_KEY`(import-time env access 없음, decoded key 1회 encoding), native `fetch`,
-  timeout·caller abort·`redirect: 'error'`·response body size 제한, HTTP/gateway XML/JSON 오류
+  timeout·caller abort(response header뿐 아니라 response body 완독까지 적용)·`redirect: 'error'`·
+  response body size 제한, body stream 오류의 명시적 결과화, HTTP/gateway XML/JSON 오류
   분류, PR #4 parser·slot grouping 연결, 요청·응답 consistency·incomplete page 검증. 최종
   weather-domain 정규화·normalizer 연결·API route는 아직 **미구현**(PR #6 이후)입니다. 자세한
   내용은 [kma-response-boundary.md](./kma-response-boundary.md)와

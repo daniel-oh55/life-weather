@@ -12,7 +12,7 @@
 
 - [config.ts](../apps/api/src/providers/kma/config.ts) — 환경변수·Provider option 검증
 - [request.ts](../apps/api/src/providers/kma/request.ts) — 요청 입력 검증, operation 매핑, URL 생성
-- [read-response.ts](../apps/api/src/providers/kma/read-response.ts) — 응답 body 크기 제한 읽기
+- [read-response.ts](../apps/api/src/providers/kma/read-response.ts) — 응답 body 크기 제한 읽기, body stream 오류의 명시적 결과화(`BODY_READ_ERROR`), 안전한 body/reader cancel
 - [gateway-error.ts](../apps/api/src/providers/kma/gateway-error.ts) — 공공데이터포털 XML gateway 오류 최소 식별
 - [provider.ts](../apps/api/src/providers/kma/provider.ts) — fetch·timeout·오류 분류·parse·correlation·grouping
 - [validation.ts](../apps/api/src/providers/kma/validation.ts) — 날짜/시간/grid 검증 primitive (요청·응답 경계 공유)
@@ -95,6 +95,11 @@ createKmaForecastProviderFromEnv(env?, dependencies?): CreateKmaForecastProvider
 - 누락·빈 문자열·공백 문자열 키 → `CONFIG_ERROR`(`serviceKey`, `MISSING`).
 - 앞뒤 공백이 있는 키는 **자동 trim하지 않고** `CONFIG_ERROR`(`serviceKey`, `INVALID`).
 - 키 값은 오류 메시지·오류 객체에 **절대 포함하지 않습니다.**
+- **config validator도 non-object 입력에서 total합니다.** `validateKmaProviderOptions(input:
+  unknown)`은 먼저 plain object 여부를 확인하고, `null`·`undefined`·문자열·숫자·boolean·배열 같은
+  non-object에는 `CONFIG_ERROR`(`serviceKey`, `MISSING`)를 반환합니다(throw 없음). 공개 factory의
+  TypeScript 타입(`KmaForecastProviderOptions`)은 유지되지만, 타입 우회로 잘못된 값이 들어와도
+  throw하지 않습니다.
 
 ### 인증키 형식 정책 (decoded key)
 
@@ -147,6 +152,13 @@ dataType  = JSON
 - `baseTime`: 정확히 `HHmm`, 시 00–23 / 분 00–59, 숫자 coercion 없음.
 - `nx`/`ny`: 안전 정수(`Number.isSafeInteger`), `>= 0`, string coercion 없음.
 
+**validator는 non-object 입력에서도 total합니다.** `validateKmaForecastRequest(input: unknown)`은
+먼저 plain object 여부를 확인하고, `null`·`undefined`·문자열·숫자·boolean·배열·함수 같은
+non-object에는 property를 읽지 않고 다섯 field(`product`·`baseDate`·`baseTime`·`nx`·`ny`)를 모두
+고정 순서로 `INVALID` 처리합니다(throw 없음). 따라서 타입 우회로 잘못된 request가
+`fetchForecast()`에 들어와도 throw하지 않고, fetch를 호출하지 않으며, `INVALID_REQUEST`를 반환하고,
+raw 입력값을 노출하지 않습니다.
+
 **발표 schedule 자체는 강제하지 않습니다.** `1260`·`2400`은 거부하지만, 형식상 유효한 `0615`는
 Provider가 임의로 거부하지 않습니다(발표시각 선택 로직은 후속 PR).
 
@@ -178,25 +190,68 @@ credentials·cookie·authorization header를 추가하지 않습니다.
 ```text
 Provider timeout 발생   → TIMEOUT
 호출자 signal abort      → ABORTED
-그 외 fetch reject       → NETWORK_ERROR
+그 외 fetch/body I/O reject → NETWORK_ERROR
 ```
 
-- timeout timer와 caller signal listener는 **항상 정리**합니다(`finally`).
+- **timeout과 caller abort의 lifecycle은 transport 전체를 덮습니다.** 즉 `fetch` 시작 → response
+  header 수신 → HTTP status 판정 → **response body 전체 읽기(또는 body 오류)** 까지 timer와
+  listener가 계속 살아 있습니다. header만 도착하고 body가 멈추거나(또는 중간에 abort되어도) 무기한
+  대기하지 않습니다. body를 다 읽은 뒤의 JSON parse와 순수 분류는 동기 처리라 별도 timeout 대상이
+  아닙니다.
+- body 읽기 구간에서 다음이 성립합니다.
+
+  ```text
+  header 수신 전 timeout       → TIMEOUT
+  header 수신 후 body timeout → TIMEOUT
+  header 수신 전 caller abort → ABORTED
+  header 수신 후 body abort   → ABORTED
+  기타 fetch/body I/O 오류    → NETWORK_ERROR
+  ```
+
+- timeout timer와 caller signal listener는 모든 return/throw 경로에서 **항상 정리**합니다(`finally`).
 - caller signal이 이미 aborted이면 **fetch를 호출하지 않고** `ABORTED`.
 - timeout과 caller abort가 경합해도 **먼저 발생한 원인**을 결정론적으로 한 번만 반영합니다(첫 콜백이
   reason을 고정하고, 두 번째 콜백은 덮어쓰지 않음).
-- abort exception message는 공개하지 않습니다.
+- fetch 구현이 abort signal을 무시하고 Response를 resolve하거나 body를 계속 흘려보내도, 이미 고정된
+  abort reason을 확인해 **성공으로 처리하지 않습니다.**
+- abort/stream exception message는 공개하지 않습니다.
 - **자동 retry는 구현하지 않습니다.**
 
 ### response 최대 크기
 
 `response.text()`로 무제한 body를 한 번에 읽지 않습니다(기본 4 MiB).
 
-1. `Content-Length`가 유효하고 max 초과 → 즉시 `RESPONSE_TOO_LARGE`(한 byte도 읽지 않음).
+1. `Content-Length`가 유효하고 max 초과 → body를 **안전하게 cancel**한 뒤 `RESPONSE_TOO_LARGE`(한
+   byte도 읽지 않음; body가 null이면 그대로 `RESPONSE_TOO_LARGE`). cancel 실패는 결과를 바꾸지 않고
+   공개하지도 않습니다.
 2. body stream을 chunk별 `byteLength` 누적, max 초과 즉시 reader 취소.
 3. `TextDecoder` streaming으로 multibyte UTF-8이 chunk 경계에 걸려도 손상되지 않음.
-4. 정확히 max bytes는 성공, max+1은 실패.
+4. 정확히 max bytes는 성공, max+1은 실패(초과 시 body cancel).
 5. body가 없거나 0 byte이면 empty string. raw body는 오류에 포함하지 않음.
+6. cancellation 오류가 원래 `RESPONSE_TOO_LARGE` 결과를 덮어쓰지 않습니다.
+
+### body stream 오류
+
+body 읽기(`getReader()`/`reader.read()`/flush)에서 예상 가능한 stream 오류가 나면
+`readResponseTextWithLimit()`은 **throw하지 않고** 내부 결과로 표현합니다.
+
+```ts
+type ReadResponseTextResult =
+  | { ok: true; text: string }
+  | { ok: false; error: { kind: 'RESPONSE_TOO_LARGE' } | { kind: 'BODY_READ_ERROR' } };
+```
+
+`BODY_READ_ERROR`는 Provider 내부 transport 오류이며 public Provider error로 그대로 노출하지
+않습니다. Provider는 이를 다음과 같이 매핑합니다.
+
+```text
+BODY_READ_ERROR + abortReason TIMEOUT → TIMEOUT
+BODY_READ_ERROR + abortReason ABORTED → ABORTED
+BODY_READ_ERROR + abortReason 없음    → NETWORK_ERROR
+```
+
+raw stream error message·error object·stack·raw body는 어떤 결과에도 넣지 않으며, reader lock은
+가능한 모든 경로(overflow·오류 시 `cancel()`, 정상 완료 시 drain)에서 안전하게 해제됩니다.
 
 ## 오류 정책과 분류 순서
 
@@ -259,7 +314,9 @@ pageNo → numOfRows → baseDate → baseTime → nx → ny
 
 어떤 error variant에도 다음을 넣지 않습니다: service key, 요청 URL·query string, raw response
 body, raw gateway message(`returnAuthMsg`), raw KMA `resultMsg`, fetch exception message·`cause`·
-`name`, stack trace. `HTTP_ERROR`에는 status code만 포함합니다. 성공 결과에도 ServiceKey·URL·raw
+`name`, **raw body stream error·cancel error**, stack trace. body stream/cancel 오류는 bare
+`BODY_READ_ERROR`(내부)·`NETWORK_ERROR`/`TIMEOUT`/`ABORTED`(공개)로만 표현되어 Provider Promise
+밖으로 throw되지 않습니다. `HTTP_ERROR`에는 status code만 포함합니다. 성공 결과에도 ServiceKey·URL·raw
 JSON·raw item array·upstream `resultMsg`·현재 시각을 넣지 않습니다.
 
 ## 성공 결과 구조
@@ -320,4 +377,15 @@ v1 / PR #5 / 2026-07
 - PR #4 response boundary(parser) 및 slot grouping 연결, 요청·응답 consistency·incomplete page 검증
 - 진단: HTTPS endpoint·operation path·401 평문 경로 확인 / 200+XML gateway·정상 JSON은 실제 키 부재로 미확인
 - retry·cache·normalizer 연결·API route는 미구현(PR #6 이후)
+
+v2 / PR #5 / 2026-07 (transport lifecycle 보정)
+- timeout·caller abort의 lifecycle을 response header뿐 아니라 response body 완독까지 확장
+  (header 후 body timeout → TIMEOUT, header 후 body abort → ABORTED)
+- body stream(getReader/read/cancel) 오류를 명시적 결과(BODY_READ_ERROR)로 변환, Provider Promise
+  reject 방지. abortReason에 따라 TIMEOUT/ABORTED/NETWORK_ERROR로 매핑
+- Content-Length 선제 초과 시에도 body를 안전하게 cancel (한 byte도 읽지 않음, cancel 오류는
+  RESPONSE_TOO_LARGE를 덮어쓰지 않음)
+- request/config runtime validator를 non-object 입력에도 total하게 보완 (throw 없이 INVALID_REQUEST/
+  CONFIG_ERROR)
+- 신규 dependency 없음, 실제 key·실제 인증 API forecast 호출 없음
 ```

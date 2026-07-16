@@ -36,30 +36,83 @@ function streamResponse(
 /**
  * A response whose body is an *open* (never-closing) stream that yields `chunk` on every pull, so
  * that a reader cancellation genuinely invokes the underlying `cancel()` (a pre-closed stream would
- * already be drained, making `cancel()` a no-op).
+ * already be drained, making `cancel()` a no-op). Tracks pulls (how often our reader asked for a
+ * chunk) and whether the stream was cancelled.
  */
 function openStreamResponse(
   chunk: Uint8Array,
-): { response: Response; wasCancelled: () => boolean } {
+  options: { contentLength?: string; cancelError?: unknown } = {},
+): { response: Response; wasCancelled: () => boolean; pullCount: () => number } {
   let cancelled = false;
+  let pulls = 0;
   const stream = new ReadableStream<Uint8Array>({
     pull(controller) {
+      pulls += 1;
       controller.enqueue(chunk);
     },
     cancel() {
       cancelled = true;
+      if (options.cancelError !== undefined) {
+        throw options.cancelError;
+      }
     },
   });
-  return { response: new Response(stream), wasCancelled: () => cancelled };
+  const headers =
+    options.contentLength === undefined ? undefined : { 'content-length': options.contentLength };
+  return {
+    response: new Response(stream, { headers }),
+    wasCancelled: () => cancelled,
+    pullCount: () => pulls,
+  };
+}
+
+/** A response whose body stream errors — at construction or after `afterChunks` chunks. */
+function erroringStreamResponse(
+  error: unknown,
+  afterChunks = 0,
+): { response: Response } {
+  const encoder = new TextEncoder();
+  let pulls = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (afterChunks === 0) {
+        controller.error(error);
+      }
+    },
+    pull(controller) {
+      if (pulls < afterChunks) {
+        pulls += 1;
+        controller.enqueue(encoder.encode('x'));
+        return;
+      }
+      controller.error(error);
+    },
+  });
+  return { response: new Response(stream) };
 }
 
 describe('readResponseTextWithLimit — Content-Length gate', () => {
-  it('rejects before reading when Content-Length exceeds max', async () => {
-    const { response, wasCancelled } = streamResponse([encoder.encode('abc')], '100');
+  it('cancels the body without reading a byte when Content-Length exceeds max', async () => {
+    const { response, wasCancelled, pullCount } = openStreamResponse(encoder.encode('x'), {
+      contentLength: '100',
+    });
     const result = await readResponseTextWithLimit(response, 10);
     expect(result).toEqual({ ok: false, error: { kind: 'RESPONSE_TOO_LARGE' } });
-    // Never entered the stream loop, so the underlying stream was not cancelled by us.
-    expect(wasCancelled()).toBe(false);
+    // Rejected on the header alone: the stream was never pulled, and the body was cancelled.
+    expect(pullCount()).toBe(0);
+    expect(wasCancelled()).toBe(true);
+  });
+
+  it('still returns RESPONSE_TOO_LARGE when the pre-read body cancel throws', async () => {
+    const marker = 'SECRET_PRECHECK_CANCEL_MARKER';
+    const { response, wasCancelled } = openStreamResponse(encoder.encode('x'), {
+      contentLength: '100',
+      cancelError: new Error(marker),
+    });
+    const result = await readResponseTextWithLimit(response, 10);
+    expect(result).toEqual({ ok: false, error: { kind: 'RESPONSE_TOO_LARGE' } });
+    expect(wasCancelled()).toBe(true);
+    expect(JSON.stringify(result)).not.toContain(marker);
   });
 
   it('ignores a malformed Content-Length and streams instead', async () => {
@@ -69,12 +122,70 @@ describe('readResponseTextWithLimit — Content-Length gate', () => {
   });
 });
 
+describe('readResponseTextWithLimit — body stream failures', () => {
+  it('maps a stream that errors before the first chunk to BODY_READ_ERROR', async () => {
+    const marker = 'SECRET_STREAM_ERROR_MARKER';
+    const { response } = erroringStreamResponse(new Error(marker));
+    const result = await readResponseTextWithLimit(response, 1024);
+    expect(result).toEqual({ ok: false, error: { kind: 'BODY_READ_ERROR' } });
+    expect(JSON.stringify(result)).not.toContain(marker);
+  });
+
+  it('maps a stream that errors mid-read to BODY_READ_ERROR', async () => {
+    const marker = 'SECRET_MID_STREAM_MARKER';
+    const { response } = erroringStreamResponse(new Error(marker), 2);
+    const result = await readResponseTextWithLimit(response, 1024);
+    expect(result).toEqual({ ok: false, error: { kind: 'BODY_READ_ERROR' } });
+    expect(JSON.stringify(result)).not.toContain(marker);
+  });
+
+  it('maps a getReader() failure to BODY_READ_ERROR (never throws)', async () => {
+    const marker = 'SECRET_GET_READER_MARKER';
+    const fakeResponse = {
+      headers: new Headers(),
+      body: {
+        getReader() {
+          throw new Error(marker);
+        },
+      },
+    } as unknown as Response;
+    let result: Awaited<ReturnType<typeof readResponseTextWithLimit>>;
+    await expect(
+      (async () => {
+        result = await readResponseTextWithLimit(fakeResponse, 1024);
+      })(),
+    ).resolves.toBeUndefined();
+    expect(result!).toEqual({ ok: false, error: { kind: 'BODY_READ_ERROR' } });
+    expect(JSON.stringify(result!)).not.toContain(marker);
+  });
+
+  it('does not reject its promise on a stream error', async () => {
+    const { response } = erroringStreamResponse(new Error('boom'));
+    await expect(readResponseTextWithLimit(response, 1024)).resolves.toEqual({
+      ok: false,
+      error: { kind: 'BODY_READ_ERROR' },
+    });
+  });
+});
+
 describe('readResponseTextWithLimit — streaming size limit', () => {
   it('rejects and cancels the reader when the running total exceeds max', async () => {
     const { response, wasCancelled } = openStreamResponse(encoder.encode('12345'));
     const result = await readResponseTextWithLimit(response, 7);
     expect(result.ok).toBe(false);
     expect(wasCancelled()).toBe(true);
+  });
+
+  it('keeps RESPONSE_TOO_LARGE even when the overflow cancel throws', async () => {
+    const marker = 'SECRET_OVERFLOW_CANCEL_MARKER';
+    const { response, wasCancelled } = openStreamResponse(encoder.encode('12345'), {
+      cancelError: new Error(marker),
+    });
+    const result = await readResponseTextWithLimit(response, 7);
+    // A cancellation failure must not overwrite the RESPONSE_TOO_LARGE outcome, nor leak.
+    expect(result).toEqual({ ok: false, error: { kind: 'RESPONSE_TOO_LARGE' } });
+    expect(wasCancelled()).toBe(true);
+    expect(JSON.stringify(result)).not.toContain(marker);
   });
 
   it('accepts a body of exactly max bytes', async () => {
