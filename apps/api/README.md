@@ -42,9 +42,27 @@ a project on first run; that step is intentionally deferred to a later PR.
     so the JSON serialization is modelled from the field-type spec; `fcstValue: null` and an empty
     success page are **defensive** allowances (no confirmed official sample) to be re-verified
     against an authenticated JSON response in PR #5.
-- **No real HTTP calls yet.** This boundary performs no `fetch`, reads no `KMA_SERVICE_KEY`, and
-  exposes no `/weather` route. The real HTTP provider (fetch, service key, timeout/retry, and
-  wiring into `@life-weather/weather-core`) is deferred to PR #5.
+- **KMA HTTP forecast provider** — PR #5 connects the boundary above to the real 공공데이터포털
+  **HTTPS** endpoint. `createKmaForecastProvider` / `createKmaForecastProviderFromEnv` perform the
+  `fetch` for `getVilageFcst` / `getUltraSrtFcst`, then run the PR #4 parser + slot grouping and
+  correlate the response against the request. See
+  [docs/kma-http-provider.md](../../docs/kma-http-provider.md). Highlights:
+  - Server-only `KMA_SERVICE_KEY` (일반 인증키/Decoding). Read only when a factory is **called**
+    (never at import); missing/empty/whitespace/leading-or-trailing-whitespace keys return a
+    `CONFIG_ERROR` value (never a throw), and the key never appears in any error.
+  - The key is placed via `URLSearchParams` and encoded **exactly once**; fixed `pageNo=1`,
+    `numOfRows=1000`, `dataType=JSON` (a caller cannot override these).
+  - Node-native `fetch` (`redirect: 'error'`), a default 10s timeout, caller-`AbortSignal` support,
+    and a default 4 MiB response-body cap — all project defensive defaults, no new dependency,
+    **no retry / no cache**.
+  - Classifies errors as `TIMEOUT` / `ABORTED` / `NETWORK_ERROR` / `HTTP_ERROR(status)` /
+    `RESPONSE_TOO_LARGE` / `EMPTY_RESPONSE` / `NON_JSON_RESPONSE` / `INVALID_JSON` /
+    `GATEWAY_ERROR` / `KMA_UPSTREAM_ERROR` / `KMA_INVALID_RESPONSE` / `RESPONSE_MISMATCH` /
+    `INCOMPLETE_PAGE` / `DUPLICATE_CATEGORY` — none carrying the key, URL, raw body, or exception.
+- **Still not implemented.** The final weather-domain normalization (KMA categories → common
+  `HourlyForecast` / contracts), `@life-weather/weather-core` normalizer wiring, a common provider
+  interface, automatic base date/time selection, lat/long → grid conversion, retry, cache, and the
+  `/weather` route are **not** here — those are PR #6 and later.
 
 ### Dependencies
 
@@ -52,3 +70,5 @@ a project on first run; that step is intentionally deferred to a later PR.
   `@life-weather/contracts`).
 - `@life-weather/weather-core` (workspace) — shares `KmaForecastProduct` for slot identity. The
   dependency direction is `apps/api → weather-core`; `weather-core` never depends on `apps/api`.
+- The HTTP provider adds **no new dependency** — it uses Node 22 native `fetch`, `AbortController`,
+  `ReadableStream`, and `TextDecoder`.

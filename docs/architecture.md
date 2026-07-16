@@ -15,9 +15,15 @@
   2자리 숫자(malformed → invalid response), `category`는 `[A-Z0-9]+`만 허용하고, 명백한
   pagination 모순을 거부하며, upstream error에는 **2자리 `resultCode`만** 노출하고 untrusted raw
   `resultMsg`는 공개 오류에 포함하지 않습니다. 공식 예시는 XML 중심이라 JSON scalar·빈 success
-  page·`fcstValue` literal null은 방어적 정책으로 두고 PR #5 실제 JSON 응답에서 재검증합니다.
-  실제 HTTP 호출·`KMA_SERVICE_KEY` 읽기는 아직 없습니다(PR #5 예정). 자세한 내용은
-  [kma-response-boundary.md](./kma-response-boundary.md) 참고.
+  page·`fcstValue` literal null은 방어적 정책으로 두고 인증된 실제 JSON 응답에서 재검증할
+  항목으로 남아 있습니다. PR #5에서는 이 경계를 실제 공공데이터포털 **HTTPS** 호출에 연결하는
+  **KMA HTTP Provider**(`createKmaForecastProvider`/`…FromEnv`)를 구현했습니다 — 서버 전용
+  `KMA_SERVICE_KEY`(import-time env access 없음, decoded key 1회 encoding), native `fetch`,
+  timeout·caller abort·`redirect: 'error'`·response body size 제한, HTTP/gateway XML/JSON 오류
+  분류, PR #4 parser·slot grouping 연결, 요청·응답 consistency·incomplete page 검증. 최종
+  weather-domain 정규화·normalizer 연결·API route는 아직 **미구현**(PR #6 이후)입니다. 자세한
+  내용은 [kma-response-boundary.md](./kma-response-boundary.md)와
+  [kma-http-provider.md](./kma-http-provider.md) 참고.
 - `packages/contracts` — 모바일과 API가 공유할 정규화 요청/응답 계약의 위치입니다. **현재
   상태**: PR #2에서 Zod 4 기반 공유 기상 데이터 계약을 정의했습니다. 자세한 내용은
   [contracts.md](./contracts.md) 참고.
@@ -63,7 +69,7 @@
 순수 TypeScript 함수로 구현할 예정입니다. React Native나 Node.js 런타임에 종속되지 않게 하여,
 모바일과 API 양쪽에서 동일한 로직을 재사용하고 독립적으로 테스트할 수 있도록 합니다.
 
-## 패키지 의존 방향 (PR #4 기준)
+## 패키지 의존 방향 (PR #5 기준)
 
 패키지 의존은 아래 방향만 허용하며, **순환 의존을 금지**합니다.
 
@@ -86,6 +92,11 @@ PR #4에서 `apps/api`는 KMA 원본 응답 경계를 위해 `zod`(런타임 검
 `apps/api`에 의존하지 않습니다(역방향·순환 금지). 신규 HTTP client 라이브러리는 추가하지
 않았습니다.
 
+PR #5의 KMA HTTP Provider도 **신규 dependency를 추가하지 않았습니다.** Node.js 22 native
+`fetch`·`AbortController`·`ReadableStream`·`TextDecoder`만 사용하며, `apps/api`의 의존은
+`weather-core`·`zod`·`hono`로 유지됩니다. HTTP·환경변수 코드는 `apps/api` 내부 관심사이므로
+`weather-core`·`contracts`·`lifestyle-engine`·`apps/mobile`에 넣지 않습니다.
+
 향후 허용 방향:
 
 ```text
@@ -94,16 +105,18 @@ apps/mobile       → contracts
 lifestyle-engine  → contracts
 ```
 
-## 현재 구현 상태 요약 (PR #4 시점)
+## 현재 구현 상태 요약 (PR #5 시점)
 
 - `contracts`: PR #2에서 Zod 4 기반 공유 기상 계약을 정의했습니다.
 - `weather-core`: `classifyFreshness`(PR #2)와 KMA 단기·초단기예보 정규화 primitive(PR #3)가
   구현되어 있습니다. KMA 코드(SKY/PTY)와 범주형 수치(PCP/SNO)의 공통 값 정규화를 담당합니다.
-  실제 KMA Provider·HTTP 호출·`ServiceKey` 처리는 아직 **미구현**(PR #5 예정)입니다.
+  이 normalizer들을 Provider slot 값에 실제로 호출하는 연결은 아직 **미구현**(PR #6 예정)입니다.
 - `apps/api`: `GET /health`에 더해, PR #4에서 KMA **원본 JSON 검증 및 slot extraction**
-  경계(`src/providers/kma`)를 구현했습니다. 이 경계는 원본의 **field presence(필드 존재 여부)**를
-  보존해, 원본의 명시적 null 값(`NULL`)과 필드 누락(`ABSENT`), 실제 값(`VALUE`)을 각각 구분합니다
-  (순수 파서 단독으로는 이 구분이 불가능하기 때문입니다). 실제 HTTP 계층은 아직 **미구현**입니다.
-- Provider HTTP 계층(fetch·서비스 키·timeout/retry·normalizer 연결·API route), 생활지수 계산
-  (`lifestyle-engine`), `config`는 아직 **미구현**이며 스켈레톤만 존재합니다.
+  경계(`src/providers/kma`)를 구현했고, PR #5에서 이를 실제 공공데이터포털 **HTTPS 호출**에
+  연결하는 **KMA HTTP Provider**를 구현했습니다(fetch·서버 전용 `KMA_SERVICE_KEY`·timeout·caller
+  abort·body size 제한·HTTP/gateway/JSON 오류 분류·요청/응답 consistency·slot grouping 연결).
+  경계는 여전히 원본의 **field presence**(`ABSENT`/`NULL`/`VALUE`)를 보존합니다.
+- 최종 weather-domain 정규화(KMA category → 공통 `HourlyForecast`/contracts), normalizer 연결,
+  공통 Provider interface, 자동 발표시각 선택, 위경도→grid 변환, retry, cache, `/weather` route,
+  생활지수 계산(`lifestyle-engine`), `config`는 아직 **미구현**입니다(PR #6 이후).
 - 이 문서의 나머지 "예정" 구조는 앞으로의 합의이며, 위 요약이 현재 코드베이스의 상태입니다.
