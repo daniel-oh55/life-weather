@@ -16,7 +16,9 @@
   수행할 위치입니다. **현재 상태**: PR #2의 결정론적 freshness 판정(`classifyFreshness`)에 더해,
   PR #3에서 기상청(KMA) 단기·초단기예보 정규화 primitive(`normalizeKmaWeatherCondition`,
   `parseKmaPrecipitationAmountMillimeters`, `parseKmaSnowfallAmountCentimeters`)를
-  순수 함수로 구현했습니다. 실제 KMA Provider 및 HTTP 호출은 아직 미구현입니다. 매핑 근거는
+  순수 함수로 구현했습니다. PCP/SNO 파서는 공식 no-amount(`강수없음`/`적설없음`/`-`/`0`)를 `0`으로,
+  Missing 센티넬(수치 `>= 900`)과 파싱 불가·미제공을 `null`로 정규화합니다(PCP만 범위 지원, SNO
+  범위 거부). 실제 KMA Provider 및 HTTP 호출은 아직 미구현입니다. 매핑 근거는
   [kma-normalization.md](./kma-normalization.md) 참고.
 - `packages/lifestyle-engine` — 생활 날씨 지수(우산, 마스크, 옷차림 등)를 순수 함수로 계산할
   위치입니다. **현재 상태**: 스켈레톤만 존재합니다.
@@ -81,7 +83,9 @@ lifestyle-engine  → contracts
 - `contracts`: PR #2에서 Zod 4 기반 공유 기상 계약을 정의했습니다.
 - `weather-core`: `classifyFreshness`(PR #2)와 KMA 단기·초단기예보 정규화 primitive(PR #3)가
   구현되어 있습니다. 실제 KMA Provider·HTTP 호출·`ServiceKey` 처리·원본 응답 스키마는 아직
-  **미구현**(PR #4 예정)입니다.
+  **미구현**(PR #4 예정)입니다. PR #4의 원본 응답 스키마·Provider는 **field presence(필드 존재
+  여부)**를 보존해, 원본의 공식 null 값과 필드 누락(그리고 문자열 `-`·숫자 `0`)을 각각 구분해야
+  합니다. 순수 파서 단독으로는 이 구분이 불가능하기 때문입니다.
 - `apps/api`: `GET /health`만 존재하며, 실제 외부 API 호출은 아직 없습니다.
 - 위에서 설명한 Provider 패턴(HTTP 계층), 생활지수 계산(`lifestyle-engine`), `config`는 아직
   **미구현**이며 스켈레톤만 존재합니다.

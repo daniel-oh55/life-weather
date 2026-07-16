@@ -35,13 +35,21 @@ a common internal weather state, and other weather-domain calculations.
     `SKY`/`PTY` code pair to a `WeatherCondition`. **PTY wins** over `SKY`; `SKY` is consulted
     **only** on the explicit "no precipitation" code (`0`); a missing or unknown `PTY` never
     falls back to `SKY`; anything unmapped (including a `PTY` code valid only for the other
-    product, e.g. 소나기 `4` under 초단기예보) is `UNKNOWN`. The forecast `product` is a
-    required input because the same number can differ across products.
+    product, e.g. 빗방울/눈날림 `5`/`6`/`7` under 단기예보) is `UNKNOWN`. PTY `0`–`4`
+    (없음·비·비/눈·눈·소나기) are shared by both products, so 소나기 `4` → `SHOWER` under both.
+    The forecast `product` is a required input because the same number can differ across
+    products.
   - `parseKmaPrecipitationAmountMillimeters(raw)` / `parseKmaSnowfallAmountCentimeters(raw)` —
-    parse the categorical `PCP` (mm) / `SNO` (cm) forecast strings. "없음" → `0`; an exact
-    number → itself; `T 미만` → `T / 2`; a range `L~U` → lower bound `L`; `T 이상` → lower
-    bound `T`; anything unparseable, missing, negative, or in the wrong unit (cm in `PCP`, mm
-    in `SNO`) → `null`. The result is always `null` or a finite number `>= 0`.
+    parse the categorical `PCP` (mm) / `SNO` (cm) forecast strings. An official "no amount"
+    reading (`강수없음`/`적설없음`, the hyphen `-`, `0`/`0.0`) → `0`; an exact number → itself;
+    `T 미만` → `T / 2`; `T 이상` → lower bound `T`; a range `L~U` → lower bound `L` (**`PCP`
+    only** — `SNO` has no official range, so a `SNO` range string → `null`). An official Missing
+    sentinel (any numeric component `>= 900`, mirroring `+900 이상`/`-900 이하`), a value in the
+    wrong unit (cm in `PCP`, mm in `SNO`), a negative value, a JavaScript `null`/`undefined`
+    argument, or an unparseable string → `null`. The result is always `null` or a finite number
+    `>= 0` and `< 900`. A JavaScript `null`/`undefined` argument means "no value supplied by the
+    caller" (→ `null`) and is deliberately **not** collapsed into the `0` of the official `-`
+    token — see [docs/kma-normalization.md](../../docs/kma-normalization.md).
 
 All exports are re-exported from `src/index.ts`.
 
@@ -55,7 +63,13 @@ This PR adds the KMA forecast **normalization primitives** above (alongside the 
 `classifyFreshness`). It still makes **no network calls** and reads **no KMA API key** — it
 only transforms raw values that a caller supplies. The actual KMA HTTP provider, `ServiceKey`
 handling, and the raw-response runtime schema are deferred to PR #4. Unknown/undefined
-`SKY`/`PTY` codes normalize to `UNKNOWN`, and unparseable `PCP`/`SNO` values to `null`.
+`SKY`/`PTY` codes normalize to `UNKNOWN`, and unparseable/missing `PCP`/`SNO` values to `null`.
+
+Because a bare parser cannot tell "field present with an official null value" from "field
+absent," PR #4's raw-response schema and provider must preserve **field presence** and decide
+the official null meaning there — distinguishing (1) field present + official null, (2) field
+absent, (3) the string `-`, and (4) a numeric/string `0`. This parser does not turn a
+JavaScript `null`/`undefined` argument into `0`.
 
 `weather-core` has **no runtime dependencies** — in particular no Zod and no runtime
 dependency on `@life-weather/contracts`. `contracts` is a **dev-only** dependency used solely

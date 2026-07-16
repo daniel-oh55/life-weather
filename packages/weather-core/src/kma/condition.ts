@@ -6,8 +6,8 @@
  * The code meanings come from the official KMA guide — see `docs/kma-normalization.md`
  * (`기상청_단기예보 조회서비스`, 공공데이터 ID `15084084`, 활용가이드 `2607`). The same numeric
  * code can mean different things across products, so the forecast product is an explicit,
- * required part of the input; PTY `4`/`5`/`6`/`7` are product-specific and are treated as
- * `UNKNOWN` for the product that does not define them.
+ * required part of the input; PTY `0`–`4` are shared by 단기예보 and 초단기예보, while PTY
+ * `5`/`6`/`7` are 초단기예보-only and are treated as `UNKNOWN` under 단기예보.
  *
  * This module is pure and deterministic: no network, no environment access, no system clock,
  * no global mutable state. It never mutates its input, and given the same input it always
@@ -86,15 +86,16 @@ const SHORT_FORECAST_PRECIPITATION = new Map<string, KmaWeatherCondition>([
 ]);
 
 /**
- * PTY (강수형태) → precipitation condition for 초단기예보: 비(1), 비/눈(2), 눈(3),
- * 빗방울(5), 빗방울눈날림(6), 눈날림(7). There is no 소나기(4) in this product, and the
- * light/flurry variants fold into the nearest common state: 빗방울 → `RAIN`,
+ * PTY (강수형태) → precipitation condition for 초단기예보: 비(1), 비/눈(2), 눈(3), 소나기(4),
+ * 빗방울(5), 빗방울눈날림(6), 눈날림(7). 소나기(4) is shared with 단기예보; the light/flurry
+ * variants that only 초단기예보 defines fold into the nearest common state: 빗방울 → `RAIN`,
  * 빗방울눈날림 → `SLEET`, 눈날림 → `SNOW`.
  */
 const ULTRA_SHORT_FORECAST_PRECIPITATION = new Map<string, KmaWeatherCondition>([
   ['1', 'RAIN'], // 비
   ['2', 'SLEET'], // 비/눈
   ['3', 'SNOW'], // 눈
+  ['4', 'SHOWER'], // 소나기
   ['5', 'RAIN'], // 빗방울
   ['6', 'SLEET'], // 빗방울눈날림
   ['7', 'SNOW'], // 눈날림
@@ -135,8 +136,8 @@ function normalizeCode(code: string | null | undefined): string | null {
  *    no-precipitation code (`0`) is SKY consulted.
  * 3. **No fallback on a missing/unknown PTY.** If PTY is `null`, `undefined`, empty,
  *    whitespace-only, or a code not defined for this product (including a code that is only
- *    valid for the *other* product, e.g. `4` under 초단기예보), the result is `UNKNOWN` — SKY
- *    is never used to guess.
+ *    valid for the *other* product, e.g. `5`/`6`/`7` under 단기예보), the result is `UNKNOWN`
+ *    — SKY is never used to guess.
  * 4. **Unknown/missing SKY under no-precipitation is `UNKNOWN`.** With PTY `0` but a
  *    `null`/`undefined`/empty/unknown SKY, the result is `UNKNOWN`.
  *
