@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@life-weather/contracts": "workspace:*",
     "typescript": "~6.0.3",
     "vitest": "^4.1.10"
   }

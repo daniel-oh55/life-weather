@@ -13,8 +13,13 @@
   상태**: PR #2에서 Zod 4 기반 공유 기상 데이터 계약을 정의했습니다. 자세한 내용은
   [contracts.md](./contracts.md) 참고.
 - `packages/weather-core` — 공급자별 날씨 코드를 공통 날씨 상태로 정규화하고 기상 도메인 계산을
-  수행할 위치입니다. **현재 상태**: PR #2에서 결정론적 freshness 판정 함수(`classifyFreshness`)
-  하나를 구현했습니다. 코드 매핑 등 Provider 정규화는 아직 미구현입니다.
+  수행할 위치입니다. **현재 상태**: PR #2의 결정론적 freshness 판정(`classifyFreshness`)에 더해,
+  PR #3에서 기상청(KMA) 단기·초단기예보 정규화 primitive(`normalizeKmaWeatherCondition`,
+  `parseKmaPrecipitationAmountMillimeters`, `parseKmaSnowfallAmountCentimeters`)를
+  순수 함수로 구현했습니다. PCP/SNO 파서는 공식 no-amount(`강수없음`/`적설없음`/`-`/`0`)를 `0`으로,
+  Missing 센티넬(수치 `>= 900`)과 파싱 불가·미제공을 `null`로 정규화합니다(PCP만 범위 지원, SNO
+  범위 거부). 실제 KMA Provider 및 HTTP 호출은 아직 미구현입니다. 매핑 근거는
+  [kma-normalization.md](./kma-normalization.md) 참고.
 - `packages/lifestyle-engine` — 생활 날씨 지수(우산, 마스크, 옷차림 등)를 순수 함수로 계산할
   위치입니다. **현재 상태**: 스켈레톤만 존재합니다.
 - `packages/config` — 비밀이 아닌 공유 설정/상수의 위치입니다. **현재 상태**: 스켈레톤만
@@ -31,8 +36,10 @@
 
 향후 `apps/api`는 기상청/에어코리아 같은 각 외부 데이터 소스를 "Provider"로 캡슐화하는 패턴을
 도입할 예정입니다. 각 Provider는 외부 API의 원시 응답을 가져오는 역할만 하고, 그 응답을 공통
-모델로 변환하는 책임은 `packages/weather-core`가 가집니다. 이 구조는 아직 코드로 존재하지
-않습니다.
+모델로 변환하는 책임은 `packages/weather-core`가 가집니다. Provider(HTTP 호출) 자체는 아직
+코드로 존재하지 않지만, KMA 원본 SKY/PTY/PCP/SNO 값을 공통 값으로 바꾸는 정규화 함수는 PR #3에서
+`weather-core`에 구현되어, 후속 Provider가 원본 값을 이 함수들에 전달하기만 하면 되도록
+준비되어 있습니다.
 
 ## 정규화 원칙 (적용 예정)
 
@@ -47,7 +54,7 @@
 순수 TypeScript 함수로 구현할 예정입니다. React Native나 Node.js 런타임에 종속되지 않게 하여,
 모바일과 API 양쪽에서 동일한 로직을 재사용하고 독립적으로 테스트할 수 있도록 합니다.
 
-## 패키지 의존 방향 (PR #2 기준)
+## 패키지 의존 방향 (PR #3 기준)
 
 패키지 의존은 아래 방향만 허용하며, **순환 의존을 금지**합니다.
 
@@ -55,8 +62,13 @@
 
 ```text
 contracts    → zod
-weather-core → (PR #2에서는 런타임 의존 없음)
+weather-core → (런타임 의존 없음; contracts는 타입 검증용 devDependency)
 ```
+
+`weather-core`는 런타임에 zod에도 contracts에도 의존하지 않습니다. PR #3에서 상태 정규화의
+반환 타입이 contracts의 `WeatherCondition`에 할당 가능한지를 **컴파일 타임 타입 테스트**로만
+검증하기 위해 `@life-weather/contracts`를 **devDependency**로 추가했습니다. 실제 배포 모듈은
+contracts 타입이나 런타임을 import하지 않으므로 소비자에게 미선언 의존을 강제하지 않습니다.
 
 향후 허용 방향:
 
@@ -66,13 +78,15 @@ apps/mobile       → contracts
 lifestyle-engine  → contracts
 ```
 
-`weather-core`는 이번 PR에서 `contracts`에 의존하지 않습니다. 생활지수 엔진이 실제로 freshness
-기능을 필요로 할 때에만 `weather-core` 의존을 추가합니다. 불필요한 workspace 의존을 미리 추가하지
-않습니다.
+## 현재 구현 상태 요약 (PR #3 시점)
 
-## PR #1 시점의 실제 상태 요약
-
-- 위에서 설명한 Provider 패턴, 정규화 로직, 생활지수 계산은 모두 **미구현**입니다.
-- 4개 공통 패키지는 목적을 설명하는 README와 컴파일 가능한 빈 엔트리(`export {}`)만 가지고
-  있습니다.
-- 이 문서는 앞으로의 구조에 대한 합의이지, 현재 코드베이스의 상태를 설명하는 것이 아닙니다.
+- `contracts`: PR #2에서 Zod 4 기반 공유 기상 계약을 정의했습니다.
+- `weather-core`: `classifyFreshness`(PR #2)와 KMA 단기·초단기예보 정규화 primitive(PR #3)가
+  구현되어 있습니다. 실제 KMA Provider·HTTP 호출·`ServiceKey` 처리·원본 응답 스키마는 아직
+  **미구현**(PR #4 예정)입니다. PR #4의 원본 응답 스키마·Provider는 **field presence(필드 존재
+  여부)**를 보존해, 원본의 공식 null 값과 필드 누락(그리고 문자열 `-`·숫자 `0`)을 각각 구분해야
+  합니다. 순수 파서 단독으로는 이 구분이 불가능하기 때문입니다.
+- `apps/api`: `GET /health`만 존재하며, 실제 외부 API 호출은 아직 없습니다.
+- 위에서 설명한 Provider 패턴(HTTP 계층), 생활지수 계산(`lifestyle-engine`), `config`는 아직
+  **미구현**이며 스켈레톤만 존재합니다.
+- 이 문서의 나머지 "예정" 구조는 앞으로의 합의이며, 위 요약이 현재 코드베이스의 상태입니다.
