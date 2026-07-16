@@ -8,7 +8,11 @@
 - `apps/mobile` — Expo Router 기반 모바일 앱. 화면, 네비게이션, 사용자 입력 처리를 담당합니다.
   외부 공공데이터 API를 직접 호출하지 않습니다 (아래 참고).
 - `apps/api` — Hono 기반 백엔드. 외부 공공데이터 API 호출, API 키 보관, 응답 정규화를 담당할
-  위치입니다. **현재 상태**: `GET /health`만 존재하며, 실제 외부 호출은 아직 없습니다.
+  위치입니다. **현재 상태**: `GET /health`에 더해, PR #4에서 기상청(KMA) **원본 응답 경계**
+  (`src/providers/kma`)를 구현했습니다 — 단기·초단기예보 원본 JSON의 Zod 런타임 검증, 성공·
+  upstream error·invalid response 분류, forecast slot 그룹화 및 field-presence(ABSENT/NULL/
+  VALUE) 모델. 실제 HTTP 호출·`KMA_SERVICE_KEY` 읽기는 아직 없습니다(PR #5 예정). 자세한 내용은
+  [kma-response-boundary.md](./kma-response-boundary.md) 참고.
 - `packages/contracts` — 모바일과 API가 공유할 정규화 요청/응답 계약의 위치입니다. **현재
   상태**: PR #2에서 Zod 4 기반 공유 기상 데이터 계약을 정의했습니다. 자세한 내용은
   [contracts.md](./contracts.md) 참고.
@@ -54,7 +58,7 @@
 순수 TypeScript 함수로 구현할 예정입니다. React Native나 Node.js 런타임에 종속되지 않게 하여,
 모바일과 API 양쪽에서 동일한 로직을 재사용하고 독립적으로 테스트할 수 있도록 합니다.
 
-## 패키지 의존 방향 (PR #3 기준)
+## 패키지 의존 방향 (PR #4 기준)
 
 패키지 의존은 아래 방향만 허용하며, **순환 의존을 금지**합니다.
 
@@ -63,12 +67,19 @@
 ```text
 contracts    → zod
 weather-core → (런타임 의존 없음; contracts는 타입 검증용 devDependency)
+apps/api     → weather-core, zod, hono
 ```
 
 `weather-core`는 런타임에 zod에도 contracts에도 의존하지 않습니다. PR #3에서 상태 정규화의
 반환 타입이 contracts의 `WeatherCondition`에 할당 가능한지를 **컴파일 타임 타입 테스트**로만
 검증하기 위해 `@life-weather/contracts`를 **devDependency**로 추가했습니다. 실제 배포 모듈은
 contracts 타입이나 런타임을 import하지 않으므로 소비자에게 미선언 의존을 강제하지 않습니다.
+
+PR #4에서 `apps/api`는 KMA 원본 응답 경계를 위해 `zod`(런타임 검증)와
+`@life-weather/weather-core`(slot 식별에 쓰는 `KmaForecastProduct` 공유)를 런타임 의존으로
+추가했습니다. 의존 방향은 `apps/api → weather-core`이며, `weather-core`나 `contracts`가
+`apps/api`에 의존하지 않습니다(역방향·순환 금지). 신규 HTTP client 라이브러리는 추가하지
+않았습니다.
 
 향후 허용 방향:
 
@@ -78,15 +89,16 @@ apps/mobile       → contracts
 lifestyle-engine  → contracts
 ```
 
-## 현재 구현 상태 요약 (PR #3 시점)
+## 현재 구현 상태 요약 (PR #4 시점)
 
 - `contracts`: PR #2에서 Zod 4 기반 공유 기상 계약을 정의했습니다.
 - `weather-core`: `classifyFreshness`(PR #2)와 KMA 단기·초단기예보 정규화 primitive(PR #3)가
-  구현되어 있습니다. 실제 KMA Provider·HTTP 호출·`ServiceKey` 처리·원본 응답 스키마는 아직
-  **미구현**(PR #4 예정)입니다. PR #4의 원본 응답 스키마·Provider는 **field presence(필드 존재
-  여부)**를 보존해, 원본의 공식 null 값과 필드 누락(그리고 문자열 `-`·숫자 `0`)을 각각 구분해야
-  합니다. 순수 파서 단독으로는 이 구분이 불가능하기 때문입니다.
-- `apps/api`: `GET /health`만 존재하며, 실제 외부 API 호출은 아직 없습니다.
-- 위에서 설명한 Provider 패턴(HTTP 계층), 생활지수 계산(`lifestyle-engine`), `config`는 아직
-  **미구현**이며 스켈레톤만 존재합니다.
+  구현되어 있습니다. KMA 코드(SKY/PTY)와 범주형 수치(PCP/SNO)의 공통 값 정규화를 담당합니다.
+  실제 KMA Provider·HTTP 호출·`ServiceKey` 처리는 아직 **미구현**(PR #5 예정)입니다.
+- `apps/api`: `GET /health`에 더해, PR #4에서 KMA **원본 JSON 검증 및 slot extraction**
+  경계(`src/providers/kma`)를 구현했습니다. 이 경계는 원본의 **field presence(필드 존재 여부)**를
+  보존해, 원본의 명시적 null 값(`NULL`)과 필드 누락(`ABSENT`), 실제 값(`VALUE`)을 각각 구분합니다
+  (순수 파서 단독으로는 이 구분이 불가능하기 때문입니다). 실제 HTTP 계층은 아직 **미구현**입니다.
+- Provider HTTP 계층(fetch·서비스 키·timeout/retry·normalizer 연결·API route), 생활지수 계산
+  (`lifestyle-engine`), `config`는 아직 **미구현**이며 스켈레톤만 존재합니다.
 - 이 문서의 나머지 "예정" 구조는 앞으로의 합의이며, 위 요약이 현재 코드베이스의 상태입니다.

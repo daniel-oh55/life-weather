@@ -10,9 +10,15 @@ importers:
 
   apps/api:
     dependencies:
+      '@life-weather/weather-core':
+        specifier: workspace:*
+        version: link:../../packages/weather-core
       hono:
         specifier: ^4.12.30
         version: 4.12.30
+      zod:
+        specifier: ^4.1.11
+        version: 4.1.11
     devDependencies:
       '@types/node':
         specifier: ~22.20.1
