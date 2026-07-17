@@ -64,7 +64,7 @@
 | --- | --- | --- |
 | `temperatureCelsius` | `T1H` | 기온 (℃) |
 | `condition` | `SKY` + `PTY` | 하늘상태 + 강수형태 (코드값) |
-| `precipitationProbabilityPercent` | `POP` | (초단기예보는 미제공 → `null`) |
+| `precipitationProbabilityPercent` | `POP` | 강수확률(%), 2026-06-23 12 KST 이후 초단기예보 제공 |
 | `precipitationAmountMillimeters` | `RN1` | 1시간 강수량 (범주, 1 mm) |
 | `snowfallAmountCentimeters` | (없음) | 초단기예보는 신적설 미제공 → `null` |
 | `humidityPercent` | `REH` | 습도 (%) |
@@ -115,11 +115,25 @@
 
 ## 초단기예보 POP 정책
 
-- **공식 근거:** "코드값 정보" 표에서 초단기예보(`getUltraSrtFcst`) category 목록에는 **`POP`
-  (강수확률)이 없습니다.** POP는 단기예보에만 제공됩니다.
-- 따라서 초단기예보 slot에는 POP가 `ABSENT`인 것이 정상입니다. 이는 오류가 아니라 nullable field의
-  `null`로 처리합니다(`precipitationProbabilityPercent: null`). 단기예보에서는 POP가 존재하면 값을,
-  없으면 `null`을 반환합니다.
+- **공식 근거:** 기상청 API 허브(`apihub.kma.go.kr`, `seqApi=10`)의 `2.2 초단기예보` 예보변수
+  목록은 **`POP(강수확률)`을 `2026.6.23. 12KST 이후부터 제공`** 한다고 명시합니다(확인일
+  2026-07-17). 즉 초단기예보(`getUltraSrtFcst`)도 최신 발표분에서는 POP를 제공합니다.
+- 따라서 최신 발표분의 초단기예보 slot에는 POP `VALUE`가 정상적으로 존재할 수 있습니다. 값이
+  존재하면 다른 상품과 동일하게 `parseKmaPercentage`로 `0~100` percentage로 파싱합니다.
+- POP가 `ABSENT`(rollout 이전 발표분·부분 응답·방어적 누락 등)이거나 `NULL`이면 오류가 아니라
+  nullable field의 `null`로 처리합니다(`precipitationProbabilityPercent: null`). VALUE가
+  malformed·out-of-range·Missing이면 마찬가지로 `null`이며, raw 값은 노출하지 않습니다.
+- normalizer는 **발표일자 조건을 하드코딩하지 않고** slot의 field presence만 해석합니다. 단기·
+  초단기 어느 상품이든 POP 조립 코드는 동일합니다(`getKmaForecastField` → presence 분기 →
+  존재하면 `parseKmaPercentage`, 아니면 `null`).
+- **live 검증 대상:** 실제 인증된 공공데이터포털 JSON에서 초단기예보 POP가 반환되는 구체적
+  형태(키 존재·값 표기)는 실제 키를 이용한 후속 live 통합 검증으로 확인할 항목입니다.
+
+> 공식 자료 시점 차이: 기존 활용가이드 DOCX "코드값 정보" 표에는 초단기예보 category에 POP가
+> 빠져 있으나, 이는 rollout(2026-06-23) 이전의 오래된/동기화 전 표일 가능성이 있습니다. 현재 제공
+> 상태의 근거로는 최신 API 허브의 운영 변수 목록을 사용하며, 두 공식 자료가 시점 차이를 보인다는
+> 사실 자체를 숨기지 않고 기록합니다. 응답의 구체적 존재 형태는 인증 JSON 검증 전까지 과도하게
+> 단정하지 않습니다.
 
 ## scalar parser grammar (weather-core)
 
@@ -291,8 +305,10 @@ const normalized = normalizeKmaHourlyForecast(providerResult.forecast);
 
 - 실제 사용자/운영 `KMA_SERVICE_KEY`는 사용하지 않았습니다.
 - 자동 테스트는 실제 네트워크를 호출하지 않고, in-memory slot fixture만 사용합니다.
-- category·단위·범주·Missing·POP 정책은 공식 활용가이드 원문으로 확인했으나, 인증된 실제 JSON
-  응답으로의 end-to-end 검증(PR #4·#5의 방어적 허용 포함)은 실제 키가 필요하며 후속 과제입니다.
+- category·단위·범주·Missing 규칙은 공식 활용가이드 원문으로, 초단기예보 POP 제공 시작
+  (2026-06-23 12 KST)은 기상청 API 허브 운영 변수 목록으로 확인했으나, 인증된 실제 JSON
+  응답으로의 end-to-end 검증(방어적 허용 및 초단기 POP 반환 형태 포함)은 실제 키가 필요하며 후속
+  live 통합 검증 과제입니다.
 
 ## 변경 이력
 
@@ -303,5 +319,13 @@ v1 / PR #6 / 2026-07
 - weather-core scalar parser(기온·%·WSD·VEC)와 Missing(±900)·VEC 360 정책 도입
 - ABSENT/NULL/VALUE field-presence 정책, 필수 temperature 오류, nullable field null 정책
 - KST forecastAt 생성, feelsLike null, contracts runtime validation, 결정론적 정렬·issue order
-- 공식 근거: RN1=PCP 강수량 범주 동일, 초단기예보 POP 미제공, ±900 Missing, VEC 360=0(북)
+- 공식 근거: RN1=PCP 강수량 범주 동일, ±900 Missing, VEC 360=0(북)
+
+v1.1 / PR #6 / 2026-07 (공식 POP rollout 정정)
+- 초단기예보 POP 정책 정정: 기상청 API 허브 `2.2 초단기예보` 변수 목록이 POP를 2026-06-23 12 KST
+  이후 제공한다고 명시(확인일 2026-07-17). "초단기예보 POP 미제공" 서술은 오래된 DOCX 표 기준의
+  잘못된 설명이었으므로 제거.
+- runtime 무변경: POP 존재 시 `parseKmaPercentage`로 파싱, ABSENT/NULL/malformed → `null`.
+  발표일자 하드코딩 분기 없이 slot presence만 해석하는 기존 동작이 이미 이 정책을 충족.
+- 실제 인증 JSON의 POP 반환 형태는 후속 live 통합 검증 항목으로 명시.
 ```

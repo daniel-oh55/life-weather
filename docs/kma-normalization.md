@@ -7,10 +7,19 @@
 구현 위치:
 
 - [condition.ts](../packages/weather-core/src/kma/condition.ts) — SKY/PTY → `WeatherCondition`
-- [amount.ts](../packages/weather-core/src/kma/amount.ts) — PCP(mm) / SNO(cm) 수치 파서
+- [amount.ts](../packages/weather-core/src/kma/amount.ts) — PCP(mm) / SNO(cm) 범주형 수치 파서
+- [scalar.ts](../packages/weather-core/src/kma/scalar.ts) — TMP/T1H, POP/REH, WSD, VEC scalar 파서
 
-이 PR에서는 **순수 정규화 함수만** 구현합니다. 실제 KMA HTTP 호출, `ServiceKey` 처리,
-Provider 클래스, 원본 응답 스키마는 후속 PR(#4) 범위입니다.
+`weather-core`는 **순수 정규화 함수만** 제공합니다(HTTP 호출·`ServiceKey`·Provider 클래스·원본
+응답 스키마는 이 패키지 범위 아님). 이 함수들을 실제 응답에 연결하는 파이프라인은 다음 순서로
+구현되었습니다.
+
+- **PR #3:** `weather-core` condition(SKY/PTY) + amount(PCP/SNO) primitive 구현.
+- **PR #4:** `apps/api/src/providers/kma`에 raw JSON boundary와 ABSENT/NULL/VALUE slot grouping 구현.
+- **PR #5:** 실제 공공데이터포털 HTTPS 호출을 수행하는 KMA HTTP Provider 구현.
+- **PR #6:** `weather-core` scalar 파서(`scalar.ts`)를 추가하고, slot 값을 조건·범주·scalar 파서에
+  연결해 contracts `HourlyForecast`로 정규화하는 adapter를 `apps/api`에 구현.
+- **후속:** `WeatherOverview`, `/weather` API route, `CurrentWeather`, `DailyForecast`.
 
 ## 출처
 
@@ -169,7 +178,8 @@ SKY 코드 체계는 두 상품이 동일합니다.
   undefined`이고, 파서 단독으로는 "필드가 존재하며 값이 null"인 경우와 "필드 자체가 누락된
   경우"를 구분할 수 없기 때문입니다. 임의로 `null → 0`을 적용하면 실제 데이터 미제공이 강수/적설
   없음으로 잘못 바뀔 위험이 있습니다.
-- **후속 위험(PR #4).** KMA 원본 응답 runtime schema와 Provider는 다음 네 경우를 각각 구분해
+- **Provider 경계 요구사항(PR #3에서 식별, PR #4에서 해결).** KMA 원본 응답 runtime schema와
+  Provider는 다음 네 경우를 각각 구분해
   처리해야 합니다: (1) 필드 존재 + 공식 null 값, (2) 필드 미존재, (3) 필드 존재 + 문자열 `-`,
   (4) 필드 존재 + 숫자/문자열 `0`. Provider는 원본 객체의 **field presence(필드 존재 여부)**를
   보존한 상태에서 공식 null 의미를 결정해야 합니다.

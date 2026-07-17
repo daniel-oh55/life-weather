@@ -167,6 +167,8 @@ describe('normalizeKmaHourlyForecast — ultra-short forecast (초단기예보) 
     const [entry] = result.hourly;
     expect(entry.temperatureCelsius).toBe(18.2);
     expect(entry.condition).toBe('RAIN'); // PTY 1 wins over SKY
+    // 초단기예보 POP is officially provided since 2026-06-23 12 KST: a present POP VALUE is parsed
+    // like any other product, with no date-based branching (absence stays nullable — see below).
     expect(entry.precipitationProbabilityPercent).toBe(60);
     expect(entry.precipitationAmountMillimeters).toBe(30); // RN1 lower bound, same grammar as PCP
     expect(entry.snowfallAmountCentimeters).toBeNull(); // no 신적설 in 초단기예보
@@ -177,7 +179,7 @@ describe('normalizeKmaHourlyForecast — ultra-short forecast (초단기예보) 
     expect(hourlyForecast.safeParse(entry).success).toBe(true);
   });
 
-  it('treats an ABSENT POP (초단기예보 provides none) as null, not an error', () => {
+  it('treats an ABSENT ultra-short POP as null for pre-rollout, partial, or defensively incomplete responses', () => {
     const result = normalizeKmaHourlyForecast(
       makeForecast([
         makeSlot({

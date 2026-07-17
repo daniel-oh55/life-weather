@@ -12,8 +12,9 @@ interface/type을 중복 작성하지 않습니다.
 - 이 계약은 이미 공통 모델로 정규화된 데이터를 다룹니다. 기상청(KMA)·에어코리아(AirKorea)
   원본 응답 스키마, Provider 인터페이스, 실제 API 호출은 **이 계약(`contracts`)의 범위가
   아닙니다**. SKY/PTY/PCP/SNO 원본 값을 공통 값으로 바꾸는 KMA 정규화 함수는 PR #3에서
-  `@life-weather/weather-core`에 구현되었고(계약에는 정규화 결과만 담김), 실제 HTTP Provider는
-  후속 PR(#4)에서 다룹니다.
+  `@life-weather/weather-core`에 구현되었고, KMA 원본 응답 경계는 PR #4, 실제 HTTP Provider는
+  PR #5, 시간별 정규화 adapter는 PR #6에서 `apps/api`에 구현되었습니다(계약에는 여전히 정규화
+  결과만 담김).
 - 계약은 런타임 검증(스키마)과 컴파일 타임 타입(추론)을 동시에 제공합니다. 네트워크 경계에서
   들어오는 데이터는 반드시 스키마로 파싱한 뒤 사용합니다.
 

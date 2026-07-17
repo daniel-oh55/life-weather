@@ -53,21 +53,28 @@
 변경에 앱 배포 없이 대응할 수 없습니다. 따라서 모바일은 항상 `apps/api`를 통해서만 날씨 데이터를
 조회하도록 설계할 예정입니다.
 
-## API Provider 패턴 (도입 예정, 미구현)
+## API Provider 패턴 (KMA 도입 완료, 추가 Provider 확장 예정)
 
-향후 `apps/api`는 기상청/에어코리아 같은 각 외부 데이터 소스를 "Provider"로 캡슐화하는 패턴을
-도입할 예정입니다. 각 Provider는 외부 API의 원시 응답을 가져오는 역할만 하고, 그 응답을 공통
-모델로 변환하는 책임은 `packages/weather-core`가 가집니다. Provider(HTTP 호출) 자체는 아직
-코드로 존재하지 않지만, KMA 원본 SKY/PTY/PCP/SNO 값을 공통 값으로 바꾸는 정규화 함수는 PR #3에서
-`weather-core`에 구현되어, 후속 Provider가 원본 값을 이 함수들에 전달하기만 하면 되도록
-준비되어 있습니다.
+`apps/api`는 기상청/에어코리아 같은 각 외부 데이터 소스를 "Provider"로 캡슐화하는 패턴을 씁니다.
+각 Provider는 외부 API의 원시 응답을 가져오는 역할(HTTP 호출·raw boundary·slot 그룹화)만 하고, 그
+응답을 공통 모델로 변환하는 책임은 정규화 계층(`packages/weather-core`의 순수 파서 + `apps/api`의
+slot adapter)이 가집니다. **KMA HTTP Provider는 PR #5에서 구현 완료**되어 실제 공공데이터포털
+HTTPS 호출·raw boundary·forecast slot 그룹화를 담당하고, **KMA 시간별 정규화 adapter는 PR #6에서
+구현 완료**되어 provider-native raw 값을 contracts `HourlyForecast`로 정규화합니다(원본 SKY/PTY/PCP
+등의 정규화 primitive는 PR #3의 `weather-core`). 아직 구현되지 않은 것은 `AirKoreaProvider`와 여러
+Provider를 아우르는 **공통 다중 Provider interface**이며, 이는 후속 PR에서 도입할 예정입니다.
+Provider(원시 응답 취득)와 normalizer(공통 모델 변환)의 책임 경계는 그대로 유지합니다.
 
-## 정규화 원칙 (적용 예정)
+## 정규화 원칙 (KMA 시간별 예보에 적용, 범위 확장 예정)
 
 외부 API 응답(기상청 날씨 코드, 에어코리아 대기질 등급 등)은 API 계층에서 바로 모바일로
 전달하지 않고, `packages/weather-core`에서 공통 내부 모델로 정규화한 뒤 `packages/contracts`에
-정의된 계약 형태로 모바일에 전달할 예정입니다. 이렇게 하면 특정 공급자의 API가 바뀌더라도
-모바일 앱과 생활지수 로직은 영향을 받지 않습니다.
+정의된 계약 형태로 모바일에 전달합니다. 이렇게 하면 특정 공급자의 API가 바뀌더라도 모바일 앱과
+생활지수 로직은 영향을 받지 않습니다. **KMA 시간별 예보에는 이미 적용 완료**입니다: SKY/PTY/PCP/
+RN1/SNO/TMP/T1H/POP/REH/WSD/VEC를 공통 값으로 정규화하고 contracts `HourlyForecast`로 조립합니다
+(PR #3·#6). 아직 정규화가 연결되지 않은 `CurrentWeather`, `DailyForecast`, `WeatherOverview`,
+에어코리아(AirKorea) 대기질은 후속 PR 범위입니다. 어느 경우든 provider raw 값을 모바일에 직접
+노출하지 않는 원칙은 동일하게 유지합니다.
 
 ## 생활지수 로직의 위치 원칙
 

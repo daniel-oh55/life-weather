@@ -152,7 +152,7 @@ normalizer 연결, API route는 **아직 존재하지 않으며** 후속 PR(#5) 
 | `baseTime` 자릿수 | 응답 명세 "항목크기" 열이 단기예보에서 `6`으로 표기되나 샘플은 `"0500"`(4자리)이고 형식은 `HH24MI` | `HHmm` 4자리, 시 00–23·분 00–59 | 샘플·형식·초단기예보 명세(4)와 일치. "6"은 문서 오타로 판단 |
 | `resultCode` | 응답 명세 항목크기 `2`, 샘플 `"00"`, 에러코드 표는 모두 2자리. XML 예시 본문은 `0`으로 축약 표기 | **정확히 2자리 숫자** `/^\d{2}$/` (coercion 금지) | 명세·에러코드 표(모두 2자리) 우선. XML 축약은 근거로 쓰지 않음. malformed 코드는 upstream error가 아니라 invalid response |
 | `nx`/`ny` 범위 | 항목크기 `2`로 표기되나 샘플이 `127`(3자리) | 정수 `>= 0`, 상한 미적용 | 문서가 유효 범위를 신뢰성 있게 명시하지 않아 상한을 추측하지 않음. 위경도→grid 변환은 이 PR 범위 아님 |
-| `fcstValue` 타입 | 명세상 문자열(TMP 등 "실수로 제공" 자료도 `"-2"` 형태). **공식 JSON에 number·literal `null` 표기는 확인 안 됨** | `string \| null` (number 불가) | 아래 "fcstValue 정책" 참조. **근거 성격**: 문자열은 명세 근거, `null`은 field-presence 모델용 **방어적 허용**(미확인), PR #5 실제 JSON으로 재검증 |
+| `fcstValue` 타입 | 명세상 문자열(TMP 등 "실수로 제공" 자료도 `"-2"` 형태). **공식 JSON에 number·literal `null` 표기는 확인 안 됨** | `string \| null` (number 불가) | 아래 "fcstValue 정책" 참조. **근거 성격**: 문자열은 명세 근거, `null`은 field-presence 모델용 **방어적 허용**(미확인). 실제 키를 이용한 후속 live 통합 검증에서 재확인 대상(완료된 PR에서 검증되지 않음) |
 
 원문과 샘플이 충돌할 때는 임의로 하나를 고르지 않고, 위 표처럼 실제 공식 샘플·형식 설명을
 우선하고 선택 근거와 남은 위험을 기록했습니다.
@@ -365,7 +365,8 @@ type KmaForecastFieldLookup =
   않습니다. 실제로 `null`이 오지 않는다면 `NULL` 상태가 파싱 결과에서 도달 불가능해질 뿐 모델은
   그대로 유효합니다. 이 PR은 `fcstValue`를 PCP/SNO parser에 넘기지 않습니다(PR #5).
   **정리:** 공식 JSON literal null 사례는 미확인 → field-presence 경계를 위해 방어적으로 허용 →
-  PR #5에서 인증된 실제 JSON 응답으로 재검증.
+  실제 키를 이용한 후속 live 통합 검증에서 인증된 실제 JSON 응답으로 재확인(특정 완료된 PR에서
+  검증되지 않음).
 
 ### 빈 성공 page 정책 (공식 사례 미확인)
 

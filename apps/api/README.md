@@ -40,8 +40,10 @@ a project on first run; that step is intentionally deferred to a later PR.
     still pass as long as they match the pattern.
   - Evidence level: envelope/field **spec** is official, but the official examples are XML-centric,
     so the JSON serialization is modelled from the field-type spec; `fcstValue: null` and an empty
-    success page are **defensive** allowances (no confirmed official sample) to be re-verified
-    against an authenticated JSON response in PR #5.
+    success page are **defensive** allowances (no confirmed official sample). These — together with
+    the concrete shape of the newly-provided 초단기예보 `POP` in a real response — remain to be
+    confirmed by a **follow-up live integration check using a real service key**; no already-merged
+    PR performed that authenticated-JSON verification.
 - **KMA HTTP forecast provider** — PR #5 connects the boundary above to the real 공공데이터포털
   **HTTPS** endpoint. `createKmaForecastProvider` / `createKmaForecastProviderFromEnv` perform the
   `fetch` for `getVilageFcst` / `getUltraSrtFcst`, then run the PR #4 parser + slot grouping and
@@ -82,9 +84,11 @@ a project on first run; that step is intentionally deferred to a later PR.
   See [docs/kma-hourly-normalization.md](../../docs/kma-hourly-normalization.md). Highlights:
   - Per-product category selection: 단기예보 `TMP`/`PCP`/`SNO`, 초단기예보 `T1H`/`RN1` (no 신적설).
     `SKY`+`PTY`→condition, `POP`/`REH`→%, `WSD`/`VEC`→wind — via `@life-weather/weather-core` parsers.
-    `RN1` reuses the `PCP` parser (the guide shares one 강수량 범주 for both); 초단기예보 has no `POP`,
-    so an ABSENT `POP` is `null`, not an error. `UUU`/`VVV`/`WAV`/`TMN`/`TMX`/`LGT` and unknown codes
-    are ignored, and no raw KMA value reaches the output.
+    `RN1` reuses the `PCP` parser (the guide shares one 강수량 범주 for both). 초단기예보 POP는
+    2026-06-23 12 KST 이후 공식 제공되므로, POP가 존재하면 다른 상품과 동일하게 정규화하고,
+    이전/부분 응답 등에서 ABSENT 또는 NULL이면 nullable contract에 따라 `null`입니다(발표일자
+    하드코딩 분기 없음). `UUU`/`VVV`/`WAV`/`TMN`/`TMX`/`LGT` and unknown codes are ignored, and no
+    raw KMA value reaches the output.
   - `forecastAt` is composed as fixed-KST ISO (`YYYY-MM-DDTHH:mm:00+09:00`) with no `Date`, clock, or
     time-zone dependency; `feelsLikeCelsius` is fixed `null` (a derived value deferred to a later PR).
   - `temperatureCelsius` is required: an ABSENT/NULL/unparseable `TMP`/`T1H` is a normalization issue
