@@ -6,8 +6,11 @@
 
 이 PR(#5)의 범위는 **HTTP 호출과 응답 분류까지**입니다. KMA category를 공통 `HourlyForecast`로
 변환하는 시간별 정규화와 weather-core normalizer 연결은 **PR #6에서 구현 완료**되었습니다
-([kma-hourly-normalization.md](./kma-hourly-normalization.md) 참고). `WeatherOverview` 조립과 API
-route는 아직 미구현이며 후속 PR 범위입니다.
+([kma-hourly-normalization.md](./kma-hourly-normalization.md) 참고). 이 Provider와 normalizer를
+순서대로 호출하는 **application service orchestration은 PR #7에서 구현 완료**되었습니다
+([kma-hourly-service.md](./kma-hourly-service.md) 참고) — 이 Provider의 성공/오류 타입·동작은 PR #6·#7에서
+변경되지 않았고, service가 Provider를 정확히 한 번 호출한 뒤 결과를 분기할 뿐입니다. `WeatherOverview`
+조립과 `/weather` API route는 아직 미구현이며 후속 PR 범위입니다.
 
 구현 위치:
 
@@ -391,7 +394,8 @@ clock 미사용.
 - 자동 발표시각(base date/time) 선택, KST clock logic
 - 위경도 → KMA grid 변환, 지역 registry
 - retry, cache, circuit breaker, rate limit, telemetry, logger
-- 공통 Provider interface, `WeatherOverview` 조립 (시간별 `HourlyForecast` 정규화는 PR #6에서 완료)
+- 공통 Provider interface, `WeatherOverview` 조립 (시간별 `HourlyForecast` 정규화는 PR #6, Provider와
+  normalizer를 잇는 application service orchestration은 PR #7에서 완료)
 - `/weather` API route
 - 초단기실황·중기예보·기상특보·AirKorea
 
@@ -411,6 +415,16 @@ ABSENT/NULL/VALUE 처리, 단위·숫자 파싱, 필수 temperature 오류·null
 contracts `HourlyForecast` runtime 검증, 정규화 단위 테스트가 PR #6에서 구현되었습니다 —
 [kma-hourly-normalization.md](./kma-hourly-normalization.md). `WeatherOverview` 조립·자동 발표시각
 선택·위경도→grid 변환·API route·모바일 연결은 이후 별도 PR입니다.
+
+## PR #7 (구현 완료)
+
+이 Provider와 PR #6 normalizer를 순서대로 호출하는 **application service**
+(`apps/api/src/services`, `createKmaHourlyForecastService`)가 PR #7에서 구현되었습니다 —
+[kma-hourly-service.md](./kma-hourly-service.md). service는 주입된 Provider를 정확히 한 번 호출하고
+request·`AbortSignal`을 그대로 전달하며, Provider 실패는 `stage: 'PROVIDER'`로(오류를 재분류·mutate하지
+않고 그대로), normalization 실패는 `stage: 'NORMALIZATION'`으로 구분해 반환합니다. **이 Provider의
+성공·오류 타입이나 동작은 변경하지 않았습니다.** 자동 발표시각 선택·위경도→grid 변환·`WeatherOverview`·
+`SourceMetadata`·`/weather` route는 이후 별도 PR입니다.
 
 ## 변경 이력
 

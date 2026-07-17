@@ -324,6 +324,12 @@ if (!providerResult.ok) {
 const normalized = normalizeKmaHourlyForecast(providerResult.forecast);
 ```
 
+이 "fetch → provider 오류 분기 → normalize" 흐름은 **PR #7의 application service**
+(`createKmaHourlyForecastService`, [kma-hourly-service.md](./kma-hourly-service.md))에 그대로
+캡슐화되어 있습니다. service는 Provider 실패를 `stage: 'PROVIDER'`, normalization 실패를
+`stage: 'NORMALIZATION'`으로 구분하며, 이 normalizer의 all-or-nothing issue 목록을 재해석하지 않고
+그대로 전달합니다. normalizer 자체(순수·throw 없음·raw 값 비노출)는 PR #7에서 변경되지 않았습니다.
+
 ## 실제 인증 JSON 검증 상태
 
 - 실제 사용자/운영 `KMA_SERVICE_KEY`는 사용하지 않았습니다.

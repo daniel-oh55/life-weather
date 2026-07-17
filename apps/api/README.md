@@ -98,6 +98,26 @@ a project on first run; that step is intentionally deferred to a later PR.
   - Each candidate is validated with `hourlyForecast.safeParse`; output is sorted by `forecastAt` and
     issues by `(slotKey, field, reason)`. It never mutates the input and reads no clock. The HTTP
     provider does **not** call it automatically — network and domain errors stay in separate unions.
+- **KMA hourly forecast application service** — PR #7 adds `createKmaHourlyForecastService`
+  (`src/services/`), the thin orchestration layer that runs the PR #5 provider and the PR #6
+  normalizer in sequence. See [docs/kma-hourly-service.md](../../docs/kma-hourly-service.md).
+  Highlights:
+  - Takes an **injected** `KmaForecastProvider` via a factory; construction is side-effect-free (no
+    provider call, no `fetch`, no env read, no timer/listener). `fetchHourlyForecast(request, options)`
+    calls the provider **exactly once**, forwarding the request and the caller's `AbortSignal` options
+    unchanged (omitted options → `undefined`; no new `AbortController`, no re-validation of the
+    request — the provider still owns that).
+  - The result is a discriminated union with a `stage` marker: success is `{ ok: true, hourly }`
+    (only the normalized `HourlyForecast[]` — no raw slots/values, `totalCount`, base issuance, grid,
+    key, URL, or body); a provider failure is `{ ok: false, stage: 'PROVIDER', error }` with the
+    provider's sanitized error passed through **verbatim** (never re-classified or mutated); a
+    normalizer failure is `{ ok: false, stage: 'NORMALIZATION', issues }` with the all-or-nothing
+    issue list untouched (never partial hourly data). The normalizer runs only on provider success.
+  - No broad `try/catch` and no invented `INTERNAL_ERROR`: both collaborators return result unions
+    rather than throwing, so a programmer error is not hidden behind a domain error. No retry, no
+    cache, no fallback, no product merge. It is exported from `src/services/`, never from
+    `src/providers/kma/` (an application service is not part of the provider boundary), and does not
+    touch `src/index.ts` or the `/health` route.
 - **Still not implemented.** `WeatherOverview` assembly, `SourceMetadata`, current weather, daily
   forecast (incl. `TMN`/`TMX`), feels-like computation, a common provider interface, automatic base
   date/time selection, lat/long → grid conversion, retry, cache, and the `/weather` route are **not**
@@ -112,5 +132,7 @@ a project on first run; that step is intentionally deferred to a later PR.
 - `@life-weather/weather-core` (workspace) — shares `KmaForecastProduct` for slot identity and, from
   PR #6, the scalar/condition/amount parsers the normalizer calls. The dependency direction is
   `apps/api → weather-core`; `weather-core` never depends on `apps/api` or `contracts` at runtime.
-- The HTTP provider and the PR #6 normalizer add **no new external dependency** — the provider uses
-  Node 22 native `fetch`, `AbortController`, `ReadableStream`, and `TextDecoder`.
+- The HTTP provider, the PR #6 normalizer, and the PR #7 application service add **no new external
+  dependency** — the provider uses Node 22 native `fetch`, `AbortController`, `ReadableStream`, and
+  `TextDecoder`; the service only re-uses the provider and normalizer and a `HourlyForecast` type
+  import from `@life-weather/contracts`.
