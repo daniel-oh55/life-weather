@@ -17,9 +17,10 @@
  * result — the only failures are a bare `RESPONSE_TOO_LARGE` or a bare `BODY_READ_ERROR`. A
  * cancellation failure never overwrites a `RESPONSE_TOO_LARGE` outcome.
  *
- * Once a reader is acquired it is always explicitly unlocked (`releaseLock()`) on the way out — a
- * `cancel()` or a fully-drained stream does not release the lock on its own — so the body ends up
- * `locked === false` on every path.
+ * Once a reader is acquired, `releaseLock()` is always *attempted* on the way out — a `cancel()` or a
+ * fully-drained stream does not release the lock on its own — so on a standard Node Web Stream the
+ * body ends up unlocked. If `releaseLock()` itself throws, that failure is swallowed (the decided
+ * result is preserved and no raw error leaks), so the lock release itself is not guaranteed then.
  */
 
 export type ReadResponseTextResult =
@@ -107,11 +108,12 @@ async function cancelBodySafely(
  * or rejects). Never throws for either of those expected stream failures.
  *
  * A body that is exactly `maxBytes` succeeds; one byte more fails. A bodyless response (`body ===
- * null`) or a zero-byte body yields the empty string. Once a reader is acquired, its lock is
- * released on **every** exit path — normal completion, overflow, a read error, or a cancel error —
- * via an explicit `releaseLock()` in `finally` (a `cancel()` or a drained stream does not release
- * the lock on its own), so `response.body.locked` ends up `false`. A `releaseLock()` failure never
- * overwrites the outcome the read already decided and is never surfaced as a raw error.
+ * null`) or a zero-byte body yields the empty string. Once a reader is acquired, an explicit
+ * `releaseLock()` is *attempted* on **every** exit path — normal completion, overflow, a read error,
+ * or a cancel error — in `finally` (a `cancel()` or a drained stream does not release the lock on its
+ * own), so on a standard Node Web Stream `response.body.locked` ends up `false`. A `releaseLock()`
+ * failure never overwrites the outcome the read already decided and is never surfaced as a raw error;
+ * in that (non-standard) case the lock release itself is not guaranteed.
  */
 export async function readResponseTextWithLimit(
   response: Response,
