@@ -239,8 +239,58 @@ describe('selectLatestKmaForecastBaseTime — date rollover', () => {
   });
 });
 
+describe('selectLatestKmaForecastBaseTime — lower-bound calendar boundary', () => {
+  // The supported year policy is [1000, 9999] for BOTH the reference KST year and the final
+  // selected base_date year. A previous-day rollover below the day's first issue time moves the
+  // selected base_date one calendar year below the reference (1000-01-01 -> 0999-12-31), which
+  // has no valid four-digit YYYY and must be rejected — never clamped or emitted as year 0999.
+
+  it('throws RangeError when the SHORT previous-day rollover would select year 0999', () => {
+    // 1000-01-01T01:59:59.999 KST is before the day's first SHORT issue (02:00), so the
+    // selector would have to roll back to 0999-12-31 / 2300 — outside the supported range.
+    expect(() =>
+      selectLatestKmaForecastBaseTime({
+        product: SHORT,
+        referenceEpochMilliseconds: kstEpochMs('1000-01-01T01:59:59.999'),
+      }),
+    ).toThrow(RangeError);
+  });
+
+  it('returns the exact first SHORT issuance at the 1000 lower bound (10000101/0200)', () => {
+    expect(
+      selectLatestKmaForecastBaseTime({
+        product: SHORT,
+        referenceEpochMilliseconds: kstEpochMs('1000-01-01T02:00:00.000'),
+      }),
+    ).toEqual({ baseDate: '10000101', baseTime: '0200' });
+  });
+
+  it('throws RangeError when the ULTRA previous-day rollover would select year 0999', () => {
+    // 1000-01-01T00:29:59.999 KST is before the day's first ULTRA issue (00:30), so the
+    // selector would have to roll back to 0999-12-31 / 2330 — outside the supported range.
+    expect(() =>
+      selectLatestKmaForecastBaseTime({
+        product: ULTRA,
+        referenceEpochMilliseconds: kstEpochMs('1000-01-01T00:29:59.999'),
+      }),
+    ).toThrow(RangeError);
+  });
+
+  it('returns the exact first ULTRA issuance at the 1000 lower bound (10000101/0030)', () => {
+    expect(
+      selectLatestKmaForecastBaseTime({
+        product: ULTRA,
+        referenceEpochMilliseconds: kstEpochMs('1000-01-01T00:30:00.000'),
+      }),
+    ).toEqual({ baseDate: '10000101', baseTime: '0030' });
+  });
+});
+
 describe('selectLatestKmaForecastBaseTime — invalid input', () => {
   const validReference = kstEpochMs('2026-07-17T12:00:00.000');
+
+  // Shaped like a leaked secret. It must never appear in any thrown error message.
+  const SECRET_SHAPED_VALUE_MUST_NOT_LEAK = 'SECRET_SHAPED_VALUE_MUST_NOT_LEAK_8C2F';
 
   it.each([
     { label: 'NaN', value: Number.NaN },
@@ -296,6 +346,45 @@ describe('selectLatestKmaForecastBaseTime — invalid input', () => {
         referenceEpochMilliseconds: validReference,
       }),
     ).toThrow(RangeError);
+  });
+
+  it('does not leak the raw product value in the unsupported-product RangeError', () => {
+    let message = '';
+    try {
+      selectLatestKmaForecastBaseTime({
+        product: SECRET_SHAPED_VALUE_MUST_NOT_LEAK as unknown as KmaForecastProduct,
+        referenceEpochMilliseconds: validReference,
+      });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(() =>
+      selectLatestKmaForecastBaseTime({
+        product: SECRET_SHAPED_VALUE_MUST_NOT_LEAK as unknown as KmaForecastProduct,
+        referenceEpochMilliseconds: validReference,
+      }),
+    ).toThrow(RangeError);
+    // Value-free message: no secret marker, no serialized input object.
+    expect(message).not.toContain(SECRET_SHAPED_VALUE_MUST_NOT_LEAK);
+    expect(message).not.toContain('{');
+  });
+
+  it('does not leak a non-number reference value, and throws RangeError (not TypeError)', () => {
+    let caught: unknown;
+    try {
+      selectLatestKmaForecastBaseTime({
+        product: SHORT,
+        referenceEpochMilliseconds:
+          SECRET_SHAPED_VALUE_MUST_NOT_LEAK as unknown as number,
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(RangeError);
+    expect(caught).not.toBeInstanceOf(TypeError);
+    // Value-free message: no secret marker, no serialized input object.
+    expect((caught as Error).message).not.toContain(SECRET_SHAPED_VALUE_MUST_NOT_LEAK);
+    expect((caught as Error).message).not.toContain('{');
   });
 
   it('rejection is deterministic and does not leak the whole input object', () => {

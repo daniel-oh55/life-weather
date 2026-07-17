@@ -57,6 +57,12 @@ KMA 공공데이터포털 요청(`getVilageFcst`/`getUltraSrtFcst`)은 `base_dat
 
 ## 공식 자료
 
+이 selector가 발표 일정을 선택하는 **대상 endpoint**는 공공데이터포털
+`VilageFcstInfoService_2.0`의 다음 두 오퍼레이션입니다.
+
+- 단기예보: `VilageFcstInfoService_2.0/getVilageFcst`
+- 초단기예보: `VilageFcstInfoService_2.0/getUltraSrtFcst`
+
 | 항목 | 값 |
 | --- | --- |
 | 공식 서비스명 | 기상청_단기예보 조회서비스 |
@@ -65,14 +71,39 @@ KMA 공공데이터포털 요청(`getVilageFcst`/`getUltraSrtFcst`)은 `base_dat
 | 확인 날짜 | 2026-07-17 |
 | 확인 주체 | Claude (Claude Code) |
 
-확인한 공식 자료:
+### 발표 일정(`0200/…/2300`·`HH30`)의 직접 근거
 
-1. **API 허브 웹** — `https://apihub.kma.go.kr/apiList.do?seqApi=10` (단기·초단기예보 오퍼레이션과
-   `base_time` 파라미터 확인).
-2. **API 허브 활용가이드(DOCX)** — 아래 파일. 이번 확인에서 직접 다운로드해 SHA-256이 이전 확인값과
-   **일치**함을 검증했고, `# 예보 발표시각` 절의 원문에서 발표 일정을 읽었습니다.
-3. **공공데이터포털 활용가이드(ZIP)** — 아래 파일. 이전 프로젝트 검증에서 확인된 SHA-256과 동일한
-   자료이며, 같은 서비스(`VilageFcstInfoService_2.0`)의 동일 일정을 담습니다.
+SHORT `0200/0500/…/2300`(1일 8회)와 ULTRA 매시간 `HH30`(하루 24회) 일정의 **직접 근거**는 위 대상
+서비스(`VilageFcstInfoService_2.0`)를 설명하는 hash 검증된 활용가이드 문서입니다.
+
+1. **API 허브 활용가이드(DOCX)** — `단기예보조회서비스_API활용가이드_260623.docx`. 이번 Claude Code
+   세션에서 직접 다운로드해 SHA-256이 이전 확인값과 **일치**함을 검증했고, `# 예보 발표시각` 절의
+   원문에서 `getVilageFcst`의 `0200/0500/…/2300 (1일 8회)`와 `getUltraSrtFcst`의
+   `매시간 30분에 생성`(HH30, 하루 24회)을 읽었습니다. 즉 `getUltraSrtFcst` `HH30` 일정의 직접
+   근거는 이 대상 서비스 가이드 DOCX입니다.
+2. **공공데이터포털 활용가이드(ZIP)** — `기상청41_단기예보 조회서비스_오픈API활용가이드_2607.zip`.
+   같은 서비스(`VilageFcstInfoService_2.0`)의 가이드로, 이전 프로젝트 검증에서 확인된 SHA-256과 동일한
+   자료입니다. 이번 세션에는 상세페이지가 JS 게이트라 재다운로드하지 못했습니다.
+
+### API 허브 웹 `seqApi=10`은 별도의 격자(grid) 서비스
+
+API 허브 웹 `https://apihub.kma.go.kr/apiList.do?seqApi=10`이 설명하는 동네예보 **격자(grid)** API는
+위 `VilageFcstInfoService_2.0` 오퍼레이션과 **다른 별도 endpoint**입니다.
+
+- 단기: `nph-dfs_shrt_grd`
+- 초단기: `nph-dfs_vsrt_grd`
+
+이 페이지에서 초단기 격자 API(`nph-dfs_vsrt_grd`)는 `10분 간격 발표`로 기재돼 있습니다. 이 `10분`
+일정은 위 별도 격자 endpoint에 대한 설명일 뿐이며, 이 selector 대상인 `getUltraSrtFcst`의 `HH30`
+일정을 뜻하지 않습니다.
+
+- API 허브 웹 `seqApi=10`은 이 selector의 대상 서비스가 아니므로, `getUltraSrtFcst` `HH30` 일정의
+  직접 근거로 사용하지 않습니다.
+- 서로 **다른 endpoint**이므로 "같은 서비스의 공식 자료가 서로 불일치한다"는 뜻은 **아닙니다**. 반대로
+  API 허브 웹과 활용가이드 DOCX를 한 서비스로 묶어 "동일 일정을 명시한다"고 서술하지도 않습니다 —
+  둘은 서로 다른 endpoint입니다.
+- 이 PR은 `getUltraSrtFcst`의 `HH30` runtime 일정을 `10분` 간격으로 바꾸지 않으며, 별도 API 허브
+  격자 endpoint 지원은 이 PR의 범위 밖입니다. (두 자료가 다른 이유는 여기서 추정하지 않습니다.)
 
 ### 다운로드 파일명과 SHA-256
 
@@ -163,7 +194,26 @@ reference가 해당 KST 날짜의 **첫 발표시각보다 이르면**, 이전 K
 | `2026-07-01 00:10:00` | ULTRA | `20260630` | `2330` |
 
 같은 절대 instant가 UTC 표현상 전날이어도 KST 달력 날짜로 올바르게 선택됩니다(예:
-`2026-07-16T20:00:00Z` = KST `2026-07-17T05:00:00` → SHORT `20260717`/`0500`).
+`2026-07-16T20:00:00Z` = KST `2026-07-17T05:00:00` → SHORT `20260717`/`0500`). 정상 운영 연도의 날짜
+rollover는 위와 같이 그대로 지원됩니다.
+
+### 지원 연도 하한에서의 rollover (`[1000, 9999]`)
+
+지원 연도 정책 `[1000, 9999]`은 reference KST 연도뿐 아니라 **최종 선택된 `base_date` 연도**에도
+적용됩니다. 첫 발표시각 이전의 previous-day rollover는 선택 `base_date`를 reference보다 한 해 이전으로
+옮길 수 있는데, `1000-01-01` 하한에서는 그 결과가 `0999-12-31`이 되어 4자리 `YYYY` 범위를 벗어납니다.
+이때는 `0999`를 잘라내거나 clamp하거나 임의 fallback으로 방출하지 않고 **`RangeError`로 거부**합니다.
+
+| reference (KST) | product | 결과 |
+| --- | --- | --- |
+| `1000-01-01 01:59:59.999` | SHORT | `RangeError` (전일 `0999-12-31`/`2300`은 지원 범위 밖) |
+| `1000-01-01 02:00:00.000` | SHORT | `10000101` / `0200` (그 날 첫 발표) |
+| `1000-01-01 00:29:59.999` | ULTRA | `RangeError` (전일 `0999-12-31`/`2330`은 지원 범위 밖) |
+| `1000-01-01 00:30:00.000` | ULTRA | `10000101` / `0030` (그 날 첫 발표) |
+
+이는 `1000-01-01` 이전에 실제 기상자료가 존재하는지와 무관한, 형식·함수 계약의 하한 경계 검증입니다.
+`0999`를 유효한 지원 연도로 새로 허용하지 않습니다. `baseDate`는 항상 지원 범위 안의 정확한 8자리
+`YYYYMMDD`입니다.
 
 ## 입력과 출력
 
@@ -202,10 +252,17 @@ function selectLatestKmaForecastBaseTime(
 - `Date`가 표현할 수 있는 instant 범위를 벗어남
 - KST 변환 후 4자리 연도(`YYYY`)를 만들 수 없는 범위(`[1000, 9999]` 밖)
 
+또한 previous-day rollover 이후 **최종 선택된 `base_date` 연도**가 `[1000, 9999]` 밖이면(예
+`1000-01-01` 하한 → `0999`) `RangeError`로 거부합니다. reference KST 연도와 최종 `base_date` 연도를
+같은 정책으로 검증합니다.
+
 `product`가 지원하는 두 값(`SHORT_FORECAST`·`ULTRA_SHORT_FORECAST`)이 아니면(타입 우회 포함)
 `RangeError`. default 분기에서 임의 product로 fallback하지 않습니다.
 
-오류 메시지에는 secret이나 **전체 input 객체**를 직렬화하지 않습니다.
+오류 메시지는 **값을 담지 않는 고정 메시지**입니다: 잘못된 `product`/`referenceEpochMilliseconds`의
+원본 값, 파생 연도, secret, **전체 input 객체**를 직렬화하지 않고, 필드명 또는 정책 이름만 담습니다.
+비-number 타입의 `referenceEpochMilliseconds`(타입 우회)도 `TypeError`가 아니라 `RangeError`이며,
+메시지에 그 원본 값을 포함하지 않습니다. 메시지는 결정론적입니다.
 
 ## 발표 일정과 API 가용성 구분
 

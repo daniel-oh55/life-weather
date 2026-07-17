@@ -36,9 +36,13 @@ const DAY_IN_MS = 86_400_000;
 const KST_OFFSET_IN_MS = 9 * HOUR_IN_MS;
 
 /**
- * The smallest `YYYYMMDD` year that formats to exactly four digits, and the largest. A
- * reference instant whose KST calendar year falls outside `[1000, 9999]` cannot produce a
- * valid four-digit `base_date` year and is rejected as a programmer/configuration error.
+ * The smallest `YYYYMMDD` year that formats to exactly four digits, and the largest. Both the
+ * reference instant's KST calendar year AND the final selected `base_date` year must fall
+ * within `[MIN_API_YEAR, MAX_API_YEAR]`: a previous-day rollover below the day's first issue
+ * time can move the selected `base_date` one calendar year earlier than the reference (at the
+ * `1000-01-01` lower bound it would land in `0999`), and such an out-of-range result is
+ * rejected rather than emitted, clamped, or truncated. Anything outside the range cannot
+ * produce a valid four-digit `base_date` year and is a programmer/configuration error.
  */
 const MIN_API_YEAR = 1000;
 const MAX_API_YEAR = 9999;
@@ -110,15 +114,27 @@ function minutesOfDayScheduleFor(
     case KmaForecastProduct.ULTRA_SHORT_FORECAST:
       return ULTRA_SHORT_FORECAST_MINUTES_OF_DAY;
     default:
-      throw new RangeError(
-        `product must be a supported KmaForecastProduct, received ${String(product)}`,
-      );
+      // Value-free: never echo the caller's raw (possibly secret-shaped) product value.
+      throw new RangeError('product must be a supported KmaForecastProduct');
   }
 }
 
 /** Left-pad a non-negative integer to a fixed width with leading zeros. */
 function padZeros(value: number, width: number): string {
   return String(value).padStart(width, '0');
+}
+
+/**
+ * Reject any calendar year outside the supported `[MIN_API_YEAR, MAX_API_YEAR]` range. Applied
+ * both to the reference instant's KST year and to the final selected `base_date` year — the
+ * previous-day rollover can push the latter one calendar year below the former. The message
+ * names only the offending field/policy and never echoes the year value, so an out-of-policy
+ * runtime value cannot leak through the error text.
+ */
+function assertSupportedCalendarYear(year: number, message: string): void {
+  if (year < MIN_API_YEAR || year > MAX_API_YEAR) {
+    throw new RangeError(message);
+  }
 }
 
 /**
@@ -137,8 +153,10 @@ function padZeros(value: number, width: number): string {
  *
  * @throws RangeError if `referenceEpochMilliseconds` is not a finite safe integer, denotes an
  *   instant outside the representable `Date` range, or has a KST calendar year outside
- *   `[1000, 9999]`; or if `product` is not a supported `KmaForecastProduct`. The message never
- *   serializes the whole input object.
+ *   `[MIN_API_YEAR, MAX_API_YEAR]`; if the previous-day rollover selects a `base_date` whose
+ *   year falls below that range (e.g. the `1000-01-01` lower bound rolling into `0999`); or if
+ *   `product` is not a supported `KmaForecastProduct`. Every message names only the offending
+ *   field or policy — it never echoes the raw input value nor serializes the input object.
  */
 export function selectLatestKmaForecastBaseTime(
   input: SelectLatestKmaForecastBaseTimeInput,
@@ -148,9 +166,9 @@ export function selectLatestKmaForecastBaseTime(
   // Reject NaN, ±Infinity, fractional, and unsafe-integer millisecond values in one check —
   // Number.isSafeInteger is false for all of them (and for any non-number at runtime).
   if (!Number.isSafeInteger(referenceEpochMilliseconds)) {
-    throw new RangeError(
-      `referenceEpochMilliseconds must be a finite safe integer, received ${referenceEpochMilliseconds}`,
-    );
+    // Value-free: covers NaN / ±Infinity / fractional / unsafe and any non-number runtime
+    // value, and never echoes the caller's raw (possibly secret-shaped) reference value.
+    throw new RangeError('referenceEpochMilliseconds must be a finite safe integer');
   }
 
   // Resolve (and validate) the product's schedule before computing anything from the instant.
@@ -166,12 +184,10 @@ export function selectLatestKmaForecastBaseTime(
     );
   }
 
-  const kstYear = kstInstant.getUTCFullYear();
-  if (kstYear < MIN_API_YEAR || kstYear > MAX_API_YEAR) {
-    throw new RangeError(
-      `referenceEpochMilliseconds has a KST year outside ${MIN_API_YEAR}-${MAX_API_YEAR}, received year ${kstYear}`,
-    );
-  }
+  assertSupportedCalendarYear(
+    kstInstant.getUTCFullYear(),
+    'referenceEpochMilliseconds denotes an unsupported KST calendar year',
+  );
 
   // Milliseconds elapsed since KST midnight — includes seconds and milliseconds so that the
   // boundary comparison is exact and does not collapse to whole hours.
@@ -198,6 +214,14 @@ export function selectLatestKmaForecastBaseTime(
     selectedMinuteOfDay = schedule[schedule.length - 1] as number;
     baseDateInstant = new Date(kstShiftedMs - DAY_IN_MS);
   }
+
+  // The previous-day rollover can move the selected base_date one calendar year below the
+  // reference year — at the `1000-01-01` lower bound it lands in `0999`, which has no valid
+  // four-digit YYYY. Re-validate the *selected* year and reject rather than emit / clamp it.
+  assertSupportedCalendarYear(
+    baseDateInstant.getUTCFullYear(),
+    'selected KMA base date is outside the supported calendar range',
+  );
 
   const baseDate =
     padZeros(baseDateInstant.getUTCFullYear(), 4) +
