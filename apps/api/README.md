@@ -85,9 +85,10 @@ a project on first run; that step is intentionally deferred to a later PR.
   - Per-product category selection: 단기예보 `TMP`/`PCP`/`SNO`, 초단기예보 `T1H`/`RN1` (no 신적설).
     `SKY`+`PTY`→condition, `POP`/`REH`→%, `WSD`/`VEC`→wind — via `@life-weather/weather-core` parsers.
     `RN1` reuses the `PCP` parser (the guide shares one 강수량 범주 for both). 초단기예보 POP는
-    2026-06-23 12 KST 이후 공식 제공되므로, POP가 존재하면 다른 상품과 동일하게 정규화하고,
-    이전/부분 응답 등에서 ABSENT 또는 NULL이면 nullable contract에 따라 `null`입니다(발표일자
-    하드코딩 분기 없음). `UUU`/`VVV`/`WAV`/`TMN`/`TMX`/`LGT` and unknown codes are ignored, and no
+    두 공식 자료(API 허브 웹 변수 목록·활용가이드 `_260623.docx`)에 모두 포함됩니다(제공 시작 시각
+    표기는 웹 `12 KST`·DOCX `11 KST`로 다르며, 원인은 미확인 — [docs/kma-hourly-normalization.md](../../docs/kma-hourly-normalization.md)
+    참조). POP가 존재하면 다른 상품과 동일하게 정규화하고, 이전/부분 응답 등에서 ABSENT 또는
+    NULL이면 nullable contract에 따라 `null`입니다(발표일자·발표시각 하드코딩 분기 없음). `UUU`/`VVV`/`WAV`/`TMN`/`TMX`/`LGT` and unknown codes are ignored, and no
     raw KMA value reaches the output.
   - `forecastAt` is composed as fixed-KST ISO (`YYYY-MM-DDTHH:mm:00+09:00`) with no `Date`, clock, or
     time-zone dependency; `feelsLikeCelsius` is fixed `null` (a derived value deferred to a later PR).

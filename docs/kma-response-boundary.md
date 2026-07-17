@@ -438,8 +438,17 @@ item 존재 + 값                                   → VALUE
 [kma-http-provider.md](./kma-http-provider.md) 참고. PR #5 Provider는 이 문서의 parser
 (`parseKmaForecastResponse`)와 slot grouping(`groupKmaForecastItems`)을 **변경 없이** 호출합니다.
 
-여전히 **미구현**인 것(PR #6 이후): 자동 발표시각 선택, retry, cache, 공통 Provider interface,
-weather-core normalizer 연결, normalized contracts, `/weather` API route, 위경도→grid 변환.
+**PR #6에서 weather-core normalizer 연결과 contracts `HourlyForecast` 정규화(normalized
+contracts)는 구현 완료되었습니다**([kma-hourly-normalization.md](./kma-hourly-normalization.md)).
+지금까지의 **구현 완료** 범위:
+
+- PR #3: SKY/PTY/PCP/SNO weather-core primitive
+- PR #6: TMP/T1H/POP/REH/WSD/VEC scalar parser
+- PR #6: provider slot과 weather-core parser 연결
+- PR #6: contracts `HourlyForecast` runtime 검증 및 정규화 adapter
+
+여전히 **미구현**인 것: 자동 발표시각 선택, retry, cache, 공통 다중 Provider interface,
+`/weather` API route, 위경도→KMA grid 변환, `CurrentWeather`, `DailyForecast`, `WeatherOverview`.
 `fcstValue` literal null과 빈 success page는 여전히 인증된 실제 JSON 응답으로 재확인이 필요합니다
 (PR #5 진단에서 가짜 키는 HTTP `401` 평문을 반환해 정상 성공 JSON을 재현하지 못함).
 
