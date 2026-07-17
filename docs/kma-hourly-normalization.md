@@ -64,7 +64,7 @@
 | --- | --- | --- |
 | `temperatureCelsius` | `T1H` | 기온 (℃) |
 | `condition` | `SKY` + `PTY` | 하늘상태 + 강수형태 (코드값) |
-| `precipitationProbabilityPercent` | `POP` | 강수확률(%), 2026-06-23 12 KST 이후 초단기예보 제공 |
+| `precipitationProbabilityPercent` | `POP` | 강수확률(%), 공식 제공 — 시작 시각 표기는 웹 12 KST / DOCX 11 KST(원인 미확인) |
 | `precipitationAmountMillimeters` | `RN1` | 1시간 강수량 (범주, 1 mm) |
 | `snowfallAmountCentimeters` | (없음) | 초단기예보는 신적설 미제공 → `null` |
 | `humidityPercent` | `REH` | 습도 (%) |
