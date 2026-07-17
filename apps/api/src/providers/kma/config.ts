@@ -84,7 +84,12 @@ function isPositiveInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0;
 }
 
-/** Whether `value` is a plain object we can read options off — not `null`, an array, or a primitive. */
+/**
+ * Whether `value` is a record-like object we can read options off — a non-null, non-array object.
+ * This is deliberately *not* a strict plain-object check: a class instance or an object with a
+ * custom prototype also passes. That is sufficient here because the factories are called from
+ * internal server code; hostile-prototype/`Proxy` hardening is out of scope for this PR.
+ */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -93,9 +98,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Validate and resolve provider options.
  *
  * The input is treated as `unknown`: a non-object (`null`, `undefined`, a string/number/boolean, an
- * array) does not throw on a property read — it is reported as `CONFIG_ERROR(serviceKey, MISSING)`,
- * the same as an object with no usable key, so the factories stay *total* under a runtime type
- * bypass.
+ * array, a function) does not throw on a property read — it is reported as `CONFIG_ERROR(serviceKey,
+ * MISSING)`, the same as an object with no usable key, so the factories stay *total* under a runtime
+ * type bypass.
  *
  * `serviceKey` rules (never trimmed):
  * - not a string, `''`, or whitespace-only → `MISSING` (no usable key was supplied).

@@ -6,7 +6,7 @@ import {
   createKmaForecastProvider,
   type KmaForecastProvider,
 } from './provider';
-import type { KmaForecastRequest } from './request';
+import type { KmaForecastRequest, KmaRequestIssue } from './request';
 
 /** An obviously fake decoded service key. Never a real/production-shaped string. */
 const FAKE_KEY = 'test-key+with/slash==';
@@ -410,6 +410,48 @@ describe('fetchForecast — runtime malformed request (validator totality)', () 
       secret as unknown as KmaForecastRequest,
     );
     expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  it('does not let mutating a first INVALID_REQUEST result corrupt a later call', async () => {
+    const spy = vi.fn(fetchReturning(jsonOk(body())));
+    const provider = providerWith(spy as unknown as typeof fetch);
+
+    const first = await provider.fetchForecast(null as unknown as KmaForecastRequest);
+    if (first.ok || first.error.kind !== 'INVALID_REQUEST') {
+      throw new Error(`expected INVALID_REQUEST, got ${JSON.stringify(first)}`);
+    }
+    const firstArray = first.error.issues;
+    const firstObjects = [...first.error.issues];
+    // Tamper with the first result through runtime casts (readonly is compile-time only).
+    (first.error.issues as KmaRequestIssue[]).pop();
+    (firstObjects[0] as { field: string }).field = 'MUTATED';
+    (firstObjects[0] as { reason: string }).reason = 'TAMPERED';
+
+    const second = await provider.fetchForecast(undefined as unknown as KmaForecastRequest);
+    if (second.ok || second.error.kind !== 'INVALID_REQUEST') {
+      throw new Error(`expected INVALID_REQUEST, got ${JSON.stringify(second)}`);
+    }
+
+    // The second result carries the exact, uncorrupted five issues in fixed order.
+    expect(second.error.issues.map((issue) => issue.field)).toEqual([
+      'product',
+      'baseDate',
+      'baseTime',
+      'nx',
+      'ny',
+    ]);
+    for (const issue of second.error.issues) {
+      expect(issue.reason).toBe('INVALID');
+    }
+    // No shared array or issue-object reference between the two calls.
+    expect(second.error.issues).not.toBe(firstArray);
+    for (const issue of second.error.issues) {
+      expect(firstObjects).not.toContain(issue);
+    }
+    // Neither call touched fetch, and the tampered marker never leaked into the second result.
+    expect(spy).not.toHaveBeenCalled();
+    expect(JSON.stringify(second)).not.toContain('MUTATED');
+    expect(JSON.stringify(second)).not.toContain('TAMPERED');
   });
 });
 

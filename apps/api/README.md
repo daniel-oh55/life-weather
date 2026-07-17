@@ -59,10 +59,19 @@ a project on first run; that step is intentionally deferred to a later PR.
     HTTP-status decision, *and* the full response-body read — so a stalled or aborted body after a
     header has arrived still resolves promptly (`TIMEOUT` / `ABORTED`), never hanging. A body-stream
     failure resolves to `NETWORK_ERROR` (or `TIMEOUT` / `ABORTED` if an abort caused it), never a
-    rejected promise, and the raw stream/cancel error is never surfaced. A `Content-Length` that
-    already exceeds the cap cancels the body without reading a byte. Both runtime validators
-    (`validateKmaForecastRequest`, `validateKmaProviderOptions`) are **total** on non-object input:
-    a `null`/string/array/etc. yields `INVALID_REQUEST` / `CONFIG_ERROR` instead of throwing.
+    rejected promise, and the raw stream/cancel/lock-release error is never surfaced. A
+    `Content-Length` that already exceeds the cap cancels the body without reading a byte.
+  - Once a body reader is acquired it is **explicitly unlocked** (`releaseLock()`) on every exit
+    path — normal completion, overflow, a read error, or a cancel error — because a `cancel()` or a
+    drained stream does not release the lock on its own; the body ends up `locked === false`, and a
+    release failure never overwrites the decided result nor leaks.
+  - Both runtime validators (`validateKmaForecastRequest`, `validateKmaProviderOptions`) are
+    **total** on non-object input: a `null`/string/array/function/etc. yields `INVALID_REQUEST` /
+    `CONFIG_ERROR` instead of throwing. `INVALID_REQUEST` issues for a non-object request are built
+    **fresh per call** (a new array of new objects), so mutating one returned result cannot corrupt
+    a later call — there is no shared mutable state between calls. (`isRecord` here is a non-null,
+    non-array object check, not a strict plain-object check; hostile-prototype/`Proxy` hardening is
+    a later follow-up.)
   - Classifies errors as `TIMEOUT` / `ABORTED` / `NETWORK_ERROR` / `HTTP_ERROR(status)` /
     `RESPONSE_TOO_LARGE` / `EMPTY_RESPONSE` / `NON_JSON_RESPONSE` / `INVALID_JSON` /
     `GATEWAY_ERROR` / `KMA_UPSTREAM_ERROR` / `KMA_INVALID_RESPONSE` / `RESPONSE_MISMATCH` /

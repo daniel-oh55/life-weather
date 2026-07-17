@@ -13,9 +13,13 @@
  *
  * Every *expected* stream failure is turned into a value, never thrown: acquiring the reader,
  * `read()`, or a flushed `cancel()` that rejects all resolve to an explicit result. The raw body,
- * a raw stream error, and a raw cancel error are never placed in the result — the only failures are
- * a bare `RESPONSE_TOO_LARGE` or a bare `BODY_READ_ERROR`. A cancellation failure never overwrites
- * a `RESPONSE_TOO_LARGE` outcome.
+ * a raw stream error, a raw cancel error, and a raw lock-release error are never placed in the
+ * result — the only failures are a bare `RESPONSE_TOO_LARGE` or a bare `BODY_READ_ERROR`. A
+ * cancellation failure never overwrites a `RESPONSE_TOO_LARGE` outcome.
+ *
+ * Once a reader is acquired it is always explicitly unlocked (`releaseLock()`) on the way out — a
+ * `cancel()` or a fully-drained stream does not release the lock on its own — so the body ends up
+ * `locked === false` on every path.
  */
 
 export type ReadResponseTextResult =
@@ -47,9 +51,11 @@ function parseContentLength(header: string | null): number | null {
 }
 
 /**
- * Cancel a reader, swallowing any failure. Cancelling releases the reader's lock; a cancel that
- * rejects is an internal transport detail and must never be surfaced as a raw error (nor may it
- * overwrite the `RESPONSE_TOO_LARGE` outcome that triggered the cancel).
+ * Cancel a reader, swallowing any failure. Cancelling signals the underlying source to discard the
+ * rest of the body; it does **not** by itself release the reader's lock (that is done separately via
+ * {@link releaseReaderLockSafely}). A cancel that rejects is an internal transport detail and must
+ * never be surfaced as a raw error (nor may it overwrite the `RESPONSE_TOO_LARGE` outcome that
+ * triggered the cancel).
  */
 async function cancelReaderSafely(
   reader: ReadableStreamDefaultReader<Uint8Array>,
@@ -58,6 +64,23 @@ async function cancelReaderSafely(
     await reader.cancel();
   } catch {
     // A body that cannot be cancelled is not surfaced as a raw transport error.
+  }
+}
+
+/**
+ * Release a reader's lock, swallowing any failure. Under the Web Streams contract neither a
+ * `cancel()` nor draining the stream to completion releases the lock on its own — an explicit
+ * `releaseLock()` is required so the body ends up unlocked. Called on every path that successfully
+ * acquired a reader. A release failure is an internal transport detail: it is never surfaced as a
+ * raw error and must not overwrite the result already decided by the read.
+ */
+function releaseReaderLockSafely(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): void {
+  try {
+    reader.releaseLock();
+  } catch {
+    // A lock that cannot be released is not surfaced as a raw transport error.
   }
 }
 
@@ -84,8 +107,11 @@ async function cancelBodySafely(
  * or rejects). Never throws for either of those expected stream failures.
  *
  * A body that is exactly `maxBytes` succeeds; one byte more fails. A bodyless response (`body ===
- * null`) or a zero-byte body yields the empty string. The reader lock is released on every failing
- * path via `cancel()`; on normal completion the fully-drained reader falls out of scope.
+ * null`) or a zero-byte body yields the empty string. Once a reader is acquired, its lock is
+ * released on **every** exit path — normal completion, overflow, a read error, or a cancel error —
+ * via an explicit `releaseLock()` in `finally` (a `cancel()` or a drained stream does not release
+ * the lock on its own), so `response.body.locked` ends up `false`. A `releaseLock()` failure never
+ * overwrites the outcome the read already decided and is never surfaced as a raw error.
  */
 export async function readResponseTextWithLimit(
   response: Response,
@@ -135,9 +161,14 @@ export async function readResponseTextWithLimit(
     text += decoder.decode();
     return { ok: true, text };
   } catch {
-    // read() threw/rejected (a stream failure, or an abort propagated into the body): cancel to
-    // release the lock and report a bare BODY_READ_ERROR. The raw stream error is never surfaced.
+    // read() threw/rejected (a stream failure, or an abort propagated into the body): cancel the
+    // body and report a bare BODY_READ_ERROR. The raw stream error is never surfaced.
     await cancelReaderSafely(reader);
     return BODY_READ_ERROR;
+  } finally {
+    // A cancel() or a drained stream does not release the reader's lock; do it explicitly on every
+    // exit path (success, overflow, read error, cancel error) so the body ends up unlocked. This
+    // runs before the early returns above resolve, and a release failure never changes the outcome.
+    releaseReaderLockSafely(reader);
   }
 }

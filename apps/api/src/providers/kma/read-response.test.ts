@@ -208,6 +208,60 @@ describe('readResponseTextWithLimit — streaming size limit', () => {
   });
 });
 
+describe('readResponseTextWithLimit — reader lock release', () => {
+  it('unlocks the body after a normal, fully-drained read', async () => {
+    const { response } = streamResponse([encoder.encode('abc')]);
+    const result = await readResponseTextWithLimit(response, 1024);
+    expect(result).toEqual({ ok: true, text: 'abc' });
+    expect(response.body?.locked).toBe(false);
+  });
+
+  it('unlocks the body after reading exactly max bytes', async () => {
+    const { response } = streamResponse([encoder.encode('abcde')]);
+    const result = await readResponseTextWithLimit(response, 5);
+    expect(result).toEqual({ ok: true, text: 'abcde' });
+    expect(response.body?.locked).toBe(false);
+  });
+
+  it('unlocks the body after an overflow', async () => {
+    const { response, wasCancelled } = openStreamResponse(encoder.encode('12345'));
+    const result = await readResponseTextWithLimit(response, 7);
+    expect(result).toEqual({ ok: false, error: { kind: 'RESPONSE_TOO_LARGE' } });
+    expect(wasCancelled()).toBe(true);
+    expect(response.body?.locked).toBe(false);
+  });
+
+  it('unlocks the body after a first-read error', async () => {
+    const marker = 'SECRET_FIRST_READ_LOCK_MARKER';
+    const { response } = erroringStreamResponse(new Error(marker));
+    const result = await readResponseTextWithLimit(response, 1024);
+    expect(result).toEqual({ ok: false, error: { kind: 'BODY_READ_ERROR' } });
+    expect(response.body?.locked).toBe(false);
+    expect(JSON.stringify(result)).not.toContain(marker);
+  });
+
+  it('unlocks the body after a mid-read error', async () => {
+    const { response } = erroringStreamResponse(new Error('mid-read boom'), 2);
+    const result = await readResponseTextWithLimit(response, 1024);
+    expect(result).toEqual({ ok: false, error: { kind: 'BODY_READ_ERROR' } });
+    expect(response.body?.locked).toBe(false);
+  });
+
+  it('preserves the result and unlocks the body when the cancel throws on overflow', async () => {
+    const marker = 'SECRET_CANCEL_LOCK_MARKER';
+    const { response, wasCancelled } = openStreamResponse(encoder.encode('12345'), {
+      cancelError: new Error(marker),
+    });
+    // The promise resolves (never rejects) despite the cancel throwing.
+    const result = await readResponseTextWithLimit(response, 7);
+    expect(result).toEqual({ ok: false, error: { kind: 'RESPONSE_TOO_LARGE' } });
+    expect(wasCancelled()).toBe(true);
+    // A cancel failure does not overwrite the outcome, does not leak, and still releases the lock.
+    expect(JSON.stringify(result)).not.toContain(marker);
+    expect(response.body?.locked).toBe(false);
+  });
+});
+
 describe('readResponseTextWithLimit — UTF-8 & empty bodies', () => {
   it('reassembles a multi-byte character split across chunk boundaries', async () => {
     const euro = encoder.encode('€'); // 3 bytes: E2 82 AC

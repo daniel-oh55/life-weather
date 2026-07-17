@@ -160,6 +160,7 @@ describe('validateKmaProviderOptions — runtime totality on non-object input', 
     ['a number', 42],
     ['a boolean', true],
     ['an array', []],
+    ['a function', () => undefined],
   ])('returns CONFIG_ERROR(serviceKey, MISSING) without throwing for %s', (_label, input) => {
     let result: ValidateKmaProviderOptionsResult;
     expect(() => {
@@ -169,6 +170,16 @@ describe('validateKmaProviderOptions — runtime totality on non-object input', 
       ok: false,
       error: { kind: 'CONFIG_ERROR', field: 'serviceKey', reason: 'MISSING' },
     });
+  });
+
+  it('does not expose a function input (no raw source in the error)', () => {
+    const marker = () => 'SECRET_CONFIG_FUNCTION_MARKER';
+    const result = validateKmaProviderOptions(marker);
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: 'CONFIG_ERROR', field: 'serviceKey', reason: 'MISSING' },
+    });
+    expect(JSON.stringify(result)).not.toContain('SECRET_CONFIG_FUNCTION_MARKER');
   });
 });
 
@@ -194,6 +205,7 @@ describe('createKmaForecastProvider', () => {
     ['undefined', undefined],
     ['a string', 'nope'],
     ['an array', []],
+    ['a function', () => undefined],
   ])('returns CONFIG_ERROR(serviceKey, MISSING) without throwing for runtime %s', (_label, input) => {
     let result: ReturnType<typeof createKmaForecastProvider>;
     expect(() => {
@@ -207,6 +219,20 @@ describe('createKmaForecastProvider', () => {
         reason: 'MISSING',
       });
     }
+  });
+
+  it('does not expose a function input passed to the factory (no raw source in the error)', () => {
+    const marker = () => 'SECRET_FACTORY_FUNCTION_MARKER';
+    const result = createKmaForecastProvider(marker as unknown as KmaForecastProviderOptions);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toEqual({
+        kind: 'CONFIG_ERROR',
+        field: 'serviceKey',
+        reason: 'MISSING',
+      });
+    }
+    expect(JSON.stringify(result)).not.toContain('SECRET_FACTORY_FUNCTION_MARKER');
   });
 });
 

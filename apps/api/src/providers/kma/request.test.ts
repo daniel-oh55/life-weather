@@ -5,6 +5,7 @@ import {
   buildKmaForecastRequestUrl,
   validateKmaForecastRequest,
   type KmaForecastRequest,
+  type KmaRequestIssue,
   type ValidateKmaForecastRequestResult,
 } from './request';
 
@@ -229,6 +230,62 @@ describe('validateKmaForecastRequest — runtime totality on non-object input', 
     const secret = 'SECRET_REQUEST_INPUT_MARKER';
     const result = validateKmaForecastRequest(secret);
     expect(JSON.stringify(result)).not.toContain(secret);
+  });
+});
+
+describe('validateKmaForecastRequest — non-object issue state isolation', () => {
+  const EXPECTED_FIELDS = ['product', 'baseDate', 'baseTime', 'nx', 'ny'] as const;
+
+  function expectPristineIssues(result: ValidateKmaForecastRequestResult): void {
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues.map((issue) => issue.field)).toEqual([...EXPECTED_FIELDS]);
+      for (const issue of result.issues) {
+        expect(issue.reason).toBe('INVALID');
+      }
+    }
+  }
+
+  it('returns a distinct array and distinct issue objects on each call', () => {
+    const first = validateKmaForecastRequest(null);
+    const second = validateKmaForecastRequest(undefined);
+    expect(first.ok).toBe(false);
+    expect(second.ok).toBe(false);
+    if (!first.ok && !second.ok) {
+      // The array reference differs between calls...
+      expect(first.issues).not.toBe(second.issues);
+      // ...and so does every corresponding issue object.
+      for (let i = 0; i < first.issues.length; i += 1) {
+        expect(first.issues[i]).not.toBe(second.issues[i]);
+      }
+    }
+  });
+
+  it('does not let a pop()/splice() on the first result corrupt a later call', () => {
+    const first = validateKmaForecastRequest(null);
+    expect(first.ok).toBe(false);
+    if (!first.ok) {
+      // Mutate the first result through a runtime cast (readonly is compile-time only).
+      (first.issues as KmaRequestIssue[]).pop();
+      (first.issues as KmaRequestIssue[]).splice(0, 1);
+    }
+
+    // The second and third calls must still carry the exact five fields in fixed order.
+    expectPristineIssues(validateKmaForecastRequest(undefined));
+    expectPristineIssues(validateKmaForecastRequest('not-a-request'));
+  });
+
+  it('does not let mutating a first issue object corrupt a later call', () => {
+    const first = validateKmaForecastRequest(null);
+    expect(first.ok).toBe(false);
+    if (!first.ok) {
+      const firstIssue = first.issues[0] as KmaRequestIssue;
+      (firstIssue as { field: string }).field = 'MUTATED';
+      (firstIssue as { reason: string }).reason = 'TAMPERED';
+    }
+
+    // A subsequent call is unaffected by the runtime mutation above.
+    expectPristineIssues(validateKmaForecastRequest(undefined));
   });
 });
 

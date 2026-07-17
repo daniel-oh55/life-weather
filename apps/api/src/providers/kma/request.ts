@@ -80,23 +80,36 @@ function isSupportedProduct(product: unknown): product is KmaForecastProduct {
   );
 }
 
-/** Whether `value` is a plain object we can read fields off — not `null`, an array, or a primitive. */
+/**
+ * Whether `value` is a record-like object we can read fields off — a non-null, non-array object.
+ * This is deliberately *not* a strict plain-object check: a `Date`, a class instance, or an object
+ * with a custom prototype also passes. That is sufficient here because the provider is called from
+ * internal server code with a JSON-shaped request; a hostile-prototype/`Proxy` defence is out of
+ * scope for this PR (see `docs/kma-http-provider.md`).
+ */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
- * The value-free issue list returned for a non-object request: every field flagged `INVALID`, in
- * the same fixed order as an object request, so a `null`/string/array/etc. input is *total* rather
- * than throwing on a property read.
+ * Build the value-free issue list for a non-object request: every field flagged `INVALID`, in the
+ * same fixed order as an object request, so a `null`/string/array/function/etc. input is *total*
+ * rather than throwing on a property read.
+ *
+ * A **fresh** array of **fresh** issue objects is returned on every call. The result must never
+ * share a mutable reference with a previous call: a caller that mutates one returned result (the
+ * public type is `readonly`, but TypeScript's `readonly` is not runtime immutability) must not be
+ * able to corrupt a later call's result.
  */
-const NON_OBJECT_REQUEST_ISSUES: readonly KmaRequestIssue[] = [
-  { field: 'product', reason: 'INVALID' },
-  { field: 'baseDate', reason: 'INVALID' },
-  { field: 'baseTime', reason: 'INVALID' },
-  { field: 'nx', reason: 'INVALID' },
-  { field: 'ny', reason: 'INVALID' },
-];
+function createNonObjectRequestIssues(): KmaRequestIssue[] {
+  return [
+    { field: 'product', reason: 'INVALID' },
+    { field: 'baseDate', reason: 'INVALID' },
+    { field: 'baseTime', reason: 'INVALID' },
+    { field: 'nx', reason: 'INVALID' },
+    { field: 'ny', reason: 'INVALID' },
+  ];
+}
 
 /**
  * Validate a forecast request at runtime. The input is treated as `unknown` because a request
@@ -110,12 +123,15 @@ const NON_OBJECT_REQUEST_ISSUES: readonly KmaRequestIssue[] = [
  * converted. The official issuance *schedule* (e.g. 단기예보 발표시각) is **not** enforced here — a
  * structurally valid but non-canonical time such as `0615` is accepted; schedule selection is a
  * later PR's concern. The request object is only read, never mutated.
+ *
+ * Every call returns freshly-allocated issues (a new array of new objects), so mutating one result
+ * never leaks into a later call — there is no shared mutable state between calls.
  */
 export function validateKmaForecastRequest(
   input: unknown,
 ): ValidateKmaForecastRequestResult {
   if (!isRecord(input)) {
-    return { ok: false, issues: NON_OBJECT_REQUEST_ISSUES };
+    return { ok: false, issues: createNonObjectRequestIssues() };
   }
 
   const issues: KmaRequestIssue[] = [];
