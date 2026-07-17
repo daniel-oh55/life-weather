@@ -175,9 +175,11 @@ SKY 코드 체계는 두 상품이 동일합니다.
   보존한 상태에서 공식 null 의미를 결정해야 합니다.
 - **PR #4 반영.** KMA 원본 응답 경계는 PR #4에서 `apps/api/src/providers/kma`에 도입되었고,
   field presence를 `ABSENT`(필드 미존재) / `NULL`(필드 존재 + 명시적 null) / `VALUE`(필드 존재 +
-  값)로 명시 보존합니다 — [kma-response-boundary.md](./kma-response-boundary.md) 참고. 이 파서
-  자체(위 PCP/SNO·SKY/PTY 규칙)를 slot 값에 실제로 호출하는 연결은 PR #5 범위이며, 위 PR #3
-  규칙은 이 PR에서 변경하지 않았습니다.
+  값)로 명시 보존합니다 — [kma-response-boundary.md](./kma-response-boundary.md) 참고.
+- **PR #5 반영.** PR #5에서 실제 공공데이터포털 HTTP Provider가 이 경계 위에 구현되어, 검증된
+  page를 forecast slot으로 그룹화합니다 — [kma-http-provider.md](./kma-http-provider.md) 참고.
+  다만 위 정규화 함수(PCP/SNO·SKY/PTY 규칙)를 slot 값에 실제로 **호출하는 연결은 PR #6 범위**이며,
+  위 PR #3 규칙은 PR #4·#5에서 변경하지 않았습니다.
 
 ### PCP — 1시간 강수량 (반환 단위 **mm**)
 
