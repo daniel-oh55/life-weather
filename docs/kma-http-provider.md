@@ -179,7 +179,12 @@ Provider가 내부 서버 코드에서 JSON형 request로 호출된다는 전제
 `Proxy` getter 방어는 이번 PR 범위가 아니며(후속 hardening 후보), merge blocker가 아닙니다.
 
 **발표 schedule 자체는 강제하지 않습니다.** `1260`·`2400`은 거부하지만, 형식상 유효한 `0615`는
-Provider가 임의로 거부하지 않습니다(발표시각 선택 로직은 후속 PR).
+Provider가 임의로 거부하지 않습니다. 즉 Provider의 request validator는 **구조 검증만** 담당합니다.
+공식 발표 schedule에서 최신 발표시각을 고르는 일은 PR #8의 순수 helper
+(`selectLatestKmaForecastBaseTime`, `@life-weather/weather-core`,
+[kma-issue-time.md](./kma-issue-time.md))가 담당하지만, **이 Provider는 그 helper를 자동 호출하지
+않습니다.** Provider는 여전히 호출자가 넣은 `baseDate`/`baseTime`을 그대로 사용하며, availability
+lag·retry·fallback을 적용하지 않습니다.
 
 날짜·시간 검증은 PR #4 `raw-schema.ts`가 쓰는 것과 **동일한 predicate**(`validation.ts`의
 `isCalendarDate`/`isClockTime`)를 재사용하므로, 요청 경계와 응답 경계가 같은 규칙을 씁니다. 이
@@ -391,7 +396,10 @@ clock 미사용.
 
 ## 미구현 (아직 없음)
 
-- 자동 발표시각(base date/time) 선택, KST clock logic
+- **Provider의 자동 발표시각 선택.** 발표시각을 고르는 순수 함수 자체는 PR #8에서 `weather-core`에
+  구현됐지만(`selectLatestKmaForecastBaseTime`, [kma-issue-time.md](./kma-issue-time.md)), 이 Provider는
+  그것을 호출하지 않습니다. Provider가 현재 시각을 읽어 base date/time을 자동 선택하는 로직은
+  여전히 미구현입니다.
 - 위경도 → KMA grid 변환, 지역 registry
 - retry, cache, circuit breaker, rate limit, telemetry, logger
 - 공통 Provider interface, `WeatherOverview` 조립 (시간별 `HourlyForecast` 정규화는 PR #6, Provider와

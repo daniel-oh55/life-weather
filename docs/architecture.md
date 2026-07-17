@@ -43,9 +43,14 @@
   순수 함수로 구현했습니다. PCP/SNO 파서는 공식 no-amount(`강수없음`/`적설없음`/`-`/`0`)를 `0`으로,
   Missing 센티넬(수치 `>= 900`)과 파싱 불가·미제공을 `null`로 정규화합니다(PCP만 범위 지원, SNO
   범위 거부). PR #6에서 일반 수치 category(TMP/T1H·POP/REH·WSD·VEC) scalar parser(`scalar.ts`)를
-  추가했습니다(±900 Missing, VEC 360→0). weather-core는 순수 함수만 제공하고 HTTP 호출·slot 조립은
-  하지 않으며, 이 파서들을 slot 값에 연결하는 정규화는 `apps/api`(PR #6)에 있습니다. 매핑 근거는
-  [kma-normalization.md](./kma-normalization.md)와 [kma-hourly-normalization.md](./kma-hourly-normalization.md) 참고.
+  추가했습니다(±900 Missing, VEC 360→0). PR #8에서 KMA 단기·초단기예보의 최신 공식 발표시각을
+  선택하는 **순수 함수**(`selectLatestKmaForecastBaseTime`, `kma/issue-time.ts`)를 추가했습니다 —
+  호출자가 제공한 절대 epoch milliseconds를 고정 KST(UTC+09:00)로 변환해 `{ baseDate, baseTime }`을
+  반환하며, 시스템 clock을 읽지 않습니다. weather-core는 순수 함수만 제공하고 HTTP 호출·slot 조립은
+  하지 않으며, 이 파서들을 slot 값에 연결하는 정규화는 `apps/api`(PR #6)에 있습니다. 매핑·발표시각
+  근거는 [kma-normalization.md](./kma-normalization.md),
+  [kma-hourly-normalization.md](./kma-hourly-normalization.md),
+  [kma-issue-time.md](./kma-issue-time.md) 참고.
 - `packages/lifestyle-engine` — 생활 날씨 지수(우산, 마스크, 옷차림 등)를 순수 함수로 계산할
   위치입니다. **현재 상태**: 스켈레톤만 존재합니다.
 - `packages/config` — 비밀이 아닌 공유 설정/상수의 위치입니다. **현재 상태**: 스켈레톤만
@@ -91,7 +96,7 @@ RN1/SNO/TMP/T1H/POP/REH/WSD/VEC를 공통 값으로 정규화하고 contracts `H
 순수 TypeScript 함수로 구현할 예정입니다. React Native나 Node.js 런타임에 종속되지 않게 하여,
 모바일과 API 양쪽에서 동일한 로직을 재사용하고 독립적으로 테스트할 수 있도록 합니다.
 
-## 패키지 의존 방향 (PR #7 기준)
+## 패키지 의존 방향 (PR #8 기준)
 
 패키지 의존은 아래 방향만 허용하며, **순환 의존을 금지**합니다.
 
@@ -131,6 +136,11 @@ PR #7의 application service(`apps/api/src/services`)는 **신규 dependency도,
 providers/kma`, `services → contracts` type-only). `providers/kma → services`, `contracts →
 apps/api`, `weather-core → apps/api` 같은 역방향은 금지합니다.
 
+PR #8의 KMA issue-time selector는 **신규 dependency도, 신규 package-level 의존도 추가하지
+않습니다.** `weather-core` 내부의 `KmaForecastProduct`만 사용하며 위 의존 방향을 그대로 유지합니다
+(`weather-core`는 여전히 contracts·zod에 런타임 의존하지 않음). `apps/api` runtime 코드는 이 selector를
+아직 import·호출하지 않습니다.
+
 향후 허용 방향:
 
 ```text
@@ -139,13 +149,14 @@ apps/mobile       → contracts
 lifestyle-engine  → contracts
 ```
 
-## 현재 구현 상태 요약 (PR #7 시점)
+## 현재 구현 상태 요약 (PR #8 시점)
 
 - `contracts`: PR #2에서 Zod 4 기반 공유 기상 계약을 정의했습니다.
 - `weather-core`: `classifyFreshness`(PR #2)와 KMA 단기·초단기예보 정규화 primitive(PR #3)에 더해,
-  PR #6에서 일반 수치 category(TMP/T1H·POP/REH·WSD·VEC) scalar parser를 추가했습니다. KMA 코드
-  (SKY/PTY)와 범주형 수치(PCP/RN1/SNO), 일반 수치를 공통 값으로 정규화하는 순수 함수를 제공하며,
-  contracts·zod에 런타임 의존하지 않습니다.
+  PR #6에서 일반 수치 category(TMP/T1H·POP/REH·WSD·VEC) scalar parser를 추가했고, PR #8에서 KMA
+  최신 공식 발표시각을 선택하는 **순수 함수**(`selectLatestKmaForecastBaseTime`)를 추가했습니다. KMA
+  코드(SKY/PTY)와 범주형 수치(PCP/RN1/SNO), 일반 수치를 공통 값으로 정규화하고, 절대 instant를 고정
+  KST 발표시각으로 매핑하는 순수 함수를 제공하며, contracts·zod에 런타임 의존하지 않습니다.
 - `apps/api`: `GET /health`에 더해, PR #4에서 KMA **원본 JSON 검증 및 slot extraction**
   경계(`src/providers/kma`)를 구현했고, PR #5에서 이를 실제 공공데이터포털 **HTTPS 호출**에
   연결하는 **KMA HTTP Provider**를 구현했으며, PR #6에서 provider slot을 공통 `HourlyForecast`로
@@ -154,7 +165,10 @@ lifestyle-engine  → contracts
   추가했습니다 — 주입된 Provider를 정확히 한 번 호출, request·AbortSignal 그대로 전달, Provider/
   normalization 단계 오류 구분, side-effect 없는 factory. 경계는 여전히 원본의 **field presence**를
   보존합니다.
+- 발표시각 선택 자체는 PR #8에서 `weather-core`에 **순수 함수로 구현**됐지만, **API Provider와 hourly
+  service는 아직 이 selector를 자동 호출하지 않습니다.** service는 여전히 완성된 `KmaForecastRequest`를
+  입력받으며, selector 결과와 nx/ny를 합쳐 request를 **자동 조립하는 로직은 미구현**입니다(후속 PR).
 - `WeatherOverview` 조립, `SourceMetadata`, 현재 날씨, 일별 예보(`TMN`/`TMX`), 체감온도·생활지수
-  계산, 공통 Provider interface, 자동 발표시각 선택, 위경도→grid 변환, retry, cache, `/weather`
-  route, `config`는 아직 **미구현**입니다(후속 PR).
+  계산, 공통 Provider interface, injected clock 기반 자동 발표시각 선택·request factory, 위경도→grid
+  변환, retry, cache, `/weather` route, `config`는 아직 **미구현**입니다(후속 PR).
 - 이 문서의 나머지 "예정" 구조는 앞으로의 합의이며, 위 요약이 현재 코드베이스의 상태입니다.
