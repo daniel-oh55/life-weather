@@ -146,13 +146,21 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-describe('createKmaHourlyForecastService — SHORT_FORECAST success', () => {
+/**
+ * Fresh, isolated fixtures for one SHORT_FORECAST success run. Each test builds its own context so
+ * the fake provider's `calls` log is never shared across tests — order-independent under shuffle.
+ */
+function createShortSuccessContext() {
   const success = makeSuccess([makeSlot()]);
   const provider = fakeProvider({ ok: true, forecast: success });
   const service = createKmaHourlyForecastService(provider);
   const options = { signal: new AbortController().signal };
+  return { provider, service, options };
+}
 
+describe('createKmaHourlyForecastService — SHORT_FORECAST success', () => {
   it('calls the provider exactly once with the same request and options references', async () => {
+    const { provider, service, options } = createShortSuccessContext();
     const result = await service.fetchHourlyForecast(REQUEST, options);
     expect(provider.calls).toHaveLength(1);
     expect(provider.calls[0].request).toBe(REQUEST);
@@ -161,6 +169,7 @@ describe('createKmaHourlyForecastService — SHORT_FORECAST success', () => {
   });
 
   it('returns the normalized HourlyForecast built by the real PR #6 normalizer', async () => {
+    const { service } = createShortSuccessContext();
     const result = await service.fetchHourlyForecast(REQUEST);
     expect(result.ok).toBe(true);
     if (!result.ok) {
@@ -181,6 +190,7 @@ describe('createKmaHourlyForecastService — SHORT_FORECAST success', () => {
   });
 
   it('produces output that passes the contracts hourlyForecast schema', async () => {
+    const { service } = createShortSuccessContext();
     const result = await service.fetchHourlyForecast(REQUEST);
     expect(result.ok).toBe(true);
     if (!result.ok) {
@@ -192,6 +202,7 @@ describe('createKmaHourlyForecastService — SHORT_FORECAST success', () => {
   });
 
   it('exposes only { ok, hourly } — no raw provider success, slots, or raw fields', async () => {
+    const { service } = createShortSuccessContext();
     const result = await service.fetchHourlyForecast(REQUEST);
     expect(result.ok).toBe(true);
     expect(Object.keys(result).sort()).toEqual(['hourly', 'ok']);
