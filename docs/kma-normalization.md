@@ -178,8 +178,13 @@ SKY 코드 체계는 두 상품이 동일합니다.
   값)로 명시 보존합니다 — [kma-response-boundary.md](./kma-response-boundary.md) 참고.
 - **PR #5 반영.** PR #5에서 실제 공공데이터포털 HTTP Provider가 이 경계 위에 구현되어, 검증된
   page를 forecast slot으로 그룹화합니다 — [kma-http-provider.md](./kma-http-provider.md) 참고.
-  다만 위 정규화 함수(PCP/SNO·SKY/PTY 규칙)를 slot 값에 실제로 **호출하는 연결은 PR #6 범위**이며,
-  위 PR #3 규칙은 PR #4·#5에서 변경하지 않았습니다.
+- **PR #6 반영.** PR #6에서 위 정규화 함수(SKY/PTY·PCP/SNO)와 신규 일반 수치 scalar
+  parser(TMP/T1H·POP/REH·WSD·VEC, `scalar.ts`)를 slot 값에 실제로 **호출하는 연결**을
+  `apps/api`(`normalize-hourly.ts`)에 구현했습니다 —
+  [kma-hourly-normalization.md](./kma-hourly-normalization.md) 참고. 이때 초단기예보 `RN1`(1시간
+  강수량)은 공식 활용가이드가 **단기예보 `PCP`와 동일한 강수량 범주·표시방법**으로 정의하므로
+  `parseKmaPrecipitationAmountMillimeters`를 그대로 재사용합니다(반환 단위 mm). 위 PR #3 규칙은
+  PR #4·#5·#6에서 변경하지 않았습니다.
 
 ### PCP — 1시간 강수량 (반환 단위 **mm**)
 

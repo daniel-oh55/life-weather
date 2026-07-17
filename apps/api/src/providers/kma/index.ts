@@ -12,10 +12,17 @@
  *    caller abort, body-size cap, HTTP/gateway/JSON error classification), then run the layer-1
  *    parser and grouping and correlate the response against the request.
  *
- * The final weather-domain normalization (KMA categories → common `HourlyForecast` / contracts)
- * and the API route are **not** here — those are PR #6 and later. See
- * `docs/kma-response-boundary.md` and `docs/kma-http-provider.md` for the official-source evidence
- * and policy details. The URL builder and gateway-XML detector are internal and not exported.
+ * A third layer is the PR #6 **hourly normalization adapter** — `normalizeKmaHourlyForecast`
+ * turns a provider success's slots into the common `@life-weather/contracts` `HourlyForecast[]`
+ * (per-product category selection, KST `forecastAt`, SKY/PTY/scalar/categorical parsing via
+ * `weather-core`, and a contracts runtime validation). It is a pure adapter — the HTTP provider
+ * never calls it automatically.
+ *
+ * The `WeatherOverview` assembly, `SourceMetadata`, current weather, daily forecast, and the API
+ * route are **not** here — those are later PRs. See `docs/kma-response-boundary.md`,
+ * `docs/kma-http-provider.md`, and `docs/kma-hourly-normalization.md` for the official-source
+ * evidence and policy details. The URL builder and gateway-XML detector are internal and not
+ * exported.
  */
 
 export {
@@ -28,6 +35,12 @@ export {
   type KmaForecastProviderSuccess,
   type KmaResponseMismatchField,
 } from './provider';
+
+export {
+  normalizeKmaHourlyForecast,
+  type KmaHourlyNormalizationIssue,
+  type NormalizeKmaHourlyForecastResult,
+} from './normalize-hourly';
 
 export {
   type KmaForecastProviderOptions,

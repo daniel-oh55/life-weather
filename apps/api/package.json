@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@life-weather/contracts": "workspace:*",
     "@life-weather/weather-core": "workspace:*",
     "hono": "^4.12.30",
     "zod": "^4.1.11"

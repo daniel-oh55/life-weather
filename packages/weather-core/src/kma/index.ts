@@ -8,3 +8,9 @@ export {
   parseKmaPrecipitationAmountMillimeters,
   parseKmaSnowfallAmountCentimeters,
 } from './amount';
+export {
+  parseKmaPercentage,
+  parseKmaTemperatureCelsius,
+  parseKmaWindDirectionDegrees,
+  parseKmaWindSpeedMetersPerSecond,
+} from './scalar';

@@ -61,10 +61,11 @@ a project on first run; that step is intentionally deferred to a later PR.
     failure resolves to `NETWORK_ERROR` (or `TIMEOUT` / `ABORTED` if an abort caused it), never a
     rejected promise, and the raw stream/cancel/lock-release error is never surfaced. A
     `Content-Length` that already exceeds the cap cancels the body without reading a byte.
-  - Once a body reader is acquired it is **explicitly unlocked** (`releaseLock()`) on every exit
-    path — normal completion, overflow, a read error, or a cancel error — because a `cancel()` or a
-    drained stream does not release the lock on its own; the body ends up `locked === false`, and a
-    release failure never overwrites the decided result nor leaks.
+  - Once a body reader is acquired, `releaseLock()` is **attempted** on every exit path — normal
+    completion, overflow, a read error, or a cancel error — because a `cancel()` or a drained stream
+    does not release the lock on its own; on standard Node Web Streams the lock is released. If
+    `releaseLock()` itself throws, the failure is swallowed (the decided result is preserved and no
+    raw error leaks), but the lock release itself is not guaranteed in that case.
   - Both runtime validators (`validateKmaForecastRequest`, `validateKmaProviderOptions`) are
     **total** on non-object input: a `null`/string/array/function/etc. yields `INVALID_REQUEST` /
     `CONFIG_ERROR` instead of throwing. `INVALID_REQUEST` issues for a non-object request are built
@@ -76,16 +77,35 @@ a project on first run; that step is intentionally deferred to a later PR.
     `RESPONSE_TOO_LARGE` / `EMPTY_RESPONSE` / `NON_JSON_RESPONSE` / `INVALID_JSON` /
     `GATEWAY_ERROR` / `KMA_UPSTREAM_ERROR` / `KMA_INVALID_RESPONSE` / `RESPONSE_MISMATCH` /
     `INCOMPLETE_PAGE` / `DUPLICATE_CATEGORY` — none carrying the key, URL, raw body, or exception.
-- **Still not implemented.** The final weather-domain normalization (KMA categories → common
-  `HourlyForecast` / contracts), `@life-weather/weather-core` normalizer wiring, a common provider
-  interface, automatic base date/time selection, lat/long → grid conversion, retry, cache, and the
-  `/weather` route are **not** here — those are PR #6 and later.
+- **KMA hourly forecast normalization** — PR #6 adds `normalizeKmaHourlyForecast`, a **pure adapter**
+  that turns a provider success's slots into the common `@life-weather/contracts` `HourlyForecast[]`.
+  See [docs/kma-hourly-normalization.md](../../docs/kma-hourly-normalization.md). Highlights:
+  - Per-product category selection: 단기예보 `TMP`/`PCP`/`SNO`, 초단기예보 `T1H`/`RN1` (no 신적설).
+    `SKY`+`PTY`→condition, `POP`/`REH`→%, `WSD`/`VEC`→wind — via `@life-weather/weather-core` parsers.
+    `RN1` reuses the `PCP` parser (the guide shares one 강수량 범주 for both); 초단기예보 has no `POP`,
+    so an ABSENT `POP` is `null`, not an error. `UUU`/`VVV`/`WAV`/`TMN`/`TMX`/`LGT` and unknown codes
+    are ignored, and no raw KMA value reaches the output.
+  - `forecastAt` is composed as fixed-KST ISO (`YYYY-MM-DDTHH:mm:00+09:00`) with no `Date`, clock, or
+    time-zone dependency; `feelsLikeCelsius` is fixed `null` (a derived value deferred to a later PR).
+  - `temperatureCelsius` is required: an ABSENT/NULL/unparseable `TMP`/`T1H` is a normalization issue
+    (the slot is never silently dropped nor defaulted to `0`). Every other field is nullable: ABSENT,
+    NULL, or an unparseable/out-of-range/Missing value all become `null`.
+  - Each candidate is validated with `hourlyForecast.safeParse`; output is sorted by `forecastAt` and
+    issues by `(slotKey, field, reason)`. It never mutates the input and reads no clock. The HTTP
+    provider does **not** call it automatically — network and domain errors stay in separate unions.
+- **Still not implemented.** `WeatherOverview` assembly, `SourceMetadata`, current weather, daily
+  forecast (incl. `TMN`/`TMX`), feels-like computation, a common provider interface, automatic base
+  date/time selection, lat/long → grid conversion, retry, cache, and the `/weather` route are **not**
+  here — those are later PRs.
 
 ### Dependencies
 
 - `zod` — runtime validation of the raw KMA response (same workspace version as
   `@life-weather/contracts`).
-- `@life-weather/weather-core` (workspace) — shares `KmaForecastProduct` for slot identity. The
-  dependency direction is `apps/api → weather-core`; `weather-core` never depends on `apps/api`.
-- The HTTP provider adds **no new dependency** — it uses Node 22 native `fetch`, `AbortController`,
-  `ReadableStream`, and `TextDecoder`.
+- `@life-weather/contracts` (workspace) — PR #6 adds this so the hourly normalizer can validate its
+  output with the `hourlyForecast` schema. Direction is `apps/api → contracts`.
+- `@life-weather/weather-core` (workspace) — shares `KmaForecastProduct` for slot identity and, from
+  PR #6, the scalar/condition/amount parsers the normalizer calls. The dependency direction is
+  `apps/api → weather-core`; `weather-core` never depends on `apps/api` or `contracts` at runtime.
+- The HTTP provider and the PR #6 normalizer add **no new external dependency** — the provider uses
+  Node 22 native `fetch`, `AbortController`, `ReadableStream`, and `TextDecoder`.
