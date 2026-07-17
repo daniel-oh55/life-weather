@@ -7,7 +7,7 @@
 
 이 PR(#4)은 **원본 JSON 구조 검증과 slot 추출까지만** 구현합니다. 실제 HTTP 호출, `fetch`,
 `KMA_SERVICE_KEY` 읽기, query/URL 인코딩, timeout, retry, Provider class, weather-core
-normalizer 연결, API route는 **아직 존재하지 않으며** 후속 PR(#5) 범위입니다.
+normalizer 연결, API route는 **아직 존재하지 않으며** 후속 PR 범위입니다.
 
 구현 위치:
 
@@ -26,7 +26,7 @@ normalizer 연결, API route는 **아직 존재하지 않으며** 후속 PR(#5) 
 | 활용가이드 버전 | `2607` |
 | 서비스(오퍼레이션) 버전 | `VilageFcstInfoService_2.0` |
 | 확인 날짜 | 2026-07-16 |
-| 확인 주체 | Claude (Claude Code) — 공식 문서(응답 명세·상세기능 표) 확인. **인증된 실제 JSON 응답 fixture는 미확보**(PR #5 재확인) |
+| 확인 주체 | Claude (Claude Code) — 공식 문서(응답 명세·상세기능 표) 확인. **인증된 실제 JSON 응답 fixture는 PR #5에서도 확보하지 못함** — 실제 service key를 이용한 후속 live integration 검증 대상 |
 
 ### 검증된 공식 파일 SHA-256
 
@@ -47,9 +47,11 @@ normalizer 연결, API route는 **아직 존재하지 않으며** 후속 PR(#5) 
 자료에서 확인했습니다. 다만 **직렬화된 실제 JSON 응답 sample과 JSON scalar 타입 전체를 공식 자료가
 완전히 제공하지는 않습니다.** 공식 응답 예제는 **XML 중심**이고, 공공데이터포털 상세기능 표는 필드
 타입 명세는 주지만 완전한 JSON sample을 주지 않습니다. 따라서 아래 JSON boundary 타입은 **공식
-응답 명세와 공공데이터포털 필드 타입을 기준으로 설정**했으며, **인증된 실제 JSON 응답 fixture로의
-재확인은 PR #5(또는 별도 검증)에서 필요**합니다. 이 문서는 어디까지가 공식 명세 근거이고 어디부터가
-방어적 정책인지를 아래에서 명시적으로 구분합니다.
+응답 명세와 공공데이터포털 필드 타입을 기준으로 설정**했습니다. **인증된 실제 JSON 응답 fixture는
+PR #5에서도 확보하지 못했으며, JSON scalar 형태·`fcstValue` literal null·빈 success page 및
+초단기예보 POP의 실제 반환 형태는 실제 service key를 이용한 후속 live integration 검증 대상으로
+남아 있습니다.** 이 문서는 어디까지가 공식 명세 근거이고 어디부터가 방어적 정책인지를 아래에서
+명시적으로 구분합니다.
 
 1. 공공데이터포털 데이터 상세: `data.go.kr` → `publicDataPk=15084084` (성공 응답 `resultCode`
    `"00"` 및 상세기능 필드/타입 목록 확인).
@@ -66,7 +68,8 @@ normalizer 연결, API route는 **아직 존재하지 않으며** 후속 PR(#5) 
 > **근거 수준 요약.** 공식 문서에서 envelope와 필드 명세는 확인했으나, (1) 공식 예시는 XML 중심이고,
 > (2) 완전한 JSON sample과 일부 JSON scalar 세부(특히 `fcstValue`의 literal `null` 여부)는 공식
 > 자료에서 재현 가능하게 확인하지 못했습니다. 이 부분은 **방어적으로** 모델링했고, 인증된 실제 JSON
-> 응답으로 재확인하는 작업은 PR #5의 범위입니다.
+> 응답으로 재확인하는 작업은 실제 service key를 이용한 후속 live integration 검증 대상입니다(특정
+> 완료 PR에서 검증되지 않음).
 
 ## 대상 operation
 
@@ -225,7 +228,8 @@ totalCount > 0 이면서 item.length === 0
 ```
 
 이 경우 공식 empty success page 근거는 부족하지만 page 범위를 넘긴 요청 등의 가능성을 배제할 수
-없어 이번 PR에서는 **merge 차단 규칙으로 만들지 않고 허용**하며, PR #5 실제 응답으로 재평가합니다.
+없어 이번 PR에서는 **merge 차단 규칙으로 만들지 않고 허용**하며, 실제 service key를 이용한 후속 live
+integration 검증에서 재평가합니다.
 
 ### upstream error 판정
 
@@ -374,8 +378,8 @@ type KmaForecastFieldLookup =
   / `item.length > totalCount`.
 - **방어적 허용(공식 근거 부족):** `resultCode = 00` + `totalCount > 0` + `items.item = []`. 공식
   empty success page 사례는 확인하지 못했지만 page 범위를 넘긴 요청 등의 가능성을 배제할 수 없어
-  이번 PR에서는 **merge 차단 규칙으로 만들지 않고 허용**합니다. PR #5에서 실제 Provider 연결 후
-  공식 API 응답으로 재평가합니다.
+  이번 PR에서는 **merge 차단 규칙으로 만들지 않고 허용**합니다. 실제 service key를 이용한 후속 live
+  integration 검증에서 공식 API 응답으로 재평가합니다.
 - **정상 허용:** `totalCount = 0` + `item = []`, 그리고 `totalCount > item.length`(일반 pagination).
 
 ### duplicate category 정책
@@ -463,4 +467,11 @@ v2 / PR #4 / 2026-07 (Codex 독립 리뷰 반영 — runtime boundary 강화)
   segment 경계 보존
 - 근거 수준 정정: 공식 예시는 XML 중심이며 JSON scalar/빈 success page/fcstValue literal null은
   미확인 → 방어적 정책과 공식 명세 근거를 분리 기록, PR #5 실제 JSON 재검증 명시
+
+v3 / PR #6 branch / 2026-07 (live 검증 상태 문구 정정)
+- PR #5가 병합된 뒤에도 인증된 실제 forecast JSON fixture는 확보되지 않았음을 명시. 특정 후속 PR을
+  fixture 검증 시점으로 지정하던 미래형 문구를 현재 상태 설명에서 제거.
+- JSON scalar 형태·fcstValue literal null·빈 success page·초단기예보 POP 실제 반환 형태는 특정 완료
+  PR이 아니라 실제 service key를 이용한 후속 live integration 검증 대상으로 통일해 기록.
+- runtime 코드·스키마·테스트 assertion 무변경(문서 문구 한정).
 ```
