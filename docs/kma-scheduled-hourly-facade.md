@@ -74,7 +74,9 @@ createKmaScheduledHourlyForecastFacade(
 - 두 collaborator는 **주입**됩니다. facade는 Provider를 생성하지 않고, request factory나 hourly
   service를 내부에서 새로 만들지 않으며, global singleton도 만들지 않습니다.
 - 실제 production 인스턴스(system clock adapter, Provider-from-env)를 조립하는 일은 이 facade의
-  책임이 아닙니다(후속 composition root PR).
+  책임이 아닙니다. 이 조립은 PR #11의 별도 production composition root
+  (`createKmaScheduledHourlyCompositionFromEnv`)가 담당하며, 해당 composition은 아직 API app
+  startup이나 route에는 연결되지 않았습니다.
 
 ## facade 생성은 side-effect-free
 

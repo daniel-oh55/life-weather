@@ -182,8 +182,10 @@ ServiceKey, request URL, response body, `SourceMetadata`, `WeatherOverview`. 소
   반환합니다(Provider/Normalization stage·error·issues를 변형하지 않음).
 - facade를 쓰지 않는 **직접 caller도 여전히** 완성된 `KmaForecastRequest`로 이 service를 호출할 수
   있습니다.
-- facade는 injected collaborator만 연결하며, 실제 Provider/clock 인스턴스를 조립하는 **production
-  composition root는 미구현**입니다(후속 PR).
+- 실제 Provider와 clock 인스턴스 조립은 PR #11의 **production composition root**
+  (`createKmaScheduledHourlyCompositionFromEnv`)에서 구현되었습니다. 이 hourly service 자체는 계속
+  Provider를 생성하거나 environment·clock을 읽지 않으며, composition root는 아직 API app
+  startup이나 route에는 연결되지 않았습니다.
 
 ## 후속 범위
 

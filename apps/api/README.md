@@ -142,8 +142,10 @@ a project on first run; that step is intentionally deferred to a later PR.
   - **Connected by the PR #10 facade.** `createKmaScheduledHourlyForecastFacade` (below) sequences
     this factory → the hourly service. `KmaHourlyForecastService` still takes a **fully-assembled**
     `KmaForecastRequest` as input (contract unchanged), so a direct caller can keep calling it with a
-    completed request. A production composition root that instantiates the factory (with a system
-    clock) and the provider is still a later PR.
+    completed request. The separate PR #11 production composition root now instantiates the factory
+    with a system or injected clock and wires the Provider, service, and facade into a live graph.
+    The request factory itself still consumes only its injected clock, and the composition is not yet
+    connected to API startup or a route.
 - **KMA scheduled hourly forecast facade** — PR #10 adds `createKmaScheduledHourlyForecastFacade`
   (`src/services/`), a thin application facade that connects the PR #9 request factory and the PR #7
   hourly service in order. See [docs/kma-scheduled-hourly-facade.md](../../docs/kma-scheduled-hourly-facade.md).
