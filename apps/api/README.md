@@ -118,9 +118,18 @@ a project on first run; that step is intentionally deferred to a later PR.
     cache, no fallback, no product merge. It is exported from `src/services/`, never from
     `src/providers/kma/` (an application service is not part of the provider boundary), and does not
     touch `src/index.ts` or the `/health` route.
+- **Base issue-time selection — pure function done in `weather-core`, not wired here.** PR #8 added
+  `selectLatestKmaForecastBaseTime` to `@life-weather/weather-core` (a pure function mapping a
+  caller-supplied absolute instant to a KMA `{ baseDate, baseTime }`; see
+  [docs/kma-issue-time.md](../../docs/kma-issue-time.md)). **`apps/api` does not yet import or call
+  it.** The following are still **not implemented** here: the application service reading the current
+  time and calling the selector automatically; combining the selector output with `nx`/`ny` to build
+  a `KmaForecastRequest`; API-availability fallback; and the `/weather` route.
+  `KmaHourlyForecastService` still takes a **fully-assembled** `KmaForecastRequest` as input
+  (unchanged).
 - **Still not implemented.** `WeatherOverview` assembly, `SourceMetadata`, current weather, daily
-  forecast (incl. `TMN`/`TMX`), feels-like computation, a common provider interface, automatic base
-  date/time selection, lat/long → grid conversion, retry, cache, and the `/weather` route are **not**
+  forecast (incl. `TMN`/`TMX`), feels-like computation, a common provider interface, an injected-clock
+  request factory, lat/long → grid conversion, retry, cache, and the `/weather` route are **not**
   here — those are later PRs.
 
 ### Dependencies

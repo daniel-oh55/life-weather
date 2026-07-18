@@ -51,24 +51,47 @@ a common internal weather state, and other weather-domain calculations.
     caller" (→ `null`) and is deliberately **not** collapsed into the `0` of the official `-`
     token — see [docs/kma-normalization.md](../../docs/kma-normalization.md).
 
+- **KMA forecast issue-time selection** (`kma/issue-time.ts`): `selectLatestKmaForecastBaseTime`,
+  a pure, deterministic function that, given a `product` and a caller-supplied absolute
+  `referenceEpochMilliseconds`, returns the latest **scheduled** KMA `{ baseDate, baseTime }`
+  at or before that instant. KST is a fixed `UTC+09:00` (no DST), read via `Date`'s UTC getters
+  on an offset-shifted instant — never host-local getters, `Intl`, or the system clock. The
+  official schedules (단기예보 `0200/0500/…/2300`, 초단기예보 hourly `HH30`) come from the KMA
+  guide; the selection is **inclusive** at each issue time, rolls to the previous KST day before
+  the day's first issue time (month-end / year-end / leap-day exact), and rejects an invalid
+  `referenceEpochMilliseconds` (NaN/±Infinity/fractional/unsafe integer, out-of-`Date`-range, or
+  a KST year outside `1000`–`9999`) or an unsupported `product` with `RangeError`. It selects a
+  **scheduled** issue time only and makes **no** claim about API availability (no publication lag,
+  safety margin, retry, or fallback). See [docs/kma-issue-time.md](../../docs/kma-issue-time.md).
+
 All exports are re-exported from `src/index.ts`.
 
 Mapping source: KMA `기상청_단기예보 조회서비스` (공공데이터 ID `15084084`), 활용가이드 `2607`,
 verified 2026-07-16. Details and the change log live in
 [docs/kma-normalization.md](../../docs/kma-normalization.md).
 
-## Scope in this PR
+## Current scope (PR #8)
 
-This PR adds the KMA forecast **normalization primitives** above (alongside the existing
-`classifyFreshness`). It still makes **no network calls** and reads **no KMA API key** — it
-only transforms raw values that a caller supplies. The actual KMA HTTP provider, `ServiceKey`
-handling, and the raw-response runtime schema are deferred to PR #4. Unknown/undefined
-`SKY`/`PTY` codes normalize to `UNKNOWN`, and unparseable/missing `PCP`/`SNO` values to `null`.
+As of PR #8 this package provides:
+
+- `classifyFreshness` (freshness classifier) — implemented.
+- KMA condition (`SKY`/`PTY`) and categorical amount (`PCP`/`SNO`) parsers — implemented.
+- KMA general scalar parsers (`TMP`/`T1H`, `POP`/`REH`, `WSD`, `VEC`) — implemented.
+- **PR #8 KMA issue-time selector** (`selectLatestKmaForecastBaseTime`) — implemented.
+
+`weather-core` still has **no runtime dependencies** (no Zod, no runtime dependency on
+`@life-weather/contracts`), makes **no network calls**, and reads **no KMA API key** — every
+function only transforms values a caller supplies. Network, `ServiceKey`, the KMA HTTP Provider,
+the hourly normalizer wiring, and the application service all live in `apps/api`;
+`weather-core` neither imports nor calls them. The issue-time selector is **not yet wired into**
+the API application service — a caller still assembles a `KmaForecastRequest` itself. Unknown/
+undefined `SKY`/`PTY` codes normalize to `UNKNOWN`, and unparseable/missing `PCP`/`SNO` values
+to `null`.
 
 Because a bare parser cannot tell "field present with an official null value" from "field
-absent," PR #4's raw-response schema and provider must preserve **field presence** and decide
-the official null meaning there — distinguishing (1) field present + official null, (2) field
-absent, (3) the string `-`, and (4) a numeric/string `0`. This parser does not turn a
+absent," the KMA raw-response schema and provider in `apps/api` preserve **field presence** and
+decide the official null meaning there — distinguishing (1) field present + official null,
+(2) field absent, (3) the string `-`, and (4) a numeric/string `0`. This parser does not turn a
 JavaScript `null`/`undefined` argument into `0`.
 
 `weather-core` has **no runtime dependencies** — in particular no Zod and no runtime

@@ -35,7 +35,10 @@ application 수준에서 순서대로 연결할 뿐입니다.
 이 service의 소비자는 **완성된** `KmaForecastRequest`(product, baseDate/baseTime, nx/ny)를 전달합니다.
 service는 다음을 하지 않습니다.
 
-- baseDate/baseTime 자동 선택 (발표시각 schedule)
+- baseDate/baseTime 자동 선택 (발표시각 schedule) — 발표시각을 고르는 순수 함수 자체는 PR #8에서
+  `weather-core`에 구현됐지만(`selectLatestKmaForecastBaseTime`,
+  [kma-issue-time.md](./kma-issue-time.md)), 이 service는 그것을 **호출하지 않습니다.** service는
+  여전히 완성된 request를 입력받습니다.
 - 위경도 → KMA grid(nx/ny) 변환
 - request runtime 재검증 (`validateKmaForecastRequest()`를 다시 호출하지 않음 — 요청 검증은
   Provider의 책임 유지)
@@ -173,7 +176,11 @@ ServiceKey, request URL, response body, `SourceMetadata`, `WeatherOverview`. 소
 
 이 PR 이후 후보 PR:
 
-1. KMA 발표시각을 결정론적으로 선택하는 pure scheduler
+1. ~~KMA 발표시각을 결정론적으로 선택하는 pure scheduler~~ — **PR #8에서 완료**
+   (`selectLatestKmaForecastBaseTime`, `weather-core`, [kma-issue-time.md](./kma-issue-time.md)).
+   다만 이 hourly service와의 **wiring은 아직 미구현**이며, service는 여전히 완성된
+   `KmaForecastRequest`를 입력받습니다. 남은 작업: injected clock으로 selector를 호출해 selector
+   결과와 nx/ny를 합쳐 request를 자동 조립하는 factory.
 2. 위경도 → KMA grid(nx/ny) 변환
 3. `SourceMetadata`와 `WeatherOverview` 조립
 4. `/weather` API route
