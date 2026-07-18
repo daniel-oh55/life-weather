@@ -136,9 +136,11 @@ a project on first run; that step is intentionally deferred to a later PR.
     `createAvailableRequest`: it selects the scheduled issuance and makes **no** API-availability claim.
   - No new result union and no broad `try/catch`: a selector `RangeError` and any error the clock
     throws propagate **verbatim** (the clock's error keeps its exact reference).
-  - `nx`/`ny` are assumed already computed (lat/long → grid is a later PR); the factory does not
-    transform or re-validate them — the provider still owns runtime request validation, so the factory
-    does not call `validateKmaForecastRequest`.
+  - `nx`/`ny` are assumed already computed; the factory does not transform or re-validate them — the
+    provider still owns runtime request validation, so the factory does not call
+    `validateKmaForecastRequest`. PR #12 adds the pure `convertKmaLatitudeLongitudeToGrid` converter
+    in `@life-weather/weather-core`, but `apps/api` does **not** call it yet: the factory input is
+    still a caller-supplied `product`/`nx`/`ny`, and the latitude/longitude → grid adapter is a later PR.
   - **Connected by the PR #10 facade.** `createKmaScheduledHourlyForecastFacade` (below) sequences
     this factory → the hourly service. `KmaHourlyForecastService` still takes a **fully-assembled**
     `KmaForecastRequest` as input (contract unchanged), so a direct caller can keep calling it with a
@@ -193,8 +195,10 @@ a project on first run; that step is intentionally deferred to a later PR.
 - **Still not implemented.** `WeatherOverview` assembly, `SourceMetadata`, current weather, daily
   forecast (incl. `TMN`/`TMX`), feels-like computation, a common provider interface, **running the
   production composition root at API app startup**, the `/weather` route and its query validation,
-  lat/long → grid conversion, API-availability fallback/retry, and cache are **not** here — those are
-  later PRs. The composition root itself is built but is **not** wired into `src/index.ts` and is
+  API-availability fallback/retry, and cache are **not** here — those are later PRs. The pure
+  lat/long → grid converter itself now exists in `@life-weather/weather-core` (PR #12), but `apps/api`
+  does not call it yet and the latitude/longitude adapter that would feed the scheduled facade is a
+  later PR. The composition root itself is built but is **not** wired into `src/index.ts` and is
   connected to no route (`/health` unchanged).
 
 ### Dependencies

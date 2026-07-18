@@ -64,29 +64,45 @@ a common internal weather state, and other weather-domain calculations.
   **scheduled** issue time only and makes **no** claim about API availability (no publication lag,
   safety margin, retry, or fallback). See [docs/kma-issue-time.md](../../docs/kma-issue-time.md).
 
+- **KMA latitude/longitude → forecast grid conversion** (`kma/grid.ts`):
+  `convertKmaLatitudeLongitudeToGrid({ latitude, longitude })`, a pure, deterministic function
+  that projects a coordinate to the KMA 동네예보 grid cell `{ nx, ny }` via the official DFS
+  Lambert Conformal Conic transform (5 km grid; `nx` `1–149`, `ny` `1–253`). It returns `{ nx, ny }`
+  for a supported location, `null` for a valid coordinate the grid does not support (outside the
+  official latitude/longitude coverage box, or projecting off-grid — off-grid results are never
+  clamped), and throws `RangeError` for a non-finite value or a latitude/longitude outside its
+  physical range (`[-90, 90]` / `[-180, 180]`), with value-free messages that never echo the raw
+  input. It makes **no** network call and reads **no** API key — the projection is a local
+  computation using only `Math`, not the KMA coordinate-conversion service. See
+  [docs/kma-grid-conversion.md](../../docs/kma-grid-conversion.md).
+
 All exports are re-exported from `src/index.ts`.
 
 Mapping source: KMA `기상청_단기예보 조회서비스` (공공데이터 ID `15084084`), 활용가이드 `2607`,
 verified 2026-07-16. Details and the change log live in
 [docs/kma-normalization.md](../../docs/kma-normalization.md).
 
-## Current scope (PR #8)
+## Current scope (PR #12)
 
-As of PR #8 this package provides:
+As of PR #12 this package provides:
 
 - `classifyFreshness` (freshness classifier) — implemented.
 - KMA condition (`SKY`/`PTY`) and categorical amount (`PCP`/`SNO`) parsers — implemented.
 - KMA general scalar parsers (`TMP`/`T1H`, `POP`/`REH`, `WSD`, `VEC`) — implemented.
-- **PR #8 KMA issue-time selector** (`selectLatestKmaForecastBaseTime`) — implemented.
+- KMA issue-time selector (`selectLatestKmaForecastBaseTime`) — implemented.
+- **PR #12 KMA grid converter** (`convertKmaLatitudeLongitudeToGrid`) — implemented.
 
 `weather-core` still has **no runtime dependencies** (no Zod, no runtime dependency on
 `@life-weather/contracts`), makes **no network calls**, and reads **no KMA API key** — every
 function only transforms values a caller supplies. Network, `ServiceKey`, the KMA HTTP Provider,
 the hourly normalizer wiring, and the application service all live in `apps/api`;
-`weather-core` neither imports nor calls them. The issue-time selector is **not yet wired into**
-the API application service — a caller still assembles a `KmaForecastRequest` itself. Unknown/
-undefined `SKY`/`PTY` codes normalize to `UNKNOWN`, and unparseable/missing `PCP`/`SNO` values
-to `null`.
+`weather-core` neither imports nor calls them. The issue-time selector **is** now consumed in
+`apps/api` — the PR #9 request factory selects `baseDate`/`baseTime` from it, the PR #10 scheduled
+facade sequences that factory with the hourly service, and the PR #11 production composition root
+assembles the whole graph. The PR #12 grid converter, by contrast, is **not yet consumed** by any
+`apps/api` composition or route — the scheduled facade input is still a caller-supplied
+`product`/`nx`/`ny`, and the latitude/longitude adapter is a later PR. Unknown/undefined
+`SKY`/`PTY` codes normalize to `UNKNOWN`, and unparseable/missing `PCP`/`SNO` values to `null`.
 
 Because a bare parser cannot tell "field present with an official null value" from "field
 absent," the KMA raw-response schema and provider in `apps/api` preserve **field presence** and
