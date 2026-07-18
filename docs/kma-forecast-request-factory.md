@@ -118,7 +118,10 @@ over할 뿐입니다. 같은 instance를 여러 번 사용할 수 있고, mutabl
 
 ## nx/ny는 이미 계산돼 있어야 함
 
-- 이 PR은 **위경도 → KMA grid(nx/ny) 변환을 구현하지 않습니다**(후속 PR).
+- 이 request factory는 계속 **nx/ny를 직접 입력받습니다.** 위·경도 → 격자 변환은 이 factory가
+  하지 않으며, PR #12의 순수 converter(`convertKmaLatitudeLongitudeToGrid`)는 **별도 `weather-core`
+  함수**입니다 — factory는 그것을 호출하지 않고 latitude/longitude를 직접 변환하지도 않습니다. 둘을
+  잇는 연결 adapter는 후속 PR입니다.
 - factory는 valid·typed 격자 좌표가 공급된다고 가정하고, nx/ny를 변환·반올림·문자열화·기본값
   적용·swap·clamp하지 않습니다.
 - **runtime trust-boundary validation은 Provider가 계속 소유합니다.** factory는

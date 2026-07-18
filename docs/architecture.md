@@ -68,11 +68,16 @@
   추가했습니다(±900 Missing, VEC 360→0). PR #8에서 KMA 단기·초단기예보의 최신 공식 발표시각을
   선택하는 **순수 함수**(`selectLatestKmaForecastBaseTime`, `kma/issue-time.ts`)를 추가했습니다 —
   호출자가 제공한 절대 epoch milliseconds를 고정 KST(UTC+09:00)로 변환해 `{ baseDate, baseTime }`을
-  반환하며, 시스템 clock을 읽지 않습니다. weather-core는 순수 함수만 제공하고 HTTP 호출·slot 조립은
-  하지 않으며, 이 파서들을 slot 값에 연결하는 정규화는 `apps/api`(PR #6)에 있습니다. 매핑·발표시각
-  근거는 [kma-normalization.md](./kma-normalization.md),
+  반환하며, 시스템 clock을 읽지 않습니다. PR #12에서는 위도·경도를 KMA 동네예보 격자 좌표
+  `{ nx, ny }`로 변환하는 **순수 함수**(`convertKmaLatitudeLongitudeToGrid`, `kma/grid.ts`)를
+  추가했습니다 — 공식 DFS Lambert Conformal Conic 투영을 표준 `Math`만으로 계산하며, 지원 위치는
+  `{ nx, ny }`, 지원 밖 위치는 `null`, 물리적으로 잘못된 위·경도는 `RangeError`입니다(clamp 없음,
+  역변환 없음, network·API key 없음). weather-core는 순수 함수만 제공하고 HTTP 호출·slot 조립은
+  하지 않으며, 이 파서들을 slot 값에 연결하는 정규화는 `apps/api`(PR #6)에 있습니다. 매핑·발표시각·
+  격자 변환 근거는 [kma-normalization.md](./kma-normalization.md),
   [kma-hourly-normalization.md](./kma-hourly-normalization.md),
-  [kma-issue-time.md](./kma-issue-time.md) 참고.
+  [kma-issue-time.md](./kma-issue-time.md),
+  [kma-grid-conversion.md](./kma-grid-conversion.md) 참고.
 - `packages/lifestyle-engine` — 생활 날씨 지수(우산, 마스크, 옷차림 등)를 순수 함수로 계산할
   위치입니다. **현재 상태**: 스켈레톤만 존재합니다.
 - `packages/config` — 비밀이 아닌 공유 설정/상수의 위치입니다. **현재 상태**: 스켈레톤만
@@ -118,7 +123,7 @@ RN1/SNO/TMP/T1H/POP/REH/WSD/VEC를 공통 값으로 정규화하고 contracts `H
 순수 TypeScript 함수로 구현할 예정입니다. React Native나 Node.js 런타임에 종속되지 않게 하여,
 모바일과 API 양쪽에서 동일한 로직을 재사용하고 독립적으로 테스트할 수 있도록 합니다.
 
-## 패키지 의존 방향 (PR #11 기준)
+## 패키지 의존 방향 (PR #12 기준)
 
 패키지 의존은 아래 방향만 허용하며, **순환 의존을 금지**합니다.
 
@@ -191,6 +196,14 @@ barrel(`./index`)이 아니라 concrete file에서 내부 import합니다. syste
 composition 계층에서 `Date.now()`를 읽는 유일한 위치이며(생성 시 0회, read당 1회), Provider·
 factory·service·facade의 기존 runtime·공개 API는 변경하지 않았습니다.
 
+PR #12의 KMA 위·경도 → 격자 converter(`packages/weather-core/src/kma/grid.ts`)는 **신규 dependency도,
+신규 package-level 의존도 추가하지 않습니다.** 이 함수는 JavaScript 표준 `Math`에만 의존하므로
+`weather-core → Math only`이며, `weather-core`는 여전히 contracts·zod에 런타임 의존하지 않습니다
+(`weather-core → (런타임 의존 없음)`). 이 PR은 `apps/api`의 Provider·request factory·facade·
+composition runtime을 변경하지 않았고, converter는 아직 그 어느 계층에도 연결되지 않았습니다 —
+API caller는 여전히 현재 facade에 이미 계산된 `nx`/`ny`를 전달합니다. `weather-core → apps/api`
+같은 역방향은 계속 금지합니다.
+
 향후 허용 방향:
 
 ```text
@@ -199,14 +212,17 @@ apps/mobile       → contracts
 lifestyle-engine  → contracts
 ```
 
-## 현재 구현 상태 요약 (PR #11 시점)
+## 현재 구현 상태 요약 (PR #12 시점)
 
 - `contracts`: PR #2에서 Zod 4 기반 공유 기상 계약을 정의했습니다.
 - `weather-core`: `classifyFreshness`(PR #2)와 KMA 단기·초단기예보 정규화 primitive(PR #3)에 더해,
   PR #6에서 일반 수치 category(TMP/T1H·POP/REH·WSD·VEC) scalar parser를 추가했고, PR #8에서 KMA
-  최신 공식 발표시각을 선택하는 **순수 함수**(`selectLatestKmaForecastBaseTime`)를 추가했습니다. KMA
-  코드(SKY/PTY)와 범주형 수치(PCP/RN1/SNO), 일반 수치를 공통 값으로 정규화하고, 절대 instant를 고정
-  KST 발표시각으로 매핑하는 순수 함수를 제공하며, contracts·zod에 런타임 의존하지 않습니다.
+  최신 공식 발표시각을 선택하는 **순수 함수**(`selectLatestKmaForecastBaseTime`)를, PR #12에서 위·경도를
+  KMA 동네예보 격자 `{ nx, ny }`로 변환하는 **순수 함수**(`convertKmaLatitudeLongitudeToGrid`)를
+  추가했습니다. KMA 코드(SKY/PTY)와 범주형 수치(PCP/RN1/SNO), 일반 수치를 공통 값으로 정규화하고,
+  절대 instant를 고정 KST 발표시각으로 매핑하며, 위·경도를 공식 DFS LCC 투영으로 격자에 매핑하는
+  순수 함수를 제공하고(표준 `Math`만 사용, network·API key 없음), contracts·zod에 런타임 의존하지
+  않습니다.
 - `apps/api`: `GET /health`에 더해, PR #4에서 KMA **원본 JSON 검증 및 slot extraction**
   경계(`src/providers/kma`)를 구현했고, PR #5에서 이를 실제 공공데이터포털 **HTTPS 호출**에
   연결하는 **KMA HTTP Provider**를 구현했으며, PR #6에서 provider slot을 공통 `HourlyForecast`로
@@ -237,9 +253,12 @@ lifestyle-engine  → contracts
   env read·import-time composition이 없고, 아직 `apps/api/src/index.ts`나 어떤 route에도 **연결되지
   않았습니다.** hourly service는 직접 caller가 완성된 `KmaForecastRequest`로도 여전히 호출할 수
   있으며, 그 공개 API는 변경되지 않았습니다.
-- `WeatherOverview` 조립, `SourceMetadata`, 현재 날씨, 일별 예보(`TMN`/`TMX`), 체감온도·생활지수
-  계산, 공통 Provider interface, production composition root를 **app startup/route에 연결**하는 wiring,
-  위경도→grid 변환, API availability fallback/retry, cache, `/weather` route, 별도 general `config`
-  package는 아직 **미구현**입니다(후속 PR). production composition root 자체(factory·hourly service·
-  facade·system clock 조립)는 **PR #11에서 구현 완료**됐지만, 그것을 실제 실행하는 것은 후속 PR입니다.
+- 위경도→grid **순수 변환**(`convertKmaLatitudeLongitudeToGrid`)은 **PR #12에서 `weather-core`에 구현
+  완료**됐지만, 그것을 request factory·facade·composition·route에 연결하는 **latitude/longitude
+  application adapter는 아직 미구현**입니다(후속 PR). `WeatherOverview` 조립, `SourceMetadata`, 현재
+  날씨, 일별 예보(`TMN`/`TMX`), 체감온도·생활지수 계산, 공통 Provider interface, production
+  composition root를 **app startup/route에 연결**하는 wiring, API availability fallback/retry, cache,
+  `/weather` route, 별도 general `config` package는 아직 **미구현**입니다(후속 PR). production
+  composition root 자체(factory·hourly service·facade·system clock 조립)는 **PR #11에서 구현 완료**됐지만,
+  그것을 실제 실행하는 것은 후속 PR입니다.
 - 이 문서의 나머지 "예정" 구조는 앞으로의 합의이며, 위 요약이 현재 코드베이스의 상태입니다.

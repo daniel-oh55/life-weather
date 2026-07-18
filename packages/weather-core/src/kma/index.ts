@@ -19,3 +19,8 @@ export {
   type KmaForecastBaseTime,
   type SelectLatestKmaForecastBaseTimeInput,
 } from './issue-time';
+export {
+  convertKmaLatitudeLongitudeToGrid,
+  type ConvertKmaLatitudeLongitudeToGridInput,
+  type KmaForecastGridCoordinate,
+} from './grid';
