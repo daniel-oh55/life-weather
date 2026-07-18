@@ -139,14 +139,35 @@ a project on first run; that step is intentionally deferred to a later PR.
   - `nx`/`ny` are assumed already computed (lat/long → grid is a later PR); the factory does not
     transform or re-validate them — the provider still owns runtime request validation, so the factory
     does not call `validateKmaForecastRequest`.
-  - **Not wired yet.** The factory and `KmaHourlyForecastService` are **not** auto-connected; a
-    caller/composition layer sequences factory → service in a later PR. `KmaHourlyForecastService`
-    still takes a **fully-assembled** `KmaForecastRequest` as input (contract unchanged).
+  - **Connected by the PR #10 facade.** `createKmaScheduledHourlyForecastFacade` (below) sequences
+    this factory → the hourly service. `KmaHourlyForecastService` still takes a **fully-assembled**
+    `KmaForecastRequest` as input (contract unchanged), so a direct caller can keep calling it with a
+    completed request. A production composition root that instantiates the factory (with a system
+    clock) and the provider is still a later PR.
+- **KMA scheduled hourly forecast facade** — PR #10 adds `createKmaScheduledHourlyForecastFacade`
+  (`src/services/`), a thin application facade that connects the PR #9 request factory and the PR #7
+  hourly service in order. See [docs/kma-scheduled-hourly-facade.md](../../docs/kma-scheduled-hourly-facade.md).
+  Highlights:
+  - Both collaborators are **injected**; construction is side-effect-free (it calls neither
+    collaborator and performs no I/O). One `fetchScheduledHourlyForecast(input, options)` call runs
+    `requestFactory.createScheduledRequest(input)` **exactly once**, then, on success,
+    `hourlyService.fetchHourlyForecast(request, options)` **exactly once**.
+  - It passes `input`, the resulting request, and `options` through **by reference** (no clone,
+    spread, mutation, re-validation, or default), forwards omitted `options` as exactly `undefined`,
+    and returns the hourly service's Promise as the **same** reference — the method is not marked
+    `async` and adds no Promise layer.
+  - It defines **no** new result union and **no** new error type: a success, a `PROVIDER`-stage
+    failure, and a `NORMALIZATION`-stage failure pass through unchanged; a factory throw propagates
+    verbatim and the hourly service is **not** called; a hourly-service synchronous throw or rejected
+    Promise propagates verbatim (no broad `try`/interception). Input `product`/`nx`/`ny`,
+    `options`/result type are re-used from the two collaborators via type aliases.
+  - **Not a composition root.** It creates no provider, reads no system clock / environment / service
+    key, converts no lat/long → grid, and adds no availability delay, retry, or fallback.
 - **Still not implemented.** `WeatherOverview` assembly, `SourceMetadata`, current weather, daily
-  forecast (incl. `TMN`/`TMX`), feels-like computation, a common provider interface, a system-clock
-  adapter / composition root wiring the factory to the hourly service, lat/long → grid conversion,
-  API-availability fallback/retry, cache, and the `/weather` route are **not** here — those are
-  later PRs.
+  forecast (incl. `TMN`/`TMX`), feels-like computation, a common provider interface, a **system-clock
+  adapter / production composition root** wiring the request factory, provider (from env), and the
+  scheduled facade into a live instance, lat/long → grid conversion, API-availability fallback/retry,
+  cache, and the `/weather` route are **not** here — those are later PRs.
 
 ### Dependencies
 
@@ -158,9 +179,10 @@ a project on first run; that step is intentionally deferred to a later PR.
   PR #6, the scalar/condition/amount parsers the normalizer calls; from PR #9, the request factory
   also consumes `selectLatestKmaForecastBaseTime` (the PR #8 selector). The dependency direction is
   `apps/api → weather-core`; `weather-core` never depends on `apps/api` or `contracts` at runtime.
-- The HTTP provider, the PR #6 normalizer, the PR #7 application service, and the PR #9 request
-  factory add **no new external dependency** — the provider uses Node 22 native `fetch`,
-  `AbortController`, `ReadableStream`, and `TextDecoder`; the service only re-uses the provider and
-  normalizer and a `HourlyForecast` type import from `@life-weather/contracts`; the request factory
-  only re-uses the `weather-core` selector and a `KmaForecastRequest` type import from
-  `providers/kma`.
+- The HTTP provider, the PR #6 normalizer, the PR #7 application service, the PR #9 request factory,
+  and the PR #10 scheduled hourly facade add **no new external dependency** — the provider uses Node
+  22 native `fetch`, `AbortController`, `ReadableStream`, and `TextDecoder`; the service only re-uses
+  the provider and normalizer and a `HourlyForecast` type import from `@life-weather/contracts`; the
+  request factory only re-uses the `weather-core` selector and a `KmaForecastRequest` type import
+  from `providers/kma`; and the facade only re-uses the request factory and hourly service type
+  imports from the same `services` layer.
