@@ -28,11 +28,17 @@
   (`src/services`, `createKmaHourlyForecastService`)를 추가했습니다 — 주입된 Provider를 정확히 한 번
   호출하고 request·AbortSignal을 그대로 전달하며, Provider 단계 오류와 normalization 단계 오류를
   `stage`로 구분한 결과를 반환합니다(side-effect 없는 factory, retry·cache 없음, raw slot 비노출).
-  `WeatherOverview` 조립·`/weather` API route는 아직 **미구현**(후속 PR)입니다. 자세한 내용은
+  PR #9에서는 주입된 clock·PR #8 selector·caller가 공급한 nx/ny를 결합해 완성된
+  `KmaForecastRequest`를 만드는 **application-level request factory**(`src/services`,
+  `createKmaForecastRequestFactory`)를 추가했습니다 — 생성 시 side-effect 없음, `createScheduledRequest()`
+  호출당 injected clock 1회, selector 1회 사용, product/baseDate/baseTime/nx/ny만 반환(input spread
+  없음). factory와 hourly service는 아직 **자동 연결되지 않습니다**(후속 PR). `WeatherOverview`
+  조립·`/weather` API route는 아직 **미구현**(후속 PR)입니다. 자세한 내용은
   [kma-response-boundary.md](./kma-response-boundary.md),
   [kma-http-provider.md](./kma-http-provider.md),
   [kma-hourly-normalization.md](./kma-hourly-normalization.md),
-  [kma-hourly-service.md](./kma-hourly-service.md) 참고.
+  [kma-hourly-service.md](./kma-hourly-service.md),
+  [kma-forecast-request-factory.md](./kma-forecast-request-factory.md) 참고.
 - `packages/contracts` — 모바일과 API가 공유할 정규화 요청/응답 계약의 위치입니다. **현재
   상태**: PR #2에서 Zod 4 기반 공유 기상 데이터 계약을 정의했습니다. 자세한 내용은
   [contracts.md](./contracts.md) 참고.
@@ -96,7 +102,7 @@ RN1/SNO/TMP/T1H/POP/REH/WSD/VEC를 공통 값으로 정규화하고 contracts `H
 순수 TypeScript 함수로 구현할 예정입니다. React Native나 Node.js 런타임에 종속되지 않게 하여,
 모바일과 API 양쪽에서 동일한 로직을 재사용하고 독립적으로 테스트할 수 있도록 합니다.
 
-## 패키지 의존 방향 (PR #8 기준)
+## 패키지 의존 방향 (PR #9 기준)
 
 패키지 의존은 아래 방향만 허용하며, **순환 의존을 금지**합니다.
 
@@ -138,8 +144,15 @@ apps/api`, `weather-core → apps/api` 같은 역방향은 금지합니다.
 
 PR #8의 KMA issue-time selector는 **신규 dependency도, 신규 package-level 의존도 추가하지
 않습니다.** `weather-core` 내부의 `KmaForecastProduct`만 사용하며 위 의존 방향을 그대로 유지합니다
-(`weather-core`는 여전히 contracts·zod에 런타임 의존하지 않음). `apps/api` runtime 코드는 이 selector를
-아직 import·호출하지 않습니다.
+(`weather-core`는 여전히 contracts·zod에 런타임 의존하지 않음).
+
+PR #9의 KMA request factory(`apps/api/src/services`)는 **신규 dependency도, 신규 package-level 의존도
+추가하지 않습니다.** 이 factory는 `@life-weather/weather-core`의 `selectLatestKmaForecastBaseTime`·
+`KmaForecastProduct`(즉 **PR #8 selector를 application request factory에서 소비**)와, `apps/api` 내부
+`providers/kma`의 `KmaForecastRequest` **타입만** 사용합니다(의존 방향 `services → weather-core`,
+`services → providers/kma` type-only). `providers/kma → services`, `weather-core → apps/api`,
+`contracts → apps/api` 같은 역방향은 금지합니다. `apps/api` request factory는 `weather-core`의 기존
+PR #8 public selector를 소비만 하므로, PR #9에서는 `packages/weather-core`를 변경하지 않았습니다.
 
 향후 허용 방향:
 
@@ -149,7 +162,7 @@ apps/mobile       → contracts
 lifestyle-engine  → contracts
 ```
 
-## 현재 구현 상태 요약 (PR #8 시점)
+## 현재 구현 상태 요약 (PR #9 시점)
 
 - `contracts`: PR #2에서 Zod 4 기반 공유 기상 계약을 정의했습니다.
 - `weather-core`: `classifyFreshness`(PR #2)와 KMA 단기·초단기예보 정규화 primitive(PR #3)에 더해,
@@ -163,12 +176,18 @@ lifestyle-engine  → contracts
   바꾸는 **순수 시간별 정규화 adapter**(`normalizeKmaHourlyForecast`)를 추가했고, PR #7에서 이 둘을
   순서대로 호출하는 **application service**(`src/services`, `createKmaHourlyForecastService`)를
   추가했습니다 — 주입된 Provider를 정확히 한 번 호출, request·AbortSignal 그대로 전달, Provider/
-  normalization 단계 오류 구분, side-effect 없는 factory. 경계는 여전히 원본의 **field presence**를
-  보존합니다.
-- 발표시각 선택 자체는 PR #8에서 `weather-core`에 **순수 함수로 구현**됐지만, **API Provider와 hourly
-  service는 아직 이 selector를 자동 호출하지 않습니다.** service는 여전히 완성된 `KmaForecastRequest`를
-  입력받으며, selector 결과와 nx/ny를 합쳐 request를 **자동 조립하는 로직은 미구현**입니다(후속 PR).
+  normalization 단계 오류 구분, side-effect 없는 factory. PR #9에서는 주입된 clock·PR #8 selector·caller
+  nx/ny를 결합해 완성된 `KmaForecastRequest`를 만드는 **request factory**(`src/services`,
+  `createKmaForecastRequestFactory`)를 추가했습니다 — 생성 시 clock 미호출, `createScheduledRequest()`
+  호출당 clock 1회·selector 1회, product/baseDate/baseTime/nx/ny만 반환. 경계는 여전히 원본의 **field
+  presence**를 보존합니다.
+- 발표시각 선택 순수 함수는 PR #8에서 `weather-core`에 구현됐고, PR #9의 **request factory가 이 selector를
+  소비**합니다(injected clock으로 현재시각 → selector → baseDate/baseTime → nx/ny 결합 → request). 다만
+  **API Provider와 hourly service는 여전히 selector/factory를 자동 호출하지 않습니다.** hourly service는
+  여전히 완성된 `KmaForecastRequest`를 입력받으며, factory → service를 잇는 **application facade/composition
+  root는 미구현**입니다(후속 PR).
 - `WeatherOverview` 조립, `SourceMetadata`, 현재 날씨, 일별 예보(`TMN`/`TMX`), 체감온도·생활지수
-  계산, 공통 Provider interface, injected clock 기반 자동 발표시각 선택·request factory, 위경도→grid
-  변환, retry, cache, `/weather` route, `config`는 아직 **미구현**입니다(후속 PR).
+  계산, 공통 Provider interface, factory → hourly service를 잇는 composition root(system clock adapter),
+  위경도→grid 변환, API availability fallback/retry, cache, `/weather` route, `config`는 아직
+  **미구현**입니다(후속 PR).
 - 이 문서의 나머지 "예정" 구조는 앞으로의 합의이며, 위 요약이 현재 코드베이스의 상태입니다.

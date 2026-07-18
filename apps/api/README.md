@@ -118,19 +118,35 @@ a project on first run; that step is intentionally deferred to a later PR.
     cache, no fallback, no product merge. It is exported from `src/services/`, never from
     `src/providers/kma/` (an application service is not part of the provider boundary), and does not
     touch `src/index.ts` or the `/health` route.
-- **Base issue-time selection — pure function done in `weather-core`, not wired here.** PR #8 added
-  `selectLatestKmaForecastBaseTime` to `@life-weather/weather-core` (a pure function mapping a
-  caller-supplied absolute instant to a KMA `{ baseDate, baseTime }`; see
-  [docs/kma-issue-time.md](../../docs/kma-issue-time.md)). **`apps/api` does not yet import or call
-  it.** The following are still **not implemented** here: the application service reading the current
-  time and calling the selector automatically; combining the selector output with `nx`/`ny` to build
-  a `KmaForecastRequest`; API-availability fallback; and the `/weather` route.
-  `KmaHourlyForecastService` still takes a **fully-assembled** `KmaForecastRequest` as input
-  (unchanged).
+- **KMA forecast request factory (injected clock)** — PR #9 adds `createKmaForecastRequestFactory`
+  (`src/services/`), the application-level factory that combines an **injected clock**, the PR #8
+  scheduled issue-time selector (`selectLatestKmaForecastBaseTime` in `@life-weather/weather-core`),
+  and caller-supplied `product`/`nx`/`ny` into a complete `KmaForecastRequest`. See
+  [docs/kma-forecast-request-factory.md](../../docs/kma-forecast-request-factory.md). Highlights:
+  - Implemented: the injected-clock request factory, selecting the scheduled `baseDate`/`baseTime`
+    from the real PR #8 selector, and combining it with `product`/`nx`/`ny`.
+  - The clock is **injected** — the factory never reads a system clock (no `Date.now()`, `new Date()`,
+    `performance`, `process`) and provides no default clock. Construction reads the clock **zero**
+    times; each `createScheduledRequest()` reads it **exactly once**, with no argument, and forwards
+    that epoch to the selector verbatim. It calls the selector once — it never re-implements the
+    KST schedule.
+  - The result carries exactly `product`/`baseDate`/`baseTime`/`nx`/`ny` (explicit fields, never an
+    `input` spread), is a **fresh** object per call, and never mutates the input; a runtime extra
+    property on the input cannot leak into the result. Method named `createScheduledRequest`, not
+    `createAvailableRequest`: it selects the scheduled issuance and makes **no** API-availability claim.
+  - No new result union and no broad `try/catch`: a selector `RangeError` and any error the clock
+    throws propagate **verbatim** (the clock's error keeps its exact reference).
+  - `nx`/`ny` are assumed already computed (lat/long → grid is a later PR); the factory does not
+    transform or re-validate them — the provider still owns runtime request validation, so the factory
+    does not call `validateKmaForecastRequest`.
+  - **Not wired yet.** The factory and `KmaHourlyForecastService` are **not** auto-connected; a
+    caller/composition layer sequences factory → service in a later PR. `KmaHourlyForecastService`
+    still takes a **fully-assembled** `KmaForecastRequest` as input (contract unchanged).
 - **Still not implemented.** `WeatherOverview` assembly, `SourceMetadata`, current weather, daily
-  forecast (incl. `TMN`/`TMX`), feels-like computation, a common provider interface, an injected-clock
-  request factory, lat/long → grid conversion, retry, cache, and the `/weather` route are **not**
-  here — those are later PRs.
+  forecast (incl. `TMN`/`TMX`), feels-like computation, a common provider interface, a system-clock
+  adapter / composition root wiring the factory to the hourly service, lat/long → grid conversion,
+  API-availability fallback/retry, cache, and the `/weather` route are **not** here — those are
+  later PRs.
 
 ### Dependencies
 
@@ -139,9 +155,12 @@ a project on first run; that step is intentionally deferred to a later PR.
 - `@life-weather/contracts` (workspace) — PR #6 adds this so the hourly normalizer can validate its
   output with the `hourlyForecast` schema. Direction is `apps/api → contracts`.
 - `@life-weather/weather-core` (workspace) — shares `KmaForecastProduct` for slot identity and, from
-  PR #6, the scalar/condition/amount parsers the normalizer calls. The dependency direction is
+  PR #6, the scalar/condition/amount parsers the normalizer calls; from PR #9, the request factory
+  also consumes `selectLatestKmaForecastBaseTime` (the PR #8 selector). The dependency direction is
   `apps/api → weather-core`; `weather-core` never depends on `apps/api` or `contracts` at runtime.
-- The HTTP provider, the PR #6 normalizer, and the PR #7 application service add **no new external
-  dependency** — the provider uses Node 22 native `fetch`, `AbortController`, `ReadableStream`, and
-  `TextDecoder`; the service only re-uses the provider and normalizer and a `HourlyForecast` type
-  import from `@life-weather/contracts`.
+- The HTTP provider, the PR #6 normalizer, the PR #7 application service, and the PR #9 request
+  factory add **no new external dependency** — the provider uses Node 22 native `fetch`,
+  `AbortController`, `ReadableStream`, and `TextDecoder`; the service only re-uses the provider and
+  normalizer and a `HourlyForecast` type import from `@life-weather/contracts`; the request factory
+  only re-uses the `weather-core` selector and a `KmaForecastRequest` type import from
+  `providers/kma`.
