@@ -142,8 +142,10 @@ a project on first run; that step is intentionally deferred to a later PR.
   - **Connected by the PR #10 facade.** `createKmaScheduledHourlyForecastFacade` (below) sequences
     this factory → the hourly service. `KmaHourlyForecastService` still takes a **fully-assembled**
     `KmaForecastRequest` as input (contract unchanged), so a direct caller can keep calling it with a
-    completed request. A production composition root that instantiates the factory (with a system
-    clock) and the provider is still a later PR.
+    completed request. The separate PR #11 production composition root now instantiates the factory
+    with a system or injected clock and wires the Provider, service, and facade into a live graph.
+    The request factory itself still consumes only its injected clock, and the composition is not yet
+    connected to API startup or a route.
 - **KMA scheduled hourly forecast facade** — PR #10 adds `createKmaScheduledHourlyForecastFacade`
   (`src/services/`), a thin application facade that connects the PR #9 request factory and the PR #7
   hourly service in order. See [docs/kma-scheduled-hourly-facade.md](../../docs/kma-scheduled-hourly-facade.md).
@@ -163,11 +165,37 @@ a project on first run; that step is intentionally deferred to a later PR.
     `options`/result type are re-used from the two collaborators via type aliases.
   - **Not a composition root.** It creates no provider, reads no system clock / environment / service
     key, converts no lat/long → grid, and adds no availability delay, retry, or fallback.
+- **KMA production composition root** — PR #11 adds `src/composition`, the explicit server-side wiring
+  point: `createKmaSystemClock` (the production system clock adapter) and
+  `createKmaScheduledHourlyCompositionFromEnv`, which assembles the PR #5 provider-from-env, PR #7
+  hourly service, PR #9 request factory (with the PR #8 selector), and PR #10 scheduled facade into a
+  live facade. See [docs/kma-production-composition.md](../../docs/kma-production-composition.md).
+  Implemented:
+  - The **system clock adapter** — `createKmaSystemClock()` reads `Date.now()` **zero** times on
+    construction and **exactly once** per `nowEpochMilliseconds()` call (no argument, verbatim return,
+    no cache / rounding / time-zone math); a `Date.now()` throw propagates by the same reference. It is
+    the only place in the composition layer that reads the system time.
+  - **Provider-from-env production composition** — a **callable** function (never an import-time
+    singleton): importing the module reads no environment and builds nothing; `process.env` is read
+    only when the function is called with `env` omitted. It uses `createKmaForecastProviderFromEnv` and
+    leaves `KMA_SERVICE_KEY` reading/validation to the provider factory (composition reads no key).
+  - **Assembly of request factory / hourly service / scheduled facade** from the selected clock and the
+    provider, with **explicit `fetchImpl` / `clock` dependency injection** (production defaults: native
+    `fetch` + the system clock). Construction reads no clock and issues no `fetch` — the first clock
+    read and first `fetch` happen only when the returned facade runs.
+  - A **config-failure result** — a provider `CONFIG_ERROR` is passed through **by reference** as
+    `{ ok: false, error }` (no clock read, no `fetch`, no throw); success exposes **only**
+    `{ ok, facade }` (no internal provider / factory / service / clock / env / key / URL).
+  - **Full in-memory pipeline verification** — the composition tests assemble the real components and
+    exercise a complete SHORT pipeline through an injected in-memory `fetchImpl` (no real service key,
+    no external network, no fake timers), plus abort / provider-failure / normalization-failure /
+    clock-error / repeated-call / secret-non-leakage cases.
 - **Still not implemented.** `WeatherOverview` assembly, `SourceMetadata`, current weather, daily
-  forecast (incl. `TMN`/`TMX`), feels-like computation, a common provider interface, a **system-clock
-  adapter / production composition root** wiring the request factory, provider (from env), and the
-  scheduled facade into a live instance, lat/long → grid conversion, API-availability fallback/retry,
-  cache, and the `/weather` route are **not** here — those are later PRs.
+  forecast (incl. `TMN`/`TMX`), feels-like computation, a common provider interface, **running the
+  production composition root at API app startup**, the `/weather` route and its query validation,
+  lat/long → grid conversion, API-availability fallback/retry, and cache are **not** here — those are
+  later PRs. The composition root itself is built but is **not** wired into `src/index.ts` and is
+  connected to no route (`/health` unchanged).
 
 ### Dependencies
 
@@ -180,9 +208,11 @@ a project on first run; that step is intentionally deferred to a later PR.
   also consumes `selectLatestKmaForecastBaseTime` (the PR #8 selector). The dependency direction is
   `apps/api → weather-core`; `weather-core` never depends on `apps/api` or `contracts` at runtime.
 - The HTTP provider, the PR #6 normalizer, the PR #7 application service, the PR #9 request factory,
-  and the PR #10 scheduled hourly facade add **no new external dependency** — the provider uses Node
-  22 native `fetch`, `AbortController`, `ReadableStream`, and `TextDecoder`; the service only re-uses
-  the provider and normalizer and a `HourlyForecast` type import from `@life-weather/contracts`; the
-  request factory only re-uses the `weather-core` selector and a `KmaForecastRequest` type import
-  from `providers/kma`; and the facade only re-uses the request factory and hourly service type
-  imports from the same `services` layer.
+  the PR #10 scheduled hourly facade, and the PR #11 production composition add **no new external
+  dependency** — the provider uses Node 22 native `fetch`, `AbortController`, `ReadableStream`, and
+  `TextDecoder`; the service only re-uses the provider and normalizer and a `HourlyForecast` type
+  import from `@life-weather/contracts`; the request factory only re-uses the `weather-core` selector
+  and a `KmaForecastRequest` type import from `providers/kma`; the facade only re-uses the request
+  factory and hourly service type imports from the same `services` layer; and the composition layer
+  only consumes the `providers/kma` and `services` public surfaces (its system clock uses Node's
+  native `Date.now`).

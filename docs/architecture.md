@@ -36,17 +36,25 @@
   facade**(`src/services`, `createKmaScheduledHourlyForecastFacade`)를 추가했습니다 — caller
   input(product/nx/ny) → request factory → 완성된 request → hourly service → 결과 순서로 연결하며,
   input/request/options/Promise를 reference 그대로 전달하고 새로운 result union이나 오류 type을
-  만들지 않습니다(생성 시 side-effect 없음). 이로써 factory와 hourly service가 **facade에서
-  연결**됐지만, 실제 production 인스턴스를 조립하는 **composition root(system clock adapter,
-  Provider-from-env wiring, live facade instance)는 아직 없습니다.** 위경도→grid 변환·API
-  availability(fallback/retry) 정책·`WeatherOverview` 조립·`/weather` API route도 아직
-  **미구현**(후속 PR)입니다. 자세한 내용은
+  만들지 않습니다(생성 시 side-effect 없음). PR #11에서는 이 component들과 신규 **system clock
+  adapter**를 실제 서버 환경에서 조립하는 **production composition root**(`src/composition`,
+  `createKmaSystemClock`·`createKmaScheduledHourlyCompositionFromEnv`)를 추가했습니다 — env →
+  Provider-from-env → hourly service, system clock/injected clock → request factory, 그리고 이 둘을
+  잇는 scheduled facade를 한 번의 함수 호출로 조립해 live facade를 반환합니다. **호출 가능한
+  composition function**이며 module-scope singleton이나 import-time composition을 만들지 않고,
+  import 시 `process.env`를 읽거나 Provider를 생성하지 않습니다(config 실패는 Provider의 기존
+  `KmaProviderConfigError`를 값으로 전달, 성공 시 `{ ok, facade }`만 공개). 다만 이 composition
+  root는 아직 `apps/api/src/index.ts`나 어떤 route에도 **연결되지 않았습니다**(`/health` 무관).
+  위경도→grid 변환·API availability(fallback/retry) 정책·`WeatherOverview` 조립·`/weather` API
+  route는 여전히 **미구현**(후속 PR)이며, 별도 general `config` package도 여전히 미구현입니다. 자세한
+  내용은
   [kma-response-boundary.md](./kma-response-boundary.md),
   [kma-http-provider.md](./kma-http-provider.md),
   [kma-hourly-normalization.md](./kma-hourly-normalization.md),
   [kma-hourly-service.md](./kma-hourly-service.md),
   [kma-forecast-request-factory.md](./kma-forecast-request-factory.md),
-  [kma-scheduled-hourly-facade.md](./kma-scheduled-hourly-facade.md) 참고.
+  [kma-scheduled-hourly-facade.md](./kma-scheduled-hourly-facade.md),
+  [kma-production-composition.md](./kma-production-composition.md) 참고.
 - `packages/contracts` — 모바일과 API가 공유할 정규화 요청/응답 계약의 위치입니다. **현재
   상태**: PR #2에서 Zod 4 기반 공유 기상 데이터 계약을 정의했습니다. 자세한 내용은
   [contracts.md](./contracts.md) 참고.
@@ -110,7 +118,7 @@ RN1/SNO/TMP/T1H/POP/REH/WSD/VEC를 공통 값으로 정규화하고 contracts `H
 순수 TypeScript 함수로 구현할 예정입니다. React Native나 Node.js 런타임에 종속되지 않게 하여,
 모바일과 API 양쪽에서 동일한 로직을 재사용하고 독립적으로 테스트할 수 있도록 합니다.
 
-## 패키지 의존 방향 (PR #10 기준)
+## 패키지 의존 방향 (PR #11 기준)
 
 패키지 의존은 아래 방향만 허용하며, **순환 의존을 금지**합니다.
 
@@ -171,6 +179,18 @@ file(`kma-forecast-request`의 `KmaForecastRequestFactory`, `kma-hourly-forecast
 조립하는 방향은 금지합니다. facade는 자기 barrel(`./index`)이 아니라 concrete file에서 import합니다.
 factory와 hourly service의 기존 runtime·공개 API는 변경하지 않았습니다.
 
+PR #11의 KMA production composition(`apps/api/src/composition`)은 **신규 dependency도, 신규
+package-level 의존도 추가하지 않습니다.** 이 계층은 `apps/api` 내부의 `providers/kma` 공개
+surface(`createKmaForecastProviderFromEnv`, `KmaProviderConfigError`)와 `services` 공개
+surface(`createKmaForecastRequestFactory`·`createKmaHourlyForecastService`·
+`createKmaScheduledHourlyForecastFacade`·`KmaForecastRequestClock`·`KmaScheduledHourlyForecastFacade`)
+만 소비합니다. 허용 방향은 `composition → providers/kma`, `composition → services`이며,
+`providers/kma → composition`·`services → composition`·`weather-core → composition`·
+`contracts → composition`·`mobile → composition` 같은 역방향은 금지합니다. composition은 자기
+barrel(`./index`)이 아니라 concrete file에서 내부 import합니다. system clock adapter만이
+composition 계층에서 `Date.now()`를 읽는 유일한 위치이며(생성 시 0회, read당 1회), Provider·
+factory·service·facade의 기존 runtime·공개 API는 변경하지 않았습니다.
+
 향후 허용 방향:
 
 ```text
@@ -179,7 +199,7 @@ apps/mobile       → contracts
 lifestyle-engine  → contracts
 ```
 
-## 현재 구현 상태 요약 (PR #10 시점)
+## 현재 구현 상태 요약 (PR #11 시점)
 
 - `contracts`: PR #2에서 Zod 4 기반 공유 기상 계약을 정의했습니다.
 - `weather-core`: `classifyFreshness`(PR #2)와 KMA 단기·초단기예보 정규화 primitive(PR #3)에 더해,
@@ -201,16 +221,25 @@ lifestyle-engine  → contracts
   `createKmaScheduledHourlyForecastFacade`)를 추가했습니다 — caller input → factory 1회 → 완성된
   request → hourly service 1회 → 결과 순서로 연결하고, input/request/options/Promise를 reference
   그대로 전달하며 새로운 result union·오류 type을 만들지 않습니다(생성 시 side-effect 없음). 경계는
-  여전히 원본의 **field presence**를 보존합니다.
+  여전히 원본의 **field presence**를 보존합니다. PR #11에서는 신규 **system clock adapter**와
+  **production composition root**(`src/composition`, `createKmaSystemClock`·
+  `createKmaScheduledHourlyCompositionFromEnv`)를 추가했습니다 — env → Provider-from-env → hourly
+  service, system clock/injected clock → request factory, scheduled facade를 한 번의 함수 호출로
+  조립해 live facade를 반환합니다(clock 생성 시 `Date.now` 0회·read당 1회, composition 생성 시 clock
+  read·network 0회, config 실패는 Provider의 config error 값 그대로, 성공 시 `{ ok, facade }`만 공개).
 - 발표시각 선택 순수 함수는 PR #8에서 `weather-core`에 구현됐고, PR #9의 **request factory가 이 selector를
   소비**합니다(injected clock으로 현재시각 → selector → baseDate/baseTime → nx/ny 결합 → request). PR #10의
   **scheduled facade가 factory와 hourly service를 연결**해 caller input → request factory → 완성된 request →
   hourly service → 결과 흐름을 완성합니다(selector → request factory → scheduled facade → hourly service).
-  다만 실제 production 인스턴스를 조립하는 **composition root(system clock adapter, Provider-from-env
-  wiring, live facade instance)는 아직 없습니다.** hourly service는 직접 caller가 완성된
-  `KmaForecastRequest`로도 여전히 호출할 수 있으며, 그 공개 API는 변경되지 않았습니다.
+  PR #11의 **production composition root가 이 흐름 전체를 실제 dependency로 조립**합니다(system clock →
+  request factory → selector, Provider-from-env → hourly service, request factory + hourly service →
+  live facade). 이 composition root는 **호출 가능한 function**이며 module-scope singleton·import-time
+  env read·import-time composition이 없고, 아직 `apps/api/src/index.ts`나 어떤 route에도 **연결되지
+  않았습니다.** hourly service는 직접 caller가 완성된 `KmaForecastRequest`로도 여전히 호출할 수
+  있으며, 그 공개 API는 변경되지 않았습니다.
 - `WeatherOverview` 조립, `SourceMetadata`, 현재 날씨, 일별 예보(`TMN`/`TMX`), 체감온도·생활지수
-  계산, 공통 Provider interface, factory·hourly service·facade를 실제로 조립하는 production
-  composition root(system clock adapter, Provider-from-env wiring), 위경도→grid 변환, API
-  availability fallback/retry, cache, `/weather` route, `config`는 아직 **미구현**입니다(후속 PR).
+  계산, 공통 Provider interface, production composition root를 **app startup/route에 연결**하는 wiring,
+  위경도→grid 변환, API availability fallback/retry, cache, `/weather` route, 별도 general `config`
+  package는 아직 **미구현**입니다(후속 PR). production composition root 자체(factory·hourly service·
+  facade·system clock 조립)는 **PR #11에서 구현 완료**됐지만, 그것을 실제 실행하는 것은 후속 PR입니다.
 - 이 문서의 나머지 "예정" 구조는 앞으로의 합의이며, 위 요약이 현재 코드베이스의 상태입니다.

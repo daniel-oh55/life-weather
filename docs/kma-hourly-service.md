@@ -182,8 +182,10 @@ ServiceKey, request URL, response body, `SourceMetadata`, `WeatherOverview`. 소
   반환합니다(Provider/Normalization stage·error·issues를 변형하지 않음).
 - facade를 쓰지 않는 **직접 caller도 여전히** 완성된 `KmaForecastRequest`로 이 service를 호출할 수
   있습니다.
-- facade는 injected collaborator만 연결하며, 실제 Provider/clock 인스턴스를 조립하는 **production
-  composition root는 미구현**입니다(후속 PR).
+- 실제 Provider와 clock 인스턴스 조립은 PR #11의 **production composition root**
+  (`createKmaScheduledHourlyCompositionFromEnv`)에서 구현되었습니다. 이 hourly service 자체는 계속
+  Provider를 생성하거나 environment·clock을 읽지 않으며, composition root는 아직 API app
+  startup이나 route에는 연결되지 않았습니다.
 
 ## 후속 범위
 
@@ -200,8 +202,12 @@ ServiceKey, request URL, response body, `SourceMetadata`, `WeatherOverview`. 소
    normalizer 오류 stage를 변경하지 않았습니다.
 3. ~~factory → hourly service를 잇는 application facade~~ — **PR #10에서 완료**
    (`createKmaScheduledHourlyForecastFacade`, [kma-scheduled-hourly-facade.md](./kma-scheduled-hourly-facade.md)).
-   실제 Provider/clock을 조립하는 composition root는 여전히 후속 PR입니다.
-4. system clock adapter와 production composition root
+4. ~~system clock adapter와 production composition root~~ — **PR #11에서 완료**
+   (`createKmaSystemClock`·`createKmaScheduledHourlyCompositionFromEnv`,
+   [kma-production-composition.md](./kma-production-composition.md)). composition이
+   `createKmaForecastProviderFromEnv`로 Provider를 생성해 이 hourly service에 **주입**합니다 —
+   hourly service 자체의 공개 API와 Provider/normalization stage 계약은 변경되지 않았습니다. 실제
+   route 연결은 아직 없습니다.
 5. 위경도 → KMA grid(nx/ny) 변환
 6. `SourceMetadata`와 `WeatherOverview` 조립
 7. `/weather` API route
@@ -213,4 +219,8 @@ v1 / PR #7 / 2026-07
 - KMA Provider와 hourly normalizer application service 연결
 - Provider/normalization 단계 오류 구분
 - AbortSignal 전달과 raw slot 비노출 정책
+
+v2 / PR #11 / 2026-07 (production composition에서 소비)
+- PR #11 composition이 Provider(from env)를 생성해 이 hourly service에 주입
+- hourly service 공개 API와 stage contract 변경 없음, route 미연결
 ```
