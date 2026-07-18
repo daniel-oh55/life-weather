@@ -172,6 +172,19 @@ ServiceKey, request URL, response body, `SourceMetadata`, `WeatherOverview`. 소
 - 자동 테스트는 실제 네트워크를 호출하지 않고, interface 계약을 지키는 in-memory fake Provider와
   in-memory slot fixture만 사용합니다. live 통합 검증은 후속 과제입니다.
 
+## PR #10 scheduled facade와의 관계
+
+- PR #10의 **scheduled facade**(`createKmaScheduledHourlyForecastFacade`,
+  [kma-scheduled-hourly-facade.md](./kma-scheduled-hourly-facade.md))가 PR #9 request factory로
+  완성된 `KmaForecastRequest`를 만들어 이 hourly service의 `fetchHourlyForecast`에 그대로 전달합니다.
+- 이 hourly service **자체의 공개 API(`fetchHourlyForecast(request, options)`, result union, stage
+  구분, AbortSignal 계약)는 변경되지 않았습니다.** facade는 이 service를 감싸기만 하고 결과를 그대로
+  반환합니다(Provider/Normalization stage·error·issues를 변형하지 않음).
+- facade를 쓰지 않는 **직접 caller도 여전히** 완성된 `KmaForecastRequest`로 이 service를 호출할 수
+  있습니다.
+- facade는 injected collaborator만 연결하며, 실제 Provider/clock 인스턴스를 조립하는 **production
+  composition root는 미구현**입니다(후속 PR).
+
 ## 후속 범위
 
 이 PR 이후 후보 PR:
@@ -182,13 +195,16 @@ ServiceKey, request URL, response body, `SourceMetadata`, `WeatherOverview`. 소
    factory~~ — **PR #9에서 별도 component로 완료**(`createKmaForecastRequestFactory`,
    `apps/api/src/services`, [kma-forecast-request-factory.md](./kma-forecast-request-factory.md)).
    다만 이 hourly service는 그 factory를 **내부에서 자동 호출하지 않으며**, 여전히 완성된
-   `KmaForecastRequest`를 입력받습니다. factory → service 순서로 잇는 일은 향후 caller/composition
-   계층의 몫입니다(application facade). 이 PR은 hourly service의 `AbortSignal` 계약이나 Provider/
+   `KmaForecastRequest`를 입력받습니다. factory → service 순서로 잇는 일은 PR #10 application
+   facade가 담당합니다(아래 3번). 이 PR은 hourly service의 `AbortSignal` 계약이나 Provider/
    normalizer 오류 stage를 변경하지 않았습니다.
-3. factory → hourly service를 잇는 application facade/composition root
-4. 위경도 → KMA grid(nx/ny) 변환
-5. `SourceMetadata`와 `WeatherOverview` 조립
-6. `/weather` API route
+3. ~~factory → hourly service를 잇는 application facade~~ — **PR #10에서 완료**
+   (`createKmaScheduledHourlyForecastFacade`, [kma-scheduled-hourly-facade.md](./kma-scheduled-hourly-facade.md)).
+   실제 Provider/clock을 조립하는 composition root는 여전히 후속 PR입니다.
+4. system clock adapter와 production composition root
+5. 위경도 → KMA grid(nx/ny) 변환
+6. `SourceMetadata`와 `WeatherOverview` 조립
+7. `/weather` API route
 
 ## 변경 이력
 
