@@ -151,8 +151,8 @@ PR #9의 KMA request factory(`apps/api/src/services`)는 **신규 dependency도,
 `KmaForecastProduct`(즉 **PR #8 selector를 application request factory에서 소비**)와, `apps/api` 내부
 `providers/kma`의 `KmaForecastRequest` **타입만** 사용합니다(의존 방향 `services → weather-core`,
 `services → providers/kma` type-only). `providers/kma → services`, `weather-core → apps/api`,
-`contracts → apps/api` 같은 역방향은 금지합니다. `weather-core`는 PR #8 selector를 소비만 하므로
-변경하지 않았습니다.
+`contracts → apps/api` 같은 역방향은 금지합니다. `apps/api` request factory는 `weather-core`의 기존
+PR #8 public selector를 소비만 하므로, PR #9에서는 `packages/weather-core`를 변경하지 않았습니다.
 
 향후 허용 방향:
 
