@@ -121,8 +121,13 @@ function createNonObjectRequestIssues(): KmaRequestIssue[] {
  * `baseTime`, `nx`, `ny`) so the issue list is deterministic regardless of how many fields are
  * wrong. No numeric coercion: a numeric-string date/time or a string `nx`/`ny` is rejected, not
  * converted. The official issuance *schedule* (e.g. 단기예보 발표시각) is **not** enforced here — a
- * structurally valid but non-canonical time such as `0615` is accepted; schedule selection is a
- * later PR's concern. The request object is only read, never mutated.
+ * structurally valid but non-canonical time such as `0615` is accepted. Choosing the canonical
+ * scheduled base time is done elsewhere: the PR #8 selector (`selectLatestKmaForecastBaseTime`,
+ * `@life-weather/weather-core`) picks it, and the PR #9 application request factory
+ * (`createKmaForecastRequestFactory`, `apps/api/src/services`) combines that selection with the
+ * grid point. This validator never calls the selector or the factory automatically — it stays an
+ * independent structural check for a caller that builds a request and uses the provider directly.
+ * The request object is only read, never mutated.
  *
  * Every call returns freshly-allocated issues (a new array of new objects), so mutating one result
  * never leaks into a later call — there is no shared mutable state between calls.

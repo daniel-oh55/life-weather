@@ -397,9 +397,14 @@ clock 미사용.
 ## 미구현 (아직 없음)
 
 - **Provider의 자동 발표시각 선택.** 발표시각을 고르는 순수 함수 자체는 PR #8에서 `weather-core`에
-  구현됐지만(`selectLatestKmaForecastBaseTime`, [kma-issue-time.md](./kma-issue-time.md)), 이 Provider는
-  그것을 호출하지 않습니다. Provider가 현재 시각을 읽어 base date/time을 자동 선택하는 로직은
-  여전히 미구현입니다.
+  구현됐고(`selectLatestKmaForecastBaseTime`, [kma-issue-time.md](./kma-issue-time.md)), PR #9의
+  application request factory(`createKmaForecastRequestFactory`, `apps/api/src/services`,
+  [kma-forecast-request-factory.md](./kma-forecast-request-factory.md))가 injected clock으로 그 selector를
+  호출해 완성된 request를 조립하지만, **이 Provider는 clock을 읽지 않고 selector·factory를 자동 호출하지
+  않습니다.** Provider는 여전히 호출자가 넣은 `baseDate`/`baseTime`을 그대로 사용하며, factory가 만든
+  request도 이 Provider의 기존 runtime validation을 **동일하게** 거칩니다(schedule selection과 Provider
+  구조 validation의 책임 구분 유지). Provider가 현재 시각을 읽어 base date/time을 자동 선택하거나
+  availability lag·retry·fallback을 적용하는 로직은 여전히 미구현입니다.
 - 위경도 → KMA grid 변환, 지역 registry
 - retry, cache, circuit breaker, rate limit, telemetry, logger
 - 공통 Provider interface, `WeatherOverview` 조립 (시간별 `HourlyForecast` 정규화는 PR #6, Provider와

@@ -178,12 +178,17 @@ ServiceKey, request URL, response body, `SourceMetadata`, `WeatherOverview`. 소
 
 1. ~~KMA 발표시각을 결정론적으로 선택하는 pure scheduler~~ — **PR #8에서 완료**
    (`selectLatestKmaForecastBaseTime`, `weather-core`, [kma-issue-time.md](./kma-issue-time.md)).
-   다만 이 hourly service와의 **wiring은 아직 미구현**이며, service는 여전히 완성된
-   `KmaForecastRequest`를 입력받습니다. 남은 작업: injected clock으로 selector를 호출해 selector
-   결과와 nx/ny를 합쳐 request를 자동 조립하는 factory.
-2. 위경도 → KMA grid(nx/ny) 변환
-3. `SourceMetadata`와 `WeatherOverview` 조립
-4. `/weather` API route
+2. ~~injected clock으로 selector를 호출해 selector 결과와 nx/ny를 합쳐 request를 자동 조립하는
+   factory~~ — **PR #9에서 별도 component로 완료**(`createKmaForecastRequestFactory`,
+   `apps/api/src/services`, [kma-forecast-request-factory.md](./kma-forecast-request-factory.md)).
+   다만 이 hourly service는 그 factory를 **내부에서 자동 호출하지 않으며**, 여전히 완성된
+   `KmaForecastRequest`를 입력받습니다. factory → service 순서로 잇는 일은 향후 caller/composition
+   계층의 몫입니다(application facade). 이 PR은 hourly service의 `AbortSignal` 계약이나 Provider/
+   normalizer 오류 stage를 변경하지 않았습니다.
+3. factory → hourly service를 잇는 application facade/composition root
+4. 위경도 → KMA grid(nx/ny) 변환
+5. `SourceMetadata`와 `WeatherOverview` 조립
+6. `/weather` API route
 
 ## 변경 이력
 
