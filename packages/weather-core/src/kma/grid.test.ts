@@ -13,15 +13,19 @@ import {
  * - The origin invariant `(38, 126) -> (43, 136)` is the projection's definitional anchor: the
  *   official origin latitude/longitude maps to the official origin grid cell (`OLAT`/`OLON` ->
  *   `XO`/`YO`).
- * - The representative Korean grids (Seoul 60/127, Busan 98/76, Jeju 53/38, API-hub sample
- *   36.5/127.5 -> 69/104, Incheon 55/124, Daejeon 67/100, Gwangju 58/74) are the widely
- *   published official 동네예보 grids for those coordinates, matching the KMA DFS contract.
- * - The four grid-corner latitude/longitude values come from the official KMA
- *   격자 -> 위경도 conversion (the inverse DFS the KMA hub service performs), taken as the center
- *   of each extreme cell. They are cross-checked independently: the extreme components reproduce
- *   the KMA-published coverage endpoints exactly — 31.651814 (min lat), 43.393490 (max lat),
- *   123.310165 (min lon), 132.774963 (max lon) — so these are official coordinates, not values
- *   invented from this module's forward math. See `docs/kma-grid-conversion.md`.
+ * - The representative Korean grids (Seoul 60/127, Busan 98/76, Jeju 53/38, Incheon 55/124,
+ *   Daejeon 67/100, Gwangju 58/74) are the widely published official 동네예보 grids for those
+ *   coordinates, matching the KMA DFS contract. The API-hub sample 36.5/127.5 -> 69/104 uses the
+ *   example input published by the KMA API hub; the grid follows from applying the official DFS
+ *   formula (the hub documents the sample input, not the resulting grid on the page).
+ * - The four grid-corner fixtures are not captured authenticated API responses. The official KMA
+ *   grid-area PDF confirms the corner locations at approximately four decimal places. Their
+ *   six-decimal tuples are fixed validation fixtures prepared through an independent inverse DFS
+ *   calculation using the official projection constants; selected extreme components are aligned
+ *   with the latitude/longitude coverage endpoints published by the KMA API hub — 31.651814
+ *   (min lat), 43.393490 (max lat), 123.310165 (min lon), 132.774963 (max lon). They are kept
+ *   separate from the production forward implementation and are not generated during the tests.
+ *   See `docs/kma-grid-conversion.md`.
  */
 const SUCCESS_FIXTURES = [
   {
@@ -47,9 +51,12 @@ const SUCCESS_FIXTURES = [
 ] as const;
 
 /**
- * The four grid corners. Extreme components equal the official KMA coverage endpoints:
- * (149,1) latitude = official min 31.651814; (1,253) latitude = official max 43.393490 and
- * longitude = official min 123.310165; (149,253) longitude = official max 132.774963.
+ * The four grid corners. The official KMA grid-area PDF supports these corner locations at
+ * approximately four decimal places. The six-decimal values below are independently calculated
+ * inverse-DFS fixtures using the official projection constants, not direct API response
+ * artifacts; their extreme components are compared with the published KMA coverage endpoints
+ * where applicable: (149,1) latitude = 31.651814; (1,253) latitude = 43.393490 and longitude =
+ * 123.310165; (149,253) longitude = 132.774963.
  */
 const BOUNDARY_FIXTURES = [
   {
