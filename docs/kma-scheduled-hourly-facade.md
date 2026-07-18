@@ -174,9 +174,12 @@ facade는 새로운 result union도, 새로운 error type도 만들지 않으며
 - **API availability delay / safety margin** — 없음.
 - **retry / fallback / cache / stale data** — 없음.
 - **`WeatherOverview` / `SourceMetadata` / `CurrentWeather` / `DailyForecast` 조립** — 없음.
-- **production composition root** — **미구현.** facade는 두 collaborator를 연결하지만, 실제 production
-  인스턴스를 조립하는 composition root(system clock adapter, Provider-from-env wiring, live facade
-  instance)는 아직 없습니다.
+- **production composition root** — **PR #11에서 구현 완료**
+  ([kma-production-composition.md](./kma-production-composition.md)). facade는 두 collaborator를
+  연결만 하며 Provider·env·system clock을 직접 만들지 않습니다. 실제 production 인스턴스(system clock
+  adapter, Provider-from-env wiring, live facade graph)는 PR #11의 composition root
+  (`createKmaScheduledHourlyCompositionFromEnv`)가 생성합니다 — 이는 **호출 가능한 function**이며
+  module singleton이 아니고, 아직 어떤 route에도 연결되지 않았습니다.
 
 ## 실제 key·외부 네트워크 테스트 없음
 
@@ -188,8 +191,9 @@ facade는 새로운 result union도, 새로운 error type도 만들지 않으며
 
 ## 후속 범위
 
-1. system clock adapter와 production composition root(`createKmaForecastRequestFactory(systemClock)`,
-   Provider 생성, hourly service 생성, scheduled facade instance 조립).
+1. ~~system clock adapter와 production composition root~~ — **PR #11에서 완료**
+   (`createKmaSystemClock`·`createKmaScheduledHourlyCompositionFromEnv`,
+   [kma-production-composition.md](./kma-production-composition.md)).
 2. 위경도 → KMA grid(nx/ny) 변환.
 3. API availability fallback/retry 정책.
 4. `WeatherOverview`/`SourceMetadata` 조립.
@@ -202,4 +206,9 @@ v1 / PR #10 / 2026-07
 - scheduled request factory와 hourly service를 연결하는 application facade 추가
 - request/options/result/Promise pass-through 계약 정의
 - production composition root와 system clock adapter는 후속 PR로 분리
+
+v2 / PR #11 / 2026-07 (production composition root 추가)
+- PR #11 composition root(createKmaScheduledHourlyCompositionFromEnv)가 live facade graph를 생성
+- facade 자체는 Provider·env·system clock을 직접 만들지 않음(계약 변경 없음)
+- composition은 호출 가능한 function이며 module singleton 없음, route 미연결
 ```

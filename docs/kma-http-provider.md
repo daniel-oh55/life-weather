@@ -474,4 +474,14 @@ v3 / PR #5 / 2026-07 (state 격리·reader lock 보정)
 - isRecord 설명을 "plain object"에서 "non-null·non-array object(record-like)"로 정정
   (Date·class instance·custom prototype 통과 가능; plain-object/Proxy 방어는 후속 hardening 후보)
 - 신규 dependency 없음, 실제 key·실제 인증 API forecast 호출 없음
+
+v4 / PR #11 / 2026-07 (production composition에서 소비)
+- PR #11 production composition root(`createKmaScheduledHourlyCompositionFromEnv`,
+  [kma-production-composition.md](./kma-production-composition.md))가 이 Provider를
+  `createKmaForecastProviderFromEnv`로 생성해 hourly service에 주입
+- Provider 자체 계약·공식 source/hash/endpoint 설명은 변경 없음. `KMA_SERVICE_KEY` 읽기·검증과
+  network I/O 책임은 계속 Provider가 소유(composition은 key를 읽거나 검증하지 않음)
+- composition 생성만으로는 network를 호출하지 않음(첫 `fetch`는 live facade 호출 시). 실제 route
+  연결은 아직 없음
+- 신규 dependency 없음, 실제 key·실제 인증 API forecast 호출 없음
 ```
