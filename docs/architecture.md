@@ -53,8 +53,10 @@
   converter를 호출당 정확히 한 번 부르고(fresh `{ latitude, longitude }` input) 지원 밖 위치는
   `{ ok: false, stage: 'LOCATION', error: { kind: 'UNSUPPORTED_LOCATION' } }`(값 없는 discriminator)로,
   물리적으로 잘못된 좌표의 converter `RangeError`는 동기적으로 그대로 전파합니다. 지원 위치의 성공·
-  `PROVIDER`·`NORMALIZATION` 결과와 Promise는 reference 그대로 통과시키며 새로운 result union을
-  만들지 않습니다. location composition은 기존 `createKmaScheduledHourlyCompositionFromEnv`를 그대로
+  `PROVIDER`·`NORMALIZATION` 결과와 Promise는 reference 그대로 통과시킵니다. location facade는 기존
+  scheduled result의 success·`PROVIDER`·`NORMALIZATION` variant를 수정하지 않고, 기존 scheduled
+  result 전체를 재사용하면서 `LOCATION`/`UNSUPPORTED_LOCATION` variant 하나만 추가한 **별도의 확장
+  result union**을 정의합니다. location composition은 기존 `createKmaScheduledHourlyCompositionFromEnv`를 그대로
   재사용하고 그 앞단에 production converter `convertKmaLatitudeLongitudeToGrid`(weather-core 공개
   surface)를 조립할 뿐, 기존 grid-based facade·composition과 그 결과·API는 변경하지 않습니다.
   API availability(fallback/retry) 정책·`WeatherOverview` 조립·`/weather` API route·HTTP status
@@ -212,9 +214,10 @@ factory·service·facade의 기존 runtime·공개 API는 변경하지 않았습
 PR #12의 KMA 위·경도 → 격자 converter(`packages/weather-core/src/kma/grid.ts`)는 **신규 dependency도,
 신규 package-level 의존도 추가하지 않습니다.** 이 함수는 JavaScript 표준 `Math`에만 의존하므로
 `weather-core → Math only`이며, `weather-core`는 여전히 contracts·zod에 런타임 의존하지 않습니다
-(`weather-core → (런타임 의존 없음)`). 이 PR은 `apps/api`의 Provider·request factory·facade·
-composition runtime을 변경하지 않았고, converter는 아직 그 어느 계층에도 연결되지 않았습니다 —
-API caller는 여전히 현재 facade에 이미 계산된 `nx`/`ny`를 전달합니다. `weather-core → apps/api`
+(`weather-core → (런타임 의존 없음)`). PR #12 자체는 `apps/api`의 Provider·request factory·facade·
+composition runtime을 변경하지 않았고, converter를 `apps/api`의 어느 계층에도 연결하지 않았습니다 —
+request factory와 기존 grid-based facade는 여전히 이미 계산된 `nx`/`ny`를 받습니다. converter를 실제로
+소비하는 wiring은 PR #13의 location facade/composition에서 추가됩니다(아래 참조). `weather-core → apps/api`
 같은 역방향은 계속 금지합니다.
 
 PR #13의 KMA location facade(`apps/api/src/services`)와 location composition(`apps/api/src/composition`)은

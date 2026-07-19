@@ -139,8 +139,12 @@ a project on first run; that step is intentionally deferred to a later PR.
   - `nx`/`ny` are assumed already computed; the factory does not transform or re-validate them — the
     provider still owns runtime request validation, so the factory does not call
     `validateKmaForecastRequest`. PR #12 adds the pure `convertKmaLatitudeLongitudeToGrid` converter
-    in `@life-weather/weather-core`, but `apps/api` does **not** call it yet: the factory input is
-    still a caller-supplied `product`/`nx`/`ny`, and the latitude/longitude → grid adapter is a later PR.
+    in `@life-weather/weather-core`; the request factory and the existing grid-based scheduled facade
+    still consume already-computed `product`/`nx`/`ny` and do **not** perform coordinate conversion
+    themselves. PR #13 adds a **separate** location facade and production composition that consume that
+    converter before delegating to the unchanged grid-based pipeline, so a `product`/`latitude`/
+    `longitude` entry point now exists (see below), though it is not yet connected to API startup or an
+    HTTP route.
   - **Connected by the PR #10 facade.** `createKmaScheduledHourlyForecastFacade` (below) sequences
     this factory → the hourly service. `KmaHourlyForecastService` still takes a **fully-assembled**
     `KmaForecastRequest` as input (contract unchanged), so a direct caller can keep calling it with a
