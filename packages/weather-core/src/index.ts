@@ -14,10 +14,12 @@ export {
   parseKmaWindDirectionDegrees,
   parseKmaWindSpeedMetersPerSecond,
   selectLatestKmaForecastBaseTime,
+  selectLatestKmaForecastBaseTimeAfterAvailabilityDelay,
   type ConvertKmaLatitudeLongitudeToGridInput,
   type KmaForecastBaseTime,
   type KmaForecastGridCoordinate,
   type KmaWeatherCondition,
   type NormalizeKmaWeatherConditionInput,
+  type SelectLatestKmaForecastBaseTimeAfterAvailabilityDelayInput,
   type SelectLatestKmaForecastBaseTimeInput,
 } from './kma';

@@ -227,6 +227,14 @@ a project on first run; that step is intentionally deferred to a later PR.
     (`{ latitude: 37.5665, longitude: 126.978 }` → `{ nx: 60, ny: 127 }`) through an injected in-memory
     `fetchImpl`, plus Tokyo-unsupported / invalid-coordinate / abort / provider-failure /
     normalization-failure / repeated-call / secret-non-leakage cases.
+- **KMA API-availability-delay selector lives in `weather-core`, not yet consumed here.** PR #14 adds
+  the pure `selectLatestKmaForecastBaseTimeAfterAvailabilityDelay` in `@life-weather/weather-core`
+  (단기예보 +10m, 초단기예보 +15m; see
+  [docs/kma-api-availability-time.md](../../docs/kma-api-availability-time.md)). **`apps/api` does not
+  consume it.** The PR #9 request factory still calls the PR #8 scheduled selector
+  (`selectLatestKmaForecastBaseTime`, method still `createScheduledRequest`), and neither the scheduled
+  nor the location production composition consumes the availability-delay selector. This app's runtime
+  behavior is **unchanged from PR #13**; wiring an availability-aware request factory is a later PR.
 - **Still not implemented.** `WeatherOverview` assembly, `SourceMetadata`, current weather, daily
   forecast (incl. `TMN`/`TMX`), feels-like computation, a common provider interface, **running either
   production composition root at API app startup**, the `/weather` route and its query validation,
