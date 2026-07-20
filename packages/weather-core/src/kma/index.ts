@@ -20,6 +20,10 @@ export {
   type SelectLatestKmaForecastBaseTimeInput,
 } from './issue-time';
 export {
+  selectLatestKmaForecastBaseTimeAfterAvailabilityDelay,
+  type SelectLatestKmaForecastBaseTimeAfterAvailabilityDelayInput,
+} from './api-availability-time';
+export {
   convertKmaLatitudeLongitudeToGrid,
   type ConvertKmaLatitudeLongitudeToGridInput,
   type KmaForecastGridCoordinate,
