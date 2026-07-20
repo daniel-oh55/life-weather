@@ -1,34 +1,40 @@
 /**
  * Select the latest KMA (Korea Meteorological Administration) forecast issue time
- * (`base_date` / `base_time`) whose **documented API availability delay** has already elapsed at
- * a caller-supplied absolute instant.
+ * (`base_date` / `base_time`) whose **project-defined availability threshold** — modelled from the
+ * guide's documented approximate API provision time — has already elapsed at a caller-supplied
+ * absolute instant.
  *
  * The sibling {@link selectLatestKmaForecastBaseTime} selects the latest issuance the official
  * *publication schedule* places at or before the reference — it makes no claim about when the
- * data reaches the 공공데이터포털 API. This function layers the guide's separate
- * `API 제공 시간` (availability delay) on top of that schedule:
+ * data reaches the 공공데이터포털 API. This function layers the project's deterministic threshold,
+ * derived from the guide's separate approximate `API 제공 시간 (~ 이후)` guidance, on top of that
+ * schedule:
  *
  * ```text
  * caller-supplied absolute instant
- *   → shift the reference into the past by the product's official API availability delay
+ *   → shift the reference into the past by the product-specific deterministic threshold modelled
+ *     by this project from the guide's documented API provision time
  *   → reuse selectLatestKmaForecastBaseTime on the adjusted instant
  *   → { baseDate, baseTime }
  * ```
  *
  * Concretely, it selects the latest issuance for which
- * `official issuance time + product API availability delay ≤ reference instant`. The delays come
- * from the KMA guide — see `docs/kma-api-availability-time.md`
- * (`기상청_단기예보 조회서비스`, 공공데이터 ID `15084084`; API 허브 활용가이드
- * `단기예보조회서비스_API활용가이드_260623.docx`), whose `# 예보 발표시각` section documents the
- * publication schedule *and* the accompanying `API 제공 시간 (~ 이후)`:
+ * `official issuance time + product-specific threshold ≤ reference instant`. These thresholds are
+ * derived by this project from the KMA guide's approximate provision-time guidance — see
+ * `docs/kma-api-availability-time.md` (`기상청_단기예보 조회서비스`, 공공데이터 ID `15084084`; API
+ * 허브 활용가이드 `단기예보조회서비스_API활용가이드_260623.docx`), whose `# 예보 발표시각` section
+ * documents the publication schedule *and* the accompanying approximate `API 제공 시간 (~ 이후)`:
  *
- * - 단기예보 (`getVilageFcst`): issued `0200/0500/…/2300`, provided `~02:10, ~05:10, …` — a fixed
- *   **10-minute** availability delay after each issuance.
- * - 초단기예보 (`getUltraSrtFcst`): issued each hour at `HH30`, provided `~HH45 이후` — a fixed
- *   **15-minute** availability delay after each issuance.
+ * - 단기예보 (`getVilageFcst`): issued `0200/0500/…/2300`, and the guide lists provision times such
+ *   as `~02:10 이후` for a `0200` issuance. This project models that guidance as an exact
+ *   **10-minute** inclusive threshold after each issuance for deterministic selection.
+ * - 초단기예보 (`getUltraSrtFcst`): issued each hour at `HH30`, and the guide lists `~HH45 이후`.
+ *   This project models that guidance as an exact **15-minute** inclusive threshold after each
+ *   issuance.
  *
- * The delay threshold is **inclusive**: at exactly `issuance + delay` the issuance becomes
- * selectable (e.g. SHORT `05:10:00.000` KST selects `0500`; `05:09:59.999` selects `0200`).
+ * The threshold is **inclusive**: at exactly `issuance + threshold` the issuance becomes
+ * selectable (e.g. SHORT `05:10:00.000` KST selects `0500`; `05:09:59.999` selects `0200`). This
+ * exact millisecond boundary is a deterministic project policy, not an official SLA.
  *
  * This function does **not** re-implement any publication schedule, KST calendar, day/month/year
  * rollover, or year validation — all of that stays owned by {@link selectLatestKmaForecastBaseTime},
@@ -57,15 +63,17 @@ import {
 const MINUTE_IN_MILLISECONDS = 60_000;
 
 /**
- * Official API availability delay for 단기예보 (`getVilageFcst`): the guide's `API 제공 시간`
- * lands `~10분` after each `0200/0500/…/2300` issuance (e.g. `0200` → `~02:10 이후`).
+ * Project threshold for `SHORT_FORECAST` (`getVilageFcst`), derived from the guide's approximate
+ * API provision-time guidance (`0200` → `~02:10 이후`). The exact 10-minute millisecond threshold
+ * is a deterministic project policy, not an official SLA.
  */
 const SHORT_FORECAST_API_AVAILABILITY_DELAY_MILLISECONDS =
   10 * MINUTE_IN_MILLISECONDS;
 
 /**
- * Official API availability delay for 초단기예보 (`getUltraSrtFcst`): the guide's `API 제공 시간`
- * lands `~15분` after each `HH30` issuance (e.g. `0030` → `~00:45 이후`).
+ * Project threshold for `ULTRA_SHORT_FORECAST` (`getUltraSrtFcst`), derived from the guide's
+ * approximate API provision-time guidance (`HH30` → `~HH45 이후`). The exact 15-minute millisecond
+ * threshold is a deterministic project policy, not an official SLA.
  */
 const ULTRA_SHORT_FORECAST_API_AVAILABILITY_DELAY_MILLISECONDS =
   15 * MINUTE_IN_MILLISECONDS;
@@ -80,10 +88,11 @@ export type SelectLatestKmaForecastBaseTimeAfterAvailabilityDelayInput =
   SelectLatestKmaForecastBaseTimeInput;
 
 /**
- * Resolve the official API availability delay (in milliseconds) for a product, rejecting any
- * value that is not one of the two supported `KmaForecastProduct` members. No arbitrary default
- * delay is applied to an unsupported product, and the message never echoes the caller's raw
- * (possibly secret-shaped) product value.
+ * Resolve the project-defined availability threshold (in milliseconds) for a product, derived from
+ * the official guide's documented approximate API provision times, rejecting any value that is not
+ * one of the two supported `KmaForecastProduct` members. No arbitrary default threshold is applied
+ * to an unsupported product, and the message never echoes the caller's raw (possibly secret-shaped)
+ * product value.
  */
 function availabilityDelayMillisecondsFor(product: KmaForecastProduct): number {
   switch (product) {
@@ -98,15 +107,18 @@ function availabilityDelayMillisecondsFor(product: KmaForecastProduct): number {
 }
 
 /**
- * Select the latest KMA forecast `base_date` / `base_time` whose documented API availability
- * delay has already elapsed at `referenceEpochMilliseconds`, for the given `product`.
+ * Select the latest KMA forecast `base_date` / `base_time` whose project-defined availability
+ * threshold has already elapsed at `referenceEpochMilliseconds`, for the given `product`.
  *
- * The reference instant is shifted into the past by the product's fixed official availability
- * delay (단기예보 10분, 초단기예보 15분) and the latest scheduled issuance at or before that
- * adjusted instant is selected via {@link selectLatestKmaForecastBaseTime}. The threshold is
- * inclusive: exactly at `issuance + delay` selects that issuance, one millisecond earlier selects
- * the previous one. All KST calendar, day/month/year/leap-day rollover, and supported-year
- * validation is owned by the schedule selector and is not re-implemented here.
+ * The reference instant is shifted into the past by the product-specific deterministic threshold
+ * modelled by this project from the guide's approximate provision-time guidance (단기예보 10분,
+ * 초단기예보 15분) and the latest scheduled issuance at or before that adjusted instant is selected
+ * via {@link selectLatestKmaForecastBaseTime}. The threshold is inclusive: exactly at
+ * `issuance + threshold` selects that issuance, one millisecond earlier selects the previous one.
+ * This exact millisecond inclusiveness is a project policy and does not guarantee that a call at
+ * that instant actually succeeds or that the data is ready upstream. All KST calendar,
+ * day/month/year/leap-day rollover, and supported-year validation is owned by the schedule selector
+ * and is not re-implemented here.
  *
  * Pure and deterministic; never reads the system clock; does not mutate `input`; returns a fresh
  * result object on every call.
