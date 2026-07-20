@@ -172,7 +172,11 @@ facade는 새로운 result union도, 새로운 error type도 만들지 않으며
 - **Provider 생성** — 없음(`createKmaForecastProviderFromEnv` 호출 없음).
 - **environment variable / ServiceKey** — 읽지 않음.
 - **HTTP route** — 없음.
-- **위경도 → KMA grid(nx/ny) 변환** — 없음.
+- **위경도 → KMA grid(nx/ny) 변환** — 이 facade에는 없음(계속 `product`/`nx`/`ny`만 받음). PR #13은
+  이 facade **앞단**에 별도의 location facade(`createKmaLocationScheduledHourlyForecastFacade`)를
+  adapter로 추가해 위·경도를 격자로 바꾼 뒤 이 facade에 넘깁니다. 즉 이 grid facade가 lat/lon 변환
+  책임을 얻은 것이 아니며, 이 facade의 공개 API와 입력 shape는 **변경되지 않습니다**
+  ([kma-location-scheduled-hourly.md](./kma-location-scheduled-hourly.md)).
 - **API availability delay / safety margin** — 없음.
 - **retry / fallback / cache / stale data** — 없음.
 - **`WeatherOverview` / `SourceMetadata` / `CurrentWeather` / `DailyForecast` 조립** — 없음.
@@ -196,7 +200,9 @@ facade는 새로운 result union도, 새로운 error type도 만들지 않으며
 1. ~~system clock adapter와 production composition root~~ — **PR #11에서 완료**
    (`createKmaSystemClock`·`createKmaScheduledHourlyCompositionFromEnv`,
    [kma-production-composition.md](./kma-production-composition.md)).
-2. 위경도 → KMA grid(nx/ny) 변환.
+2. ~~위경도 → KMA grid(nx/ny) 변환~~ — 순수 변환은 **PR #12에서 완료**
+   ([kma-grid-conversion.md](./kma-grid-conversion.md)), 이를 이 facade 앞단에 잇는 location adapter는
+   **PR #13에서 완료**([kma-location-scheduled-hourly.md](./kma-location-scheduled-hourly.md)).
 3. API availability fallback/retry 정책.
 4. `WeatherOverview`/`SourceMetadata` 조립.
 5. `/weather` API route.

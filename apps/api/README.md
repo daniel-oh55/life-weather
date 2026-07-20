@@ -139,8 +139,12 @@ a project on first run; that step is intentionally deferred to a later PR.
   - `nx`/`ny` are assumed already computed; the factory does not transform or re-validate them — the
     provider still owns runtime request validation, so the factory does not call
     `validateKmaForecastRequest`. PR #12 adds the pure `convertKmaLatitudeLongitudeToGrid` converter
-    in `@life-weather/weather-core`, but `apps/api` does **not** call it yet: the factory input is
-    still a caller-supplied `product`/`nx`/`ny`, and the latitude/longitude → grid adapter is a later PR.
+    in `@life-weather/weather-core`; the request factory and the existing grid-based scheduled facade
+    still consume already-computed `product`/`nx`/`ny` and do **not** perform coordinate conversion
+    themselves. PR #13 adds a **separate** location facade and production composition that consume that
+    converter before delegating to the unchanged grid-based pipeline, so a `product`/`latitude`/
+    `longitude` entry point now exists (see below), though it is not yet connected to API startup or an
+    HTTP route.
   - **Connected by the PR #10 facade.** `createKmaScheduledHourlyForecastFacade` (below) sequences
     this factory → the hourly service. `KmaHourlyForecastService` still takes a **fully-assembled**
     `KmaForecastRequest` as input (contract unchanged), so a direct caller can keep calling it with a
@@ -192,14 +196,44 @@ a project on first run; that step is intentionally deferred to a later PR.
     exercise a complete SHORT pipeline through an injected in-memory `fetchImpl` (no real service key,
     no external network, no fake timers), plus abort / provider-failure / normalization-failure /
     clock-error / repeated-call / secret-non-leakage cases.
+- **KMA location scheduled hourly forecast facade** — PR #13 adds
+  `createKmaLocationScheduledHourlyForecastFacade` (`src/services/`), a thin application adapter that
+  puts an **injected** latitude/longitude → grid converter (PR #12's structure) in front of the PR #10
+  scheduled facade, plus `createKmaLocationScheduledHourlyCompositionFromEnv` (`src/composition/`), the
+  location production composition. See
+  [docs/kma-location-scheduled-hourly.md](../../docs/kma-location-scheduled-hourly.md). Highlights:
+  - `fetchScheduledHourlyForecastForLocation({ product, latitude, longitude }, options)` calls the
+    converter **exactly once** (a fresh `{ latitude, longitude }` object — never the caller input
+    spread, never carrying `product`); on a supported location it calls the scheduled facade **exactly
+    once** with a fresh `{ product, nx, ny }` object (the converter's `nx`/`ny` passed through
+    unchanged), forwards `options` by reference (omitted → exactly `undefined`), and returns the
+    scheduled facade's Promise as the **same** reference (not marked `async`, no Promise layer).
+  - It adds exactly one new outcome: a converter `null` (a physically valid coordinate the grid does
+    not cover) becomes a value-free `{ ok: false, stage: 'LOCATION', error: { kind:
+    'UNSUPPORTED_LOCATION' } }` — fresh per call, carrying no coordinate / grid / message. A success, a
+    `PROVIDER`-stage failure, and a `NORMALIZATION`-stage failure pass through unchanged (never
+    re-classified as `LOCATION`); a converter throw (e.g. an out-of-range `RangeError`) propagates
+    **verbatim and synchronously** and the scheduled facade is **not** called (`RangeError` and
+    unsupported-location are never merged).
+  - **Location production composition** — `createKmaLocationScheduledHourlyCompositionFromEnv` reuses
+    the PR #11 `createKmaScheduledHourlyCompositionFromEnv` verbatim (config `CONFIG_ERROR` passed
+    through **by reference**, no converter run / clock read / `fetch` at construction), then selects the
+    production `convertKmaLatitudeLongitudeToGrid` from the `@life-weather/weather-core` public surface
+    (no private deep import) and wires the location facade. Success exposes **only** `{ ok, facade }`;
+    the grid-based composition and its result are unchanged, no new dependency option is added, and no
+    route is wired.
+  - **Full in-memory Seoul pipeline verification** — the location composition tests assemble the real
+    components (PR #12 converter → grid → scheduled facade) and exercise a complete Seoul SHORT pipeline
+    (`{ latitude: 37.5665, longitude: 126.978 }` → `{ nx: 60, ny: 127 }`) through an injected in-memory
+    `fetchImpl`, plus Tokyo-unsupported / invalid-coordinate / abort / provider-failure /
+    normalization-failure / repeated-call / secret-non-leakage cases.
 - **Still not implemented.** `WeatherOverview` assembly, `SourceMetadata`, current weather, daily
-  forecast (incl. `TMN`/`TMX`), feels-like computation, a common provider interface, **running the
+  forecast (incl. `TMN`/`TMX`), feels-like computation, a common provider interface, **running either
   production composition root at API app startup**, the `/weather` route and its query validation,
-  API-availability fallback/retry, and cache are **not** here — those are later PRs. The pure
-  lat/long → grid converter itself now exists in `@life-weather/weather-core` (PR #12), but `apps/api`
-  does not call it yet and the latitude/longitude adapter that would feed the scheduled facade is a
-  later PR. The composition root itself is built but is **not** wired into `src/index.ts` and is
-  connected to no route (`/health` unchanged).
+  HTTP error/status mapping, API-availability fallback/retry, and cache are **not** here — those are
+  later PRs. The latitude/longitude → grid adapter now exists (PR #13's location facade calls PR #12's
+  `convertKmaLatitudeLongitudeToGrid`), but neither composition root is wired into `src/index.ts` and
+  neither is connected to a route (`/health` unchanged).
 
 ### Dependencies
 
@@ -212,11 +246,15 @@ a project on first run; that step is intentionally deferred to a later PR.
   also consumes `selectLatestKmaForecastBaseTime` (the PR #8 selector). The dependency direction is
   `apps/api → weather-core`; `weather-core` never depends on `apps/api` or `contracts` at runtime.
 - The HTTP provider, the PR #6 normalizer, the PR #7 application service, the PR #9 request factory,
-  the PR #10 scheduled hourly facade, and the PR #11 production composition add **no new external
-  dependency** — the provider uses Node 22 native `fetch`, `AbortController`, `ReadableStream`, and
-  `TextDecoder`; the service only re-uses the provider and normalizer and a `HourlyForecast` type
-  import from `@life-weather/contracts`; the request factory only re-uses the `weather-core` selector
-  and a `KmaForecastRequest` type import from `providers/kma`; the facade only re-uses the request
-  factory and hourly service type imports from the same `services` layer; and the composition layer
-  only consumes the `providers/kma` and `services` public surfaces (its system clock uses Node's
-  native `Date.now`).
+  the PR #10 scheduled hourly facade, the PR #11 production composition, and the PR #13 location facade
+  / location composition add **no new external dependency** — the provider uses Node 22 native `fetch`,
+  `AbortController`, `ReadableStream`, and `TextDecoder`; the service only re-uses the provider and
+  normalizer and a `HourlyForecast` type import from `@life-weather/contracts`; the request factory
+  only re-uses the `weather-core` selector and a `KmaForecastRequest` type import from `providers/kma`;
+  the scheduled facade only re-uses the request factory and hourly service type imports from the same
+  `services` layer; the location facade only adds type-only imports of the `weather-core` converter
+  types (`ConvertKmaLatitudeLongitudeToGridInput`, `KmaForecastGridCoordinate`, `KmaForecastProduct`)
+  and its sibling scheduled-facade types; and the composition layer consumes the `providers/kma`,
+  `services`, and (for the PR #13 location composition) `@life-weather/weather-core`
+  (`convertKmaLatitudeLongitudeToGrid`) public surfaces (its system clock uses Node's native
+  `Date.now`).

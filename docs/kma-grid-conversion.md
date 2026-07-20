@@ -261,20 +261,30 @@ origin `43/136`)와 위 공식 coverage 안내 범위는 공개 자료에서 교
 - `weather-core`는 런타임 의존·network·API key가 없어야 하며, API·모바일 양쪽에서 재사용됩니다.
 - 네트워크 호출은 지연·실패·인증 관심사를 끌어들이므로 순수 도메인 계층에 두지 않습니다.
 
-## 향후 API service 연결
+## API service 연결
 
-이 PR은 변환 함수만 제공합니다. 이 converter는 아직 API composition/route/facade에서 소비되지
-않습니다. 후속 PR에서:
+이 PR(PR #12)은 변환 함수만 제공합니다. **PR #13부터 이 converter는 실제로 소비됩니다**: PR #13의
+location application facade(`createKmaLocationScheduledHourlyForecastFacade`)가 이 converter를 주입받아
+`product`/`latitude`/`longitude` 입력을 `{ nx, ny }`로 바꾼 뒤 기존 scheduled facade에 넘기고, location
+production composition(`createKmaLocationScheduledHourlyCompositionFromEnv`)이 production
+`convertKmaLatitudeLongitudeToGrid`를 선택해 조립합니다([kma-location-scheduled-hourly.md](./kma-location-scheduled-hourly.md)).
+이때 **converter 자체의 계약은 변경되지 않습니다**(지원 위치 `{ nx, ny }`, 지원 밖 `null`, 잘못된 좌표
+`RangeError`). location facade는 converter `null`을 `LOCATION`/`UNSUPPORTED_LOCATION` 결과로 바꾸고
+`RangeError`는 그대로 전파하며, **raw 위·경도나 격자를 결과에 노출하지 않습니다.** 아직 HTTP route
+(`/weather`)에서 직접 사용하지는 않습니다.
 
-1. latitude/longitude → grid → scheduled facade를 잇는 application adapter.
-2. `/weather` route 입력 계약과 query validation.
+후속 PR에서:
+
+1. `/weather` route 입력 계약과 query validation.
+2. HTTP status mapping.
 3. API availability fallback/retry.
 4. `WeatherOverview`/`SourceMetadata` 조립.
 5. cache/stale-data 정책.
 
 관련 문서: [kma-forecast-request-factory.md](./kma-forecast-request-factory.md),
 [kma-scheduled-hourly-facade.md](./kma-scheduled-hourly-facade.md),
-[kma-production-composition.md](./kma-production-composition.md).
+[kma-production-composition.md](./kma-production-composition.md),
+[kma-location-scheduled-hourly.md](./kma-location-scheduled-hourly.md).
 
 ## 변경 이력
 

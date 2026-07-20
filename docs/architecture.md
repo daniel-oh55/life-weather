@@ -45,16 +45,31 @@
   import 시 `process.env`를 읽거나 Provider를 생성하지 않습니다(config 실패는 Provider의 기존
   `KmaProviderConfigError`를 값으로 전달, 성공 시 `{ ok, facade }`만 공개). 다만 이 composition
   root는 아직 `apps/api/src/index.ts`나 어떤 route에도 **연결되지 않았습니다**(`/health` 무관).
-  위경도→grid 변환·API availability(fallback/retry) 정책·`WeatherOverview` 조립·`/weather` API
-  route는 여전히 **미구현**(후속 PR)이며, 별도 general `config` package도 여전히 미구현입니다. 자세한
-  내용은
+  PR #13에서는 PR #12의 위·경도 → 격자 converter를 PR #10 scheduled facade 앞단에 두는 **location
+  application facade**(`src/services`, `createKmaLocationScheduledHourlyForecastFacade`)와 그
+  **location production composition**(`src/composition`,
+  `createKmaLocationScheduledHourlyCompositionFromEnv`)을 추가했습니다 — caller input(product/
+  latitude/longitude) → 주입된 converter → `{ nx, ny }` → scheduled facade → 결과 순서로 연결하며,
+  converter를 호출당 정확히 한 번 부르고(fresh `{ latitude, longitude }` input) 지원 밖 위치는
+  `{ ok: false, stage: 'LOCATION', error: { kind: 'UNSUPPORTED_LOCATION' } }`(값 없는 discriminator)로,
+  물리적으로 잘못된 좌표의 converter `RangeError`는 동기적으로 그대로 전파합니다. 지원 위치의 성공·
+  `PROVIDER`·`NORMALIZATION` 결과와 Promise는 reference 그대로 통과시킵니다. location facade는 기존
+  scheduled result의 success·`PROVIDER`·`NORMALIZATION` variant를 수정하지 않고, 기존 scheduled
+  result 전체를 재사용하면서 `LOCATION`/`UNSUPPORTED_LOCATION` variant 하나만 추가한 **별도의 확장
+  result union**을 정의합니다. location composition은 기존 `createKmaScheduledHourlyCompositionFromEnv`를 그대로
+  재사용하고 그 앞단에 production converter `convertKmaLatitudeLongitudeToGrid`(weather-core 공개
+  surface)를 조립할 뿐, 기존 grid-based facade·composition과 그 결과·API는 변경하지 않습니다.
+  API availability(fallback/retry) 정책·`WeatherOverview` 조립·`/weather` API route·HTTP status
+  mapping은 여전히 **미구현**(후속 PR)이며, 별도 general `config` package도 여전히 미구현입니다.
+  자세한 내용은
   [kma-response-boundary.md](./kma-response-boundary.md),
   [kma-http-provider.md](./kma-http-provider.md),
   [kma-hourly-normalization.md](./kma-hourly-normalization.md),
   [kma-hourly-service.md](./kma-hourly-service.md),
   [kma-forecast-request-factory.md](./kma-forecast-request-factory.md),
   [kma-scheduled-hourly-facade.md](./kma-scheduled-hourly-facade.md),
-  [kma-production-composition.md](./kma-production-composition.md) 참고.
+  [kma-production-composition.md](./kma-production-composition.md),
+  [kma-location-scheduled-hourly.md](./kma-location-scheduled-hourly.md) 참고.
 - `packages/contracts` — 모바일과 API가 공유할 정규화 요청/응답 계약의 위치입니다. **현재
   상태**: PR #2에서 Zod 4 기반 공유 기상 데이터 계약을 정의했습니다. 자세한 내용은
   [contracts.md](./contracts.md) 참고.
@@ -123,7 +138,7 @@ RN1/SNO/TMP/T1H/POP/REH/WSD/VEC를 공통 값으로 정규화하고 contracts `H
 순수 TypeScript 함수로 구현할 예정입니다. React Native나 Node.js 런타임에 종속되지 않게 하여,
 모바일과 API 양쪽에서 동일한 로직을 재사용하고 독립적으로 테스트할 수 있도록 합니다.
 
-## 패키지 의존 방향 (PR #12 기준)
+## 패키지 의존 방향 (PR #13 기준)
 
 패키지 의존은 아래 방향만 허용하며, **순환 의존을 금지**합니다.
 
@@ -199,10 +214,25 @@ factory·service·facade의 기존 runtime·공개 API는 변경하지 않았습
 PR #12의 KMA 위·경도 → 격자 converter(`packages/weather-core/src/kma/grid.ts`)는 **신규 dependency도,
 신규 package-level 의존도 추가하지 않습니다.** 이 함수는 JavaScript 표준 `Math`에만 의존하므로
 `weather-core → Math only`이며, `weather-core`는 여전히 contracts·zod에 런타임 의존하지 않습니다
-(`weather-core → (런타임 의존 없음)`). 이 PR은 `apps/api`의 Provider·request factory·facade·
-composition runtime을 변경하지 않았고, converter는 아직 그 어느 계층에도 연결되지 않았습니다 —
-API caller는 여전히 현재 facade에 이미 계산된 `nx`/`ny`를 전달합니다. `weather-core → apps/api`
+(`weather-core → (런타임 의존 없음)`). PR #12 자체는 `apps/api`의 Provider·request factory·facade·
+composition runtime을 변경하지 않았고, converter를 `apps/api`의 어느 계층에도 연결하지 않았습니다 —
+request factory와 기존 grid-based facade는 여전히 이미 계산된 `nx`/`ny`를 받습니다. converter를 실제로
+소비하는 wiring은 PR #13의 location facade/composition에서 추가됩니다(아래 참조). `weather-core → apps/api`
 같은 역방향은 계속 금지합니다.
+
+PR #13의 KMA location facade(`apps/api/src/services`)와 location composition(`apps/api/src/composition`)은
+**신규 dependency도, 신규 package-level 의존도 추가하지 않습니다.** location facade는
+`@life-weather/weather-core`의 converter **타입**(`ConvertKmaLatitudeLongitudeToGridInput`·
+`KmaForecastGridCoordinate`·`KmaForecastProduct`, type-only)과 sibling scheduled-facade file의
+**타입만** import합니다(자기 barrel `./index` import 없음). location composition은 `services` 공개
+surface(`createKmaLocationScheduledHourlyForecastFacade`·`KmaLocationScheduledHourlyForecastFacade`),
+기존 `createKmaScheduledHourlyCompositionFromEnv`, 그리고 **production converter를 위해
+`@life-weather/weather-core`의 `convertKmaLatitudeLongitudeToGrid` 공개 export**를 소비합니다(private
+deep import 없음). 따라서 이 PR에서 새로 생긴 방향은 `composition → weather-core`(converter 선택)뿐이며,
+`services → weather-core`(type-only)는 PR #9부터 이미 허용된 방향입니다. `providers/kma → services`·
+`services → composition`·`weather-core → apps/api`·`contracts → apps/api`·`mobile → apps/api` 같은
+역방향은 계속 금지하고, 순환 의존은 없습니다. 이 PR은 `weather-core` converter runtime·기존 Provider·
+request factory·scheduled facade·scheduled composition의 runtime과 공개 API를 변경하지 않았습니다.
 
 향후 허용 방향:
 
@@ -212,7 +242,7 @@ apps/mobile       → contracts
 lifestyle-engine  → contracts
 ```
 
-## 현재 구현 상태 요약 (PR #12 시점)
+## 현재 구현 상태 요약 (PR #13 시점)
 
 - `contracts`: PR #2에서 Zod 4 기반 공유 기상 계약을 정의했습니다.
 - `weather-core`: `classifyFreshness`(PR #2)와 KMA 단기·초단기예보 정규화 primitive(PR #3)에 더해,
@@ -253,12 +283,17 @@ lifestyle-engine  → contracts
   env read·import-time composition이 없고, 아직 `apps/api/src/index.ts`나 어떤 route에도 **연결되지
   않았습니다.** hourly service는 직접 caller가 완성된 `KmaForecastRequest`로도 여전히 호출할 수
   있으며, 그 공개 API는 변경되지 않았습니다.
-- 위경도→grid **순수 변환**(`convertKmaLatitudeLongitudeToGrid`)은 **PR #12에서 `weather-core`에 구현
-  완료**됐지만, 그것을 request factory·facade·composition·route에 연결하는 **latitude/longitude
-  application adapter는 아직 미구현**입니다(후속 PR). `WeatherOverview` 조립, `SourceMetadata`, 현재
-  날씨, 일별 예보(`TMN`/`TMX`), 체감온도·생활지수 계산, 공통 Provider interface, production
-  composition root를 **app startup/route에 연결**하는 wiring, API availability fallback/retry, cache,
-  `/weather` route, 별도 general `config` package는 아직 **미구현**입니다(후속 PR). production
-  composition root 자체(factory·hourly service·facade·system clock 조립)는 **PR #11에서 구현 완료**됐지만,
-  그것을 실제 실행하는 것은 후속 PR입니다.
+- 위경도→grid **순수 변환**(`convertKmaLatitudeLongitudeToGrid`)은 PR #12에서 `weather-core`에 구현
+  완료됐고, **PR #13에서 이를 실제 소비하는 latitude/longitude application adapter**(location facade
+  `createKmaLocationScheduledHourlyForecastFacade`와 location composition
+  `createKmaLocationScheduledHourlyCompositionFromEnv`)를 추가했습니다 — caller input(product/latitude/
+  longitude) → converter → `{ nx, ny }` → 기존 scheduled facade → 결과 흐름을 완성하고, 지원 밖 위치는
+  `LOCATION`/`UNSUPPORTED_LOCATION` 결과로, 물리적으로 잘못된 좌표는 converter `RangeError`로 처리합니다.
+  location composition은 기존 grid-based composition을 재사용하고 그 앞단에 production converter를
+  조립할 뿐, 기존 facade·composition의 result·API는 그대로입니다. 다만 두 composition root 모두 아직
+  `apps/api/src/index.ts`나 어떤 route에도 **연결되지 않았습니다**. `WeatherOverview` 조립,
+  `SourceMetadata`, 현재 날씨, 일별 예보(`TMN`/`TMX`), 체감온도·생활지수 계산, 공통 Provider interface,
+  production composition root를 **app startup/route에 연결**하는 wiring, HTTP status mapping, API
+  availability fallback/retry, cache, `/weather` route, 별도 general `config` package는 아직
+  **미구현**입니다(후속 PR).
 - 이 문서의 나머지 "예정" 구조는 앞으로의 합의이며, 위 요약이 현재 코드베이스의 상태입니다.
