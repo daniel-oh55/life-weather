@@ -260,6 +260,27 @@ a project on first run; that step is intentionally deferred to a later PR.
   provider is still called **once** per facade run. No-data / publication-in-progress classification and
   the single-previous-issuance fallback orchestration that would use these candidates are **later PRs**,
   and no route is wired.
+- **KMA fallback-eligibility classifier** — PR #17 adds `classifyKmaHourlyFallbackEligibility`
+  (`src/services/`), a **pure** function that inspects one `KmaHourlyForecastServiceResult` and decides
+  whether a later orchestration step may try a single previous-issuance fallback. See
+  [docs/kma-fallback-eligibility.md](../../docs/kma-fallback-eligibility.md). Highlights:
+  - It takes the **service-level result only** (never the raw provider success): fallback-eligible for
+    exactly two no-data signals — a `PROVIDER`-stage `KMA_UPSTREAM_ERROR` whose `resultCode` is
+    **exactly** `'03'` (`KMA_NO_DATA`, 기상청 `NODATA_ERROR`) or a success with an empty `hourly` array
+    (`EMPTY_HOURLY`). Every other result is `{ eligible: false }` (no `reason` key): a non-empty
+    success, every other provider error (Abort / Timeout / HTTP / Network / gateway / invalid /
+    mismatched / incomplete, and any non-`'03'` upstream code), and **every** normalization failure
+    (`ABSENT`/`NULL`/`INVALID` alike — issues are never re-inspected).
+  - Exact-match on `'03'` — no trim, `padStart`, numeric coercion, loose equality, or code-range
+    bucketing (`'3'`, `'003'`, `' 03'`, `'03 '`, `' 03 '` are all ineligible). It does **not** read
+    `totalCount` directly; `EMPTY_HOURLY` is the service-level empty-success signal, which the current
+    pipeline can reach via a `totalCount === 0` success page (→ empty slots → empty `hourly`).
+  - Deterministic and synchronous with a **fresh** result per call: no clock, environment, network,
+    `Promise`, logging, `try/catch`, or mutation of the input (or its nested error/issues/hourly), and
+    no original error/issues/hourly reference leaks into the output. It adds **no** new dependency.
+  - **Not yet wired to the PR #16 candidates.** This PR only classifies — no request plan, no second
+    request, no retry, and no fallback execution. The production facade still issues **at most one** KMA
+    request per call, and no route consumes the classifier.
 - **Still not implemented.** `WeatherOverview` assembly, `SourceMetadata`, current weather, daily
   forecast (incl. `TMN`/`TMX`), feels-like computation, a common provider interface, **running either
   production composition root at API app startup**, the `/weather` route and its query validation,

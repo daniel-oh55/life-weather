@@ -2,7 +2,7 @@
  * Public surface of `apps/api`'s **application services** — the orchestration layer that sequences
  * the KMA provider boundary and the domain normalizers, and assembles the requests they consume.
  *
- * Four application components live here so far:
+ * Five application components live here so far:
  *
  * 1. The PR #7 KMA **hourly-forecast orchestration** (`createKmaHourlyForecastService`): it calls
  *    the PR #5 HTTP provider and the PR #6 hourly normalizer in order and reports a `PROVIDER`- or
@@ -23,6 +23,13 @@
  *    latitude/longitude → grid converter in front of the scheduled facade (input → grid →
  *    scheduled result), adding only a `LOCATION`-stage `UNSUPPORTED_LOCATION` result for a
  *    physically valid coordinate the KMA grid does not cover.
+ * 5. The PR #17 KMA **fallback-eligibility classifier** (`classifyKmaHourlyFallbackEligibility`): a
+ *    pure function that inspects one `KmaHourlyForecastServiceResult` and decides whether a later
+ *    orchestration step may try a single previous-issuance fallback. It is fallback-eligible only
+ *    for the two no-data signals — a `PROVIDER`-stage `KMA_UPSTREAM_ERROR` with `resultCode`
+ *    exactly `'03'` (`KMA_NO_DATA`) or a success with an empty `hourly` array (`EMPTY_HOURLY`);
+ *    every other result is ineligible. It performs **no** actual fallback execution and is not the
+ *    provider's, facade's, or composition's responsibility; no route consumes it yet.
  *
  * The grid-based **production composition root** (system clock adapter, provider-from-env wiring, a
  * live facade instance) is built in PR #11 and lives in `../composition`; PR #12 added the
@@ -68,3 +75,9 @@ export {
   type KmaLocationScheduledHourlyForecastResult,
   type KmaUnsupportedLocationError,
 } from './kma-location-scheduled-hourly-forecast';
+
+export {
+  classifyKmaHourlyFallbackEligibility,
+  type KmaHourlyFallbackEligibility,
+  type KmaHourlyFallbackReason,
+} from './kma-hourly-fallback-eligibility';

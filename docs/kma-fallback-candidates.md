@@ -193,10 +193,18 @@ validation 순서는 기존 selector 계약을 따릅니다(epoch 우선 검증)
   production은 PR #15에서 연결된 PR #14 single selector로 계속 facade 호출당 최대 1회 KMA 요청만
   수행합니다([kma-production-composition.md](./kma-production-composition.md),
   [kma-forecast-request-factory.md](./kma-forecast-request-factory.md)).
+- PR #17에서 후속 building block으로 **fallback eligibility classifier**
+  (`classifyKmaHourlyFallbackEligibility`, [kma-fallback-eligibility.md](./kma-fallback-eligibility.md))가
+  추가됐지만, candidate selector와 classifier는 **아직 서로 독립적**입니다. candidate selector는 service
+  결과를 검사하지 않고 base-time 후보만 계산하며, classifier는 base-time 후보를 계산하지 않고 service
+  결과만 분류합니다. 둘을 조합하는 orchestration은 다음 PR입니다.
 
 ## 다음 orchestration PR 권장 범위
 
-1. fallback eligibility classifier(no-data / publication-in-progress 판정)
+1. ~~fallback eligibility classifier(no-data / publication-in-progress 판정)~~ — **PR #17에서 완료**
+   (`classifyKmaHourlyFallbackEligibility`, `apps/api/src/services`,
+   [kma-fallback-eligibility.md](./kma-fallback-eligibility.md)). 아직 이 candidate selector와
+   조합되지 않음.
 2. primary + previous request plan factory
 3. 이전 issuance 단일 fallback orchestration
 4. `WeatherOverview`/`SourceMetadata` assembler

@@ -289,6 +289,17 @@ PR #16의 KMA primary/previous candidate selector(`packages/weather-core/src/kma
 composition runtime을 변경하지 않았고, 이 candidate selector를 `apps/api`의 어느 계층에도 연결하지
 않았습니다. `weather-core → apps/api` 같은 역방향은 계속 금지합니다.
 
+PR #17의 KMA fallback eligibility classifier(`apps/api/src/services/kma-hourly-fallback-eligibility.ts`)는
+**신규 dependency도, 신규 package-level 의존도 추가하지 않습니다.** 이 순수 함수는 같은 `services`
+계층의 `kma-hourly-forecast`에서 `KmaHourlyForecastServiceResult` **타입만** import해 service result를
+분류합니다(자기 barrel `./index` import 없음, weather-core candidate runtime import 없음). 따라서
+`weather-core`에 `apps/api` result type 의존을 만들지 않으며, 새로 생기는 방향은 `services → services`
+(type-only) 하나뿐입니다. `providers/kma → services`·`services → composition`·`weather-core → apps/api`·
+`contracts → apps/api`·`mobile → apps/api` 같은 역방향은 계속 금지하고, 순환 의존은 없습니다. PR #16
+candidate selector와 PR #17 classifier는 **아직 production graph에서 조합되지 않았고**, Provider raw
+error·normalization issue surface·기존 service result 계약은 변경되지 않았습니다(classifier는
+orchestration 전 단계의 순수 정책 component이며 route·cache는 여전히 미구현).
+
 향후 허용 방향:
 
 ```text
@@ -297,7 +308,7 @@ apps/mobile       → contracts
 lifestyle-engine  → contracts
 ```
 
-## 현재 구현 상태 요약 (PR #16 시점)
+## 현재 구현 상태 요약 (PR #17 시점)
 
 - `contracts`: PR #2에서 Zod 4 기반 공유 기상 계약을 정의했습니다.
 - `weather-core`: `classifyFreshness`(PR #2)와 KMA 단기·초단기예보 정규화 primitive(PR #3)에 더해,
@@ -372,4 +383,11 @@ lifestyle-engine  → contracts
   production composition root를 **app startup/route에 연결**하는 wiring, HTTP status mapping, live
   availability fallback/retry(publication-in-progress·empty-data 대응), cache, `/weather` route, 별도
   general `config` package는 아직 **미구현**입니다(후속 PR).
+- PR #17에서는 `apps/api` services 계층에 **순수 fallback eligibility classifier**
+  (`classifyKmaHourlyFallbackEligibility`)를 추가했습니다 — hourly service result를 입력받아
+  `PROVIDER`/`KMA_UPSTREAM_ERROR`/`03`은 `KMA_NO_DATA`, empty hourly success는 `EMPTY_HOURLY`,
+  그 외는 ineligible로 분류합니다. Provider raw error·normalization issue surface·기존 service result
+  계약은 불변이고, classifier는 orchestration 전 단계의 정책 component입니다. PR #16 candidate
+  selector와 이 classifier는 **아직 production graph에서 조합되지 않았으며**(dependency cycle 없음),
+  실제 fallback 실행·retry·route·cache는 없습니다([kma-fallback-eligibility.md](./kma-fallback-eligibility.md)).
 - 이 문서의 나머지 "예정" 구조는 앞으로의 합의이며, 위 요약이 현재 코드베이스의 상태입니다.
