@@ -84,6 +84,24 @@ a common internal weather state, and other weather-domain calculations.
   (the location composition inherits it), while a direct one-argument factory caller still uses the
   scheduled selector. See [docs/kma-api-availability-time.md](../../docs/kma-api-availability-time.md).
 
+- **KMA primary/previous base-time candidates** (`kma/fallback-candidates.ts`):
+  `selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay`, a pure, deterministic function that, from
+  one caller-supplied absolute instant, returns `{ primary, previous }` — `primary` is exactly the PR #14
+  availability-delay selection at the reference, and `previous` is the single official scheduled issuance
+  immediately before it (the one candidate a later PR may fall back to once). It **composes** the PR #14
+  selector twice: on the original reference for `primary`, then on the reference shifted back by exactly
+  one product-specific issuance interval (SHORT 3 hours, ULTRA 1 hour) for `previous`. Because the current
+  official schedule and the availability threshold are uniform per product, subtracting one interval lands
+  `previous` on exactly the issuance before `primary` — so it re-implements **no** schedule array, KST
+  calendar, rollover, availability threshold, or year validation. Its input type is an **alias** of the
+  PR #14 input, the result carries exactly `primary`/`previous`, and each candidate reuses
+  `KmaForecastBaseTime`. Same `RangeError` contract as the composed selector, propagated verbatim — if the
+  `previous` candidate rolls below year `1000` the **whole** call throws (never a partial `primary`-only
+  result); value-free messages. It builds **only** the candidates: **no** provider call, second request,
+  retry, fallback execution, `resultCode`/`totalCount`/empty-`hourly`/normalization classification, or
+  live-availability guarantee, and it is **not yet consumed by `apps/api`** (production behaviour is
+  unchanged). See [docs/kma-fallback-candidates.md](../../docs/kma-fallback-candidates.md).
+
 - **KMA latitude/longitude → forecast grid conversion** (`kma/grid.ts`):
   `convertKmaLatitudeLongitudeToGrid({ latitude, longitude })`, a pure, deterministic function
   that projects a coordinate to the KMA 동네예보 grid cell `{ nx, ny }` via the official DFS
@@ -102,9 +120,9 @@ Mapping source: KMA `기상청_단기예보 조회서비스` (공공데이터 ID
 verified 2026-07-16. Details and the change log live in
 [docs/kma-normalization.md](../../docs/kma-normalization.md).
 
-## Current scope (PR #14)
+## Current scope (PR #16)
 
-As of PR #14 this package provides:
+As of PR #16 this package provides:
 
 - `classifyFreshness` (freshness classifier) — implemented.
 - KMA condition (`SKY`/`PTY`) and categorical amount (`PCP`/`SNO`) parsers — implemented.
@@ -113,10 +131,19 @@ As of PR #14 this package provides:
 - KMA grid converter (`convertKmaLatitudeLongitudeToGrid`) — implemented (PR #12).
 - **PR #14 KMA API-availability-delay selector**
   (`selectLatestKmaForecastBaseTimeAfterAvailabilityDelay`) — implemented. It composes the scheduled
-  selector with guide-derived project thresholds (단기예보 +10m, 초단기예보 +15m), modelled from the
-  official guide's approximate provision times; the exact inclusive thresholds are a deterministic
-  project policy, not an official SLA or a live-availability guarantee. It adds no new runtime
-  dependency, and (as of PR #15) is consumed by the `apps/api` production scheduled composition.
+  selector with guide-derived **project-defined** thresholds (단기예보 +10m, 초단기예보 +15m), modelled
+  from the official guide's approximate provision times; the exact inclusive thresholds are a
+  deterministic **project policy, not an official fixed SLA** or a live-availability guarantee. It adds
+  no new runtime dependency, and (as of PR #15) is consumed by the `apps/api` production scheduled
+  composition.
+- **PR #16 KMA primary/previous base-time candidates**
+  (`selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay`) — implemented. From one absolute instant
+  it returns `{ primary, previous }`: `primary` is the PR #14 availability-delay selection, and `previous`
+  is the single scheduled issuance immediately before it. It reuses the PR #14 selector on two references
+  (the original for `primary`, `reference − one issuance interval` for `previous`; SHORT 3h, ULTRA 1h),
+  owning only the uniform per-product issuance interval and re-implementing no schedule/threshold/calendar
+  logic. It adds **no new runtime dependency**, is **not yet wired into `apps/api`** (production still
+  issues at most one KMA request per facade call), and performs **no retry or fallback execution**.
 
 `weather-core` still has **no runtime dependencies** (no Zod, no runtime dependency on
 `@life-weather/contracts`), makes **no network calls**, and reads **no KMA API key** — every
@@ -132,7 +159,10 @@ availability-delay selector** (`selectLatestKmaForecastBaseTimeAfterAvailability
 **PR #15**, consumed too — the production scheduled composition injects it into the request factory
 (the location composition inherits it), while the request factory's **default** stays the scheduled
 selector, so a direct one-argument caller is unchanged. The selector itself remains pure; the
-production policy choice lives in the `apps/api` composition, and no route consumes it yet.
+production policy choice lives in the `apps/api` composition, and no route consumes it yet. The **PR #16
+primary/previous candidate selector** (`selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay`)
+is, by contrast, **not yet consumed anywhere** — it is a pure building block for a later orchestration
+PR, and production still issues at most one KMA request per facade call.
 Unknown/undefined `SKY`/`PTY` codes normalize to `UNKNOWN`, and unparseable/missing `PCP`/`SNO`
 values to `null`.
 

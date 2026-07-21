@@ -298,6 +298,15 @@ lag(예 10/15/20분), safety margin, 직전 발표시각 fallback, retry, live a
 > 여전히 이 schedule selector**이고 method 이름 `createScheduledRequest`도 그대로입니다 — 즉 selector를
 > 생략한 direct caller는 계속 schedule-only 결과를 받습니다. 두 selector의 책임 구분은 유지되며, live
 > availability fallback/retry는 여전히 후속입니다.
+>
+> **PR #16 갱신.** PR #16은 세 번째 API인 primary/previous **candidate selector**
+> (`selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay`, [kma-fallback-candidates.md](./kma-fallback-candidates.md))를
+> 추가했습니다. 이제 weather-core에는 책임이 구분된 **세 API**가 공존합니다: (1) 이
+> **schedule-only selector**(`selectLatestKmaForecastBaseTime`), (2) PR #14 **availability-delay single
+> selector**(한 후보 반환), (3) PR #16 **primary/previous candidate selector**(PR #14 selector를 두
+> reference에 재사용해 두 후보 반환). 이 schedule selector의 의미·동작·테스트 기대값은 PR #16에서도
+> 전혀 바뀌지 않았습니다 — candidate selector는 이 함수를 직접 호출하지 않고 PR #14 selector를 통해서만
+> schedule 계산을 재사용합니다.
 
 함수명과 문서는 `available`/`ready`/`published successfully` 같은 보장 표현을 쓰지 않고, "latest
 scheduled base time"(가장 최근 발표 예정시각)의 의미를 유지합니다.
@@ -376,4 +385,10 @@ v4 / PR #15 / 2026-07 (production wiring — 이 selector는 여전히 불변, d
 - request factory default selector는 여전히 이 schedule selector(createScheduledRequest 이름 유지) —
   selector를 생략한 direct caller는 계속 schedule-only 결과
 - 두 selector의 책임 구분 유지, live fallback/retry는 여전히 후속
+
+v5 / PR #16 / 2026-07 (primary/previous candidate selector 추가 — 이 selector는 여전히 불변)
+- PR #16이 세 번째 API(selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay)를 추가해 PR #14 selector를
+  두 reference에 재사용, 이 schedule selector의 의미·동작·테스트 기대값은 변경 없음
+- 이제 schedule-only / availability-delay single / primary·previous candidate 세 API가 책임을 구분해 공존
+- candidate selector는 아직 apps/api 미연결, retry/fallback 실행은 여전히 후속
 ```
