@@ -24,6 +24,11 @@ export {
   type SelectLatestKmaForecastBaseTimeAfterAvailabilityDelayInput,
 } from './api-availability-time';
 export {
+  selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay,
+  type KmaForecastBaseTimeCandidates,
+  type SelectKmaForecastBaseTimeCandidatesAfterAvailabilityDelayInput,
+} from './fallback-candidates';
+export {
   convertKmaLatitudeLongitudeToGrid,
   type ConvertKmaLatitudeLongitudeToGridInput,
   type KmaForecastGridCoordinate,

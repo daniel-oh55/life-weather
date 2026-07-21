@@ -251,6 +251,15 @@ a project on first run; that step is intentionally deferred to a later PR.
     policy**, not an official SLA — it carries **no live-readiness guarantee** and PR #15 adds **no**
     retry, fallback, or live probe. A direct one-argument request-factory caller still gets the
     schedule-only default, and no HTTP route consumes any of this yet.
+- **KMA primary/previous base-time candidates exist in weather-core, not yet consumed here (PR #16).**
+  PR #16 added the pure `selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay` in
+  `@life-weather/weather-core` (it returns `{ primary, previous }` from one instant; see
+  [docs/kma-fallback-candidates.md](../../docs/kma-fallback-candidates.md)), but **`apps/api` does not
+  consume it.** Production still injects only the PR #14 **single** availability-delay selector, the
+  request factory still builds **one** request (one `createScheduledRequest` → one base time), and the
+  provider is still called **once** per facade run. No-data / publication-in-progress classification and
+  the single-previous-issuance fallback orchestration that would use these candidates are **later PRs**,
+  and no route is wired.
 - **Still not implemented.** `WeatherOverview` assembly, `SourceMetadata`, current weather, daily
   forecast (incl. `TMN`/`TMX`), feels-like computation, a common provider interface, **running either
   production composition root at API app startup**, the `/weather` route and its query validation,

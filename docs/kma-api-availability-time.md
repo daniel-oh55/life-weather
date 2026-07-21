@@ -279,6 +279,13 @@ PR #14는 순수 selector만 추가했고, **PR #15에서 이 selector가 `apps/
 - **live fallback/retry는 여전히 미구현.** `/weather` route·HTTP status mapping·
   `WeatherOverview`/`SourceMetadata` 조립도 여전히 후속입니다.
 
+> **PR #16 갱신.** PR #16은 이 selector 위에 primary/previous **candidate selector**
+> (`selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay`, [kma-fallback-candidates.md](./kma-fallback-candidates.md))를
+> 추가했습니다. **이 selector 자체는 여전히 한 후보만 반환**합니다 — 의미·동작·threshold(단기 10분·초단기
+> 15분)·근거는 전혀 바뀌지 않았습니다. candidate selector는 이 selector를 **두 reference**(원본 → primary,
+> `reference − one issuance interval` → previous)에 재사용할 뿐입니다. retry/orchestration·두 번째 요청은
+> 여전히 미구현이며, candidate selector는 아직 `apps/api`에 연결되지 않았습니다(production 동작 불변).
+
 후속 PR 권장 범위:
 
 1. empty-data 또는 publication-in-progress fallback 정책
@@ -302,4 +309,9 @@ v2 / PR #15 / 2026-07 (production wiring — selector 정책·근거 불변)
 - location composition은 grid composition 재사용으로 정책 상속
 - direct request factory default는 여전히 schedule-only(PR #8)
 - threshold 값(10/15분)·프로젝트 정책 표현·live 미보장 문구 변경 없음
+
+v3 / PR #16 / 2026-07 (candidate selector가 이 selector를 재사용 — 이 selector는 불변)
+- PR #16이 primary/previous candidate selector(selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay)를
+  추가하고 이 selector를 두 reference에 재사용 — 이 selector의 의미·동작·threshold·테스트 기대값은 변경 없음
+- 이 selector는 계속 한 후보만 반환, retry/orchestration/두 번째 요청은 여전히 미구현
 ```

@@ -104,15 +104,21 @@
   selector의 계약은 변경하지 않습니다(threshold inclusive, no safety margin, no live availability
   guarantee, runtime dependency 0개). 이 selector는 순수하게 유지되며, **PR #15에서 `apps/api`
   production scheduled composition이 이를 request factory에 주입**해 소비합니다(아래 `apps/api` 항목·
-  의존 방향 참조). 이로써 weather-core에는 **두 selector**
-  (schedule selector·availability-delay selector)가 책임을 분리해 공존합니다. weather-core는 순수
-  함수만 제공하고 HTTP 호출·slot 조립은 하지 않으며, 이 파서들을 slot 값에 연결하는 정규화는
-  `apps/api`(PR #6)에 있습니다. 매핑·발표시각·격자 변환·API 제공 지연 근거는
+  의존 방향 참조). PR #16에서는 이 availability-delay selector를 **두 reference에 재사용**해 하나의
+  절대 시각에서 primary/previous 두 후보를 만드는 **또 다른 순수 함수**
+  (`selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay`, `kma/fallback-candidates.ts`)를
+  추가했습니다 — SHORT 3시간·ULTRA 1시간 issuance interval만 소유하고 schedule 배열·threshold·KST
+  달력을 복제하지 않으며, 아직 `apps/api`의 어느 계층에도 연결되지 않았습니다(production 동작 불변,
+  retry/fallback 실행 없음). 이로써 weather-core에는 책임이 구분된 **세 selector**(schedule selector·
+  availability-delay single selector·primary/previous candidate selector)가 공존합니다. weather-core는
+  순수 함수만 제공하고 HTTP 호출·slot 조립은 하지 않으며, 이 파서들을 slot 값에 연결하는 정규화는
+  `apps/api`(PR #6)에 있습니다. 매핑·발표시각·격자 변환·API 제공 지연·후보 생성 근거는
   [kma-normalization.md](./kma-normalization.md),
   [kma-hourly-normalization.md](./kma-hourly-normalization.md),
   [kma-issue-time.md](./kma-issue-time.md),
   [kma-grid-conversion.md](./kma-grid-conversion.md),
-  [kma-api-availability-time.md](./kma-api-availability-time.md) 참고.
+  [kma-api-availability-time.md](./kma-api-availability-time.md),
+  [kma-fallback-candidates.md](./kma-fallback-candidates.md) 참고.
 - `packages/lifestyle-engine` — 생활 날씨 지수(우산, 마스크, 옷차림 등)를 순수 함수로 계산할
   위치입니다. **현재 상태**: 스켈레톤만 존재합니다.
 - `packages/config` — 비밀이 아닌 공유 설정/상수의 위치입니다. **현재 상태**: 스켈레톤만
@@ -275,6 +281,14 @@ composition은 grid composition 재사용으로 정책을 상속할 뿐 selector
 `mobile → apps/api` 같은 역방향은 계속 금지하고, 순환 의존은 없습니다. Provider·normalizer·facade
 result·LOCATION 계약·weather-core runtime은 변경하지 않았습니다.
 
+PR #16의 KMA primary/previous candidate selector(`packages/weather-core/src/kma/fallback-candidates.ts`)는
+**신규 dependency도, 신규 package-level 의존도 추가하지 않습니다.** 이 함수는 같은 패키지 내부의
+`./condition`(`KmaForecastProduct`)·`./issue-time`(`KmaForecastBaseTime` type)·`./api-availability-time`
+(PR #14 selector와 type)만 사용하므로 `weather-core`는 여전히 contracts·zod에 런타임 의존하지 않습니다
+(`weather-core → (런타임 의존 없음)`). PR #16 자체는 `apps/api`의 Provider·request factory·facade·
+composition runtime을 변경하지 않았고, 이 candidate selector를 `apps/api`의 어느 계층에도 연결하지
+않았습니다. `weather-core → apps/api` 같은 역방향은 계속 금지합니다.
+
 향후 허용 방향:
 
 ```text
@@ -283,7 +297,7 @@ apps/mobile       → contracts
 lifestyle-engine  → contracts
 ```
 
-## 현재 구현 상태 요약 (PR #15 시점)
+## 현재 구현 상태 요약 (PR #16 시점)
 
 - `contracts`: PR #2에서 Zod 4 기반 공유 기상 계약을 정의했습니다.
 - `weather-core`: `classifyFreshness`(PR #2)와 KMA 단기·초단기예보 정규화 primitive(PR #3)에 더해,
@@ -291,9 +305,13 @@ lifestyle-engine  → contracts
   최신 공식 발표시각을 선택하는 **순수 함수**(`selectLatestKmaForecastBaseTime`)를, PR #12에서 위·경도를
   KMA 동네예보 격자 `{ nx, ny }`로 변환하는 **순수 함수**(`convertKmaLatitudeLongitudeToGrid`)를,
   PR #14에서 공식 API 제공 지연(단기 +10분·초단기 +15분)을 반영하는 **별도 순수 함수**
-  (`selectLatestKmaForecastBaseTimeAfterAvailabilityDelay`, PR #8 selector를 조합)를 추가했습니다.
-  KMA 코드(SKY/PTY)와 범주형 수치(PCP/RN1/SNO), 일반 수치를 공통 값으로 정규화하고, 절대 instant를
-  고정 KST 발표시각으로 매핑하며(schedule selector와 availability-delay selector 두 가지 책임 분리),
+  (`selectLatestKmaForecastBaseTimeAfterAvailabilityDelay`, PR #8 selector를 조합)를, PR #16에서 하나의
+  절대 시각에서 primary/previous 두 후보를 만드는 **또 다른 순수 함수**
+  (`selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay`, PR #14 selector를 두 reference에 재사용)를
+  추가했습니다. KMA 코드(SKY/PTY)와 범주형 수치(PCP/RN1/SNO), 일반 수치를 공통 값으로 정규화하고, 절대
+  instant를 고정 KST 발표시각으로 매핑하며(schedule selector·availability-delay single selector·
+  primary/previous candidate selector 세 가지 책임 분리; candidate selector는 SHORT 3시간·ULTRA 1시간
+  issuance interval만 소유하고 아직 apps/api 미연결),
   위·경도를 공식 DFS LCC 투영으로 격자에 매핑하는 순수 함수를 제공하고(표준 `Math`만 사용,
   network·API key 없음), contracts·zod에 런타임 의존하지 않습니다.
 - `apps/api`: `GET /health`에 더해, PR #4에서 KMA **원본 JSON 검증 및 slot extraction**
@@ -335,7 +353,12 @@ lifestyle-engine  → contracts
   불변이고, location composition은 grid composition 재사용으로 이 정책을 자동 상속합니다(location runtime
   불변). 두 production pipeline 모두 availability-threshold-aware가 됩니다(SHORT 05:00→0200·05:10→0500,
   ULTRA 06:30→0530·06:45→0630; exact inclusive는 프로젝트 정책, live 보장 아님). request factory
-  input/output shape·composition dependencies type은 변경하지 않았습니다.
+  input/output shape·composition dependencies type은 변경하지 않았습니다. PR #16에서는 이 availability-delay
+  selector를 **두 reference**(원본 → primary, `reference − one issuance interval` → previous)에 재사용해
+  하나의 절대 시각에서 primary/previous 두 후보를 만드는 순수 함수
+  (`selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay`)를 `weather-core`에 추가했습니다 — SHORT
+  3시간·ULTRA 1시간 issuance interval만 소유하고, **아직 request factory·composition·route 어디에도
+  연결되지 않았습니다**(production은 여전히 facade 호출당 KMA request 최대 1회, retry/fallback 실행 없음).
 - 위경도→grid **순수 변환**(`convertKmaLatitudeLongitudeToGrid`)은 PR #12에서 `weather-core`에 구현
   완료됐고, **PR #13에서 이를 실제 소비하는 latitude/longitude application adapter**(location facade
   `createKmaLocationScheduledHourlyForecastFacade`와 location composition
