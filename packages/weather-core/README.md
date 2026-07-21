@@ -79,9 +79,10 @@ a common internal weather state, and other weather-domain calculations.
   `RangeError` contract as the scheduled selector (invalid `referenceEpochMilliseconds`, an
   availability-adjusted `base_date` year outside `1000`–`9999`, or an unsupported `product`; value-free
   messages). It is a **schedule-based availability candidate** only — **no** safety margin, **no** live
-  availability guarantee, **no** retry/fallback, **no** clock/environment/network — and is **not yet
-  consumed** by any `apps/api` request factory, composition, or route. See
-  [docs/kma-api-availability-time.md](../../docs/kma-api-availability-time.md).
+  availability guarantee, **no** retry/fallback, **no** clock/environment/network. As of PR #15 it is
+  **consumed by `apps/api`**: the production scheduled composition injects it into the request factory
+  (the location composition inherits it), while a direct one-argument factory caller still uses the
+  scheduled selector. See [docs/kma-api-availability-time.md](../../docs/kma-api-availability-time.md).
 
 - **KMA latitude/longitude → forecast grid conversion** (`kma/grid.ts`):
   `convertKmaLatitudeLongitudeToGrid({ latitude, longitude })`, a pure, deterministic function
@@ -113,7 +114,7 @@ As of PR #14 this package provides:
 - **PR #14 KMA API-availability-delay selector**
   (`selectLatestKmaForecastBaseTimeAfterAvailabilityDelay`) — implemented. It composes the scheduled
   selector with a fixed official delay (단기예보 +10m, 초단기예보 +15m), adds no new runtime
-  dependency, and is not yet consumed by `apps/api`.
+  dependency, and (as of PR #15) is consumed by the `apps/api` production scheduled composition.
 
 `weather-core` still has **no runtime dependencies** (no Zod, no runtime dependency on
 `@life-weather/contracts`), makes **no network calls**, and reads **no KMA API key** — every
@@ -125,9 +126,11 @@ the hourly normalizer wiring, and the application service all live in `apps/api`
 service, and the PR #11 production composition root assembles the whole graph. The PR #12 grid
 converter is consumed by the PR #13 location facade/composition (lat/long → `nx`/`ny` → the scheduled
 pipeline), though neither composition root is wired into a route yet. The **PR #14
-availability-delay selector** (`selectLatestKmaForecastBaseTimeAfterAvailabilityDelay`), by contrast,
-is **not yet consumed** by any `apps/api` request factory, composition, or route — the request
-factory still uses the scheduled selector, and an availability-aware wiring is a later PR.
+availability-delay selector** (`selectLatestKmaForecastBaseTimeAfterAvailabilityDelay`) is, as of
+**PR #15**, consumed too — the production scheduled composition injects it into the request factory
+(the location composition inherits it), while the request factory's **default** stays the scheduled
+selector, so a direct one-argument caller is unchanged. The selector itself remains pure; the
+production policy choice lives in the `apps/api` composition, and no route consumes it yet.
 Unknown/undefined `SKY`/`PTY` codes normalize to `UNKNOWN`, and unparseable/missing `PCP`/`SNO`
 values to `null`.
 

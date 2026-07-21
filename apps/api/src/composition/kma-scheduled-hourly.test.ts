@@ -19,6 +19,7 @@ import {
  */
 
 const SHORT = KmaForecastProduct.SHORT_FORECAST;
+const ULTRA = KmaForecastProduct.ULTRA_SHORT_FORECAST;
 
 /** An obviously fake, decoded-shaped service key. Never a real/production key. */
 const FAKE_KMA_SERVICE_KEY = 'test-only-decoded-key+slash==';
@@ -34,7 +35,9 @@ const SECRET_SHAPED_CLOCK_VALUE_MUST_NOT_LEAK_PR11 =
 /**
  * The reference instant `2026-07-18T05:00:00.000+09:00` as absolute epoch milliseconds. Computed
  * with `Date.UTC` (a pure, deterministic function — not `Date.now`/`new Date`), so the value is a
- * fixed constant, not a read of the current time. `05:00 KST` == `2026-07-17T20:00:00.000Z`.
+ * fixed constant, not a read of the current time. `05:00 KST` == `2026-07-17T20:00:00.000Z`. Under
+ * the production availability-delay selector (PR #14, wired here in PR #15), this instant selects the
+ * SHORT `0200` issuance — the `0500` issuance's 10-minute availability threshold has not yet elapsed.
  */
 const CLOCK_AT_0500_KST_20260718 = Date.UTC(2026, 6, 17, 20, 0, 0, 0);
 
@@ -107,11 +110,16 @@ interface RawItem {
   ny: number;
 }
 
-/** A raw forecast item matching the 20260718/0500 → 0600 60/127 identity unless overridden. */
+/**
+ * A raw forecast item matching the 20260718/0200 → 0600 60/127 identity unless overridden. The
+ * `0200` base issuance is the availability-delay selector's production choice at 05:00 KST (the
+ * 0500 issuance's 10-minute threshold has not yet elapsed), so the fixture's item identity matches
+ * the request the production pipeline actually builds.
+ */
 function item(overrides: Partial<RawItem> = {}): RawItem {
   return {
     baseDate: '20260718',
-    baseTime: '0500',
+    baseTime: '0200',
     category: 'TMP',
     fcstDate: '20260718',
     fcstTime: '0600',
@@ -377,7 +385,8 @@ describe('createKmaScheduledHourlyCompositionFromEnv — full SHORT pipeline', (
     const url = requestedUrl as URL;
     expect(url.pathname.endsWith('/getVilageFcst')).toBe(true);
     expect(url.searchParams.get('base_date')).toBe('20260718');
-    expect(url.searchParams.get('base_time')).toBe('0500');
+    // 05:00 KST → the availability-delay selector picks 0200 (0500's 10-minute threshold unmet).
+    expect(url.searchParams.get('base_time')).toBe('0200');
     expect(url.searchParams.get('nx')).toBe('60');
     expect(url.searchParams.get('ny')).toBe('127');
     expect(url.searchParams.get('pageNo')).toBe('1');
@@ -503,9 +512,10 @@ describe('createKmaScheduledHourlyCompositionFromEnv — normalization failure e
     if (result.stage !== 'NORMALIZATION') {
       throw new Error(`expected NORMALIZATION stage, got ${result.stage}`);
     }
-    // The exact issue the real normalizer produces for an absent required temperature.
+    // The exact issue the real normalizer produces for an absent required temperature. The slot's
+    // base issuance is 0200 — the availability-delay selector's production choice at 05:00 KST.
     expect(result.issues).toContainEqual({
-      slotKey: 'SHORT_FORECAST|20260718|0500|20260718|0600|60|127',
+      slotKey: 'SHORT_FORECAST|20260718|0200|20260718|0600|60|127',
       field: 'temperatureCelsius',
       reason: 'ABSENT',
     });
@@ -599,7 +609,8 @@ describe('createKmaScheduledHourlyCompositionFromEnv — repeated independent ca
     const { fetchImpl, calls: fetchCalls } = recordingFetch(() =>
       jsonOk(successBody(fullShortSlotItems())),
     );
-    // Two distinct instants; both are 0500 KST on 20260718 (same schedule bucket) but read twice.
+    // Two distinct instants (05:00 and 05:01 KST); both resolve to the 0200 availability bucket on
+    // 20260718 under the production selector, but the clock is still read once per call.
     const { clock, nowEpochMilliseconds } = sequenceClock([
       CLOCK_AT_0500_KST_20260718,
       CLOCK_AT_0500_KST_20260718 + 60_000,
@@ -682,5 +693,122 @@ describe('createKmaScheduledHourlyCompositionFromEnv — no secret leakage, no l
     // The composition and system clock never log.
     consoleSpy.expectSilent();
     consoleSpy.restore();
+  });
+});
+
+describe('createKmaScheduledHourlyCompositionFromEnv — production SHORT availability boundary', () => {
+  // The exact inclusive 10-minute SHORT threshold, exercised through the real production wiring:
+  // one millisecond before it selects the previous issuance, exactly on it selects the new one.
+  // HTTP 503 keeps the assertion on URL selection only (no normalization fixture needed).
+  it('05:09:59.999 KST selects base_time 0200 (0500 threshold not yet met)', async () => {
+    const { fetchImpl, calls: fetchCalls } = recordingFetch(
+      () => new Response('x', { status: 503 }),
+    );
+    // 05:09:59.999 KST == 2026-07-17T20:09:59.999Z.
+    const { clock, nowEpochMilliseconds } = fixedClock(
+      Date.UTC(2026, 6, 17, 20, 9, 59, 999),
+    );
+    const facade = composeOrThrow(makeEnv(FAKE_KMA_SERVICE_KEY), { fetchImpl, clock });
+
+    const result = await facade.fetchScheduledHourlyForecast({ product: SHORT, nx: 60, ny: 127 });
+
+    expect(result).toEqual({
+      ok: false,
+      stage: 'PROVIDER',
+      error: { kind: 'HTTP_ERROR', status: 503 },
+    });
+    expect(nowEpochMilliseconds).toHaveBeenCalledTimes(1);
+    expect(fetchCalls).toHaveLength(1);
+    const url = fetchCalls[0].url as URL;
+    expect(url.pathname.endsWith('/getVilageFcst')).toBe(true);
+    expect(url.searchParams.get('base_date')).toBe('20260718');
+    expect(url.searchParams.get('base_time')).toBe('0200');
+    expect(url.searchParams.get('nx')).toBe('60');
+    expect(url.searchParams.get('ny')).toBe('127');
+  });
+
+  it('05:10:00.000 KST selects base_time 0500 (10-minute threshold exactly met)', async () => {
+    const { fetchImpl, calls: fetchCalls } = recordingFetch(
+      () => new Response('x', { status: 503 }),
+    );
+    // 05:10:00.000 KST == 2026-07-17T20:10:00.000Z.
+    const { clock, nowEpochMilliseconds } = fixedClock(
+      Date.UTC(2026, 6, 17, 20, 10, 0, 0),
+    );
+    const facade = composeOrThrow(makeEnv(FAKE_KMA_SERVICE_KEY), { fetchImpl, clock });
+
+    const result = await facade.fetchScheduledHourlyForecast({ product: SHORT, nx: 60, ny: 127 });
+
+    expect(result).toEqual({
+      ok: false,
+      stage: 'PROVIDER',
+      error: { kind: 'HTTP_ERROR', status: 503 },
+    });
+    expect(nowEpochMilliseconds).toHaveBeenCalledTimes(1);
+    expect(fetchCalls).toHaveLength(1);
+    const url = fetchCalls[0].url as URL;
+    expect(url.pathname.endsWith('/getVilageFcst')).toBe(true);
+    expect(url.searchParams.get('base_date')).toBe('20260718');
+    expect(url.searchParams.get('base_time')).toBe('0500');
+    expect(url.searchParams.get('nx')).toBe('60');
+    expect(url.searchParams.get('ny')).toBe('127');
+  });
+});
+
+describe('createKmaScheduledHourlyCompositionFromEnv — production ULTRA availability wiring', () => {
+  // The 15-minute ULTRA threshold, exercised through the real production wiring. Each reference is
+  // an independent composition/fetch/clock; HTTP 503 keeps the assertion on URL selection only.
+  it('06:30:00.000 KST selects getUltraSrtFcst base_time 0530 (0630 threshold not yet met)', async () => {
+    const { fetchImpl, calls: fetchCalls } = recordingFetch(
+      () => new Response('x', { status: 503 }),
+    );
+    // 06:30:00.000 KST == 2026-07-17T21:30:00.000Z.
+    const { clock, nowEpochMilliseconds } = fixedClock(
+      Date.UTC(2026, 6, 17, 21, 30, 0, 0),
+    );
+    const facade = composeOrThrow(makeEnv(FAKE_KMA_SERVICE_KEY), { fetchImpl, clock });
+
+    const result = await facade.fetchScheduledHourlyForecast({ product: ULTRA, nx: 55, ny: 124 });
+
+    expect(result).toEqual({
+      ok: false,
+      stage: 'PROVIDER',
+      error: { kind: 'HTTP_ERROR', status: 503 },
+    });
+    expect(nowEpochMilliseconds).toHaveBeenCalledTimes(1);
+    expect(fetchCalls).toHaveLength(1);
+    const url = fetchCalls[0].url as URL;
+    expect(url.pathname.endsWith('/getUltraSrtFcst')).toBe(true);
+    expect(url.searchParams.get('base_date')).toBe('20260718');
+    expect(url.searchParams.get('base_time')).toBe('0530');
+    expect(url.searchParams.get('nx')).toBe('55');
+    expect(url.searchParams.get('ny')).toBe('124');
+  });
+
+  it('06:45:00.000 KST selects getUltraSrtFcst base_time 0630 (15-minute threshold exactly met)', async () => {
+    const { fetchImpl, calls: fetchCalls } = recordingFetch(
+      () => new Response('x', { status: 503 }),
+    );
+    // 06:45:00.000 KST == 2026-07-17T21:45:00.000Z.
+    const { clock, nowEpochMilliseconds } = fixedClock(
+      Date.UTC(2026, 6, 17, 21, 45, 0, 0),
+    );
+    const facade = composeOrThrow(makeEnv(FAKE_KMA_SERVICE_KEY), { fetchImpl, clock });
+
+    const result = await facade.fetchScheduledHourlyForecast({ product: ULTRA, nx: 55, ny: 124 });
+
+    expect(result).toEqual({
+      ok: false,
+      stage: 'PROVIDER',
+      error: { kind: 'HTTP_ERROR', status: 503 },
+    });
+    expect(nowEpochMilliseconds).toHaveBeenCalledTimes(1);
+    expect(fetchCalls).toHaveLength(1);
+    const url = fetchCalls[0].url as URL;
+    expect(url.pathname.endsWith('/getUltraSrtFcst')).toBe(true);
+    expect(url.searchParams.get('base_date')).toBe('20260718');
+    expect(url.searchParams.get('base_time')).toBe('0630');
+    expect(url.searchParams.get('nx')).toBe('55');
+    expect(url.searchParams.get('ny')).toBe('124');
   });
 });

@@ -28,11 +28,12 @@
   (`src/services`, `createKmaHourlyForecastService`)를 추가했습니다 — 주입된 Provider를 정확히 한 번
   호출하고 request·AbortSignal을 그대로 전달하며, Provider 단계 오류와 normalization 단계 오류를
   `stage`로 구분한 결과를 반환합니다(side-effect 없는 factory, retry·cache 없음, raw slot 비노출).
-  PR #9에서는 주입된 clock·PR #8 selector·caller가 공급한 nx/ny를 결합해 완성된
+  PR #9에서는 주입된 clock·주입 가능한 base-time selector·caller가 공급한 nx/ny를 결합해 완성된
   `KmaForecastRequest`를 만드는 **application-level request factory**(`src/services`,
   `createKmaForecastRequestFactory`)를 추가했습니다 — 생성 시 side-effect 없음, `createScheduledRequest()`
   호출당 injected clock 1회, selector 1회 사용, product/baseDate/baseTime/nx/ny만 반환(input spread
-  없음). PR #10에서는 이 request factory와 hourly service를 순서대로 잇는 얇은 **application
+  없음). (**PR #15**에서 두 번째 인자 `baseTimeSelector` seam이 추가됐고, 생략 시 default는 PR #8
+  `selectLatestKmaForecastBaseTime`입니다 — 아래 참조.) PR #10에서는 이 request factory와 hourly service를 순서대로 잇는 얇은 **application
   facade**(`src/services`, `createKmaScheduledHourlyForecastFacade`)를 추가했습니다 — caller
   input(product/nx/ny) → request factory → 완성된 request → hourly service → 결과 순서로 연결하며,
   input/request/options/Promise를 reference 그대로 전달하고 새로운 result union이나 오류 type을
@@ -59,7 +60,16 @@
   result union**을 정의합니다. location composition은 기존 `createKmaScheduledHourlyCompositionFromEnv`를 그대로
   재사용하고 그 앞단에 production converter `convertKmaLatitudeLongitudeToGrid`(weather-core 공개
   surface)를 조립할 뿐, 기존 grid-based facade·composition과 그 결과·API는 변경하지 않습니다.
-  API availability(fallback/retry) 정책·`WeatherOverview` 조립·`/weather` API route·HTTP status
+  PR #15에서는 위 request factory의 base-time selector seam(신규 `KmaForecastBaseTimeSelector` type,
+  선택적 두 번째 인자)을 통해 **production scheduled composition이 PR #14 availability-delay selector
+  (`selectLatestKmaForecastBaseTimeAfterAvailabilityDelay`)를 명시적으로 주입**하도록 배선했습니다 —
+  factory default는 여전히 schedule-only(PR #8)이라 direct one-argument caller는 불변이고, location
+  composition은 grid composition 재사용으로 이 정책을 자동 상속합니다(location runtime 불변). 그 결과
+  두 production pipeline 모두 availability-threshold-aware(단기 10분·초단기 15분, exact inclusive
+  프로젝트 정책)이며(예 SHORT 05:00→0200·05:10→0500, ULTRA 06:30→0530·06:45→0630), 이는 공식 SLA·live
+  readiness 보장이 아닙니다. request factory 공개 API의 `createScheduledRequest` 이름·input/output
+  shape과 composition dependencies type은 변경하지 않았습니다.
+  live availability fallback/retry 정책·`WeatherOverview` 조립·`/weather` API route·HTTP status
   mapping은 여전히 **미구현**(후속 PR)이며, 별도 general `config` package도 여전히 미구현입니다.
   자세한 내용은
   [kma-response-boundary.md](./kma-response-boundary.md),
@@ -92,7 +102,9 @@
   (`selectLatestKmaForecastBaseTimeAfterAvailabilityDelay`, `kma/api-availability-time.ts`)를
   추가했습니다 — 발표 일정·KST 달력·rollover·연도 검증을 복제하지 않고 조합만 하며, 기존 schedule
   selector의 계약은 변경하지 않습니다(threshold inclusive, no safety margin, no live availability
-  guarantee, runtime dependency 0개, apps/api에는 아직 미연결). 이로써 weather-core에는 **두 selector**
+  guarantee, runtime dependency 0개). 이 selector는 순수하게 유지되며, **PR #15에서 `apps/api`
+  production scheduled composition이 이를 request factory에 주입**해 소비합니다(아래 `apps/api` 항목·
+  의존 방향 참조). 이로써 weather-core에는 **두 selector**
   (schedule selector·availability-delay selector)가 책임을 분리해 공존합니다. weather-core는 순수
   함수만 제공하고 HTTP 호출·slot 조립은 하지 않으며, 이 파서들을 slot 값에 연결하는 정규화는
   `apps/api`(PR #6)에 있습니다. 매핑·발표시각·격자 변환·API 제공 지연 근거는
@@ -146,7 +158,7 @@ RN1/SNO/TMP/T1H/POP/REH/WSD/VEC를 공통 값으로 정규화하고 contracts `H
 순수 TypeScript 함수로 구현할 예정입니다. React Native나 Node.js 런타임에 종속되지 않게 하여,
 모바일과 API 양쪽에서 동일한 로직을 재사용하고 독립적으로 테스트할 수 있도록 합니다.
 
-## 패키지 의존 방향 (PR #14 기준)
+## 패키지 의존 방향 (PR #15 기준)
 
 패키지 의존은 아래 방향만 허용하며, **순환 의존을 금지**합니다.
 
@@ -250,6 +262,19 @@ PR #14 자체는 `apps/api`의 Provider·request factory·facade·composition ru
 신규 selector를 `apps/api`의 어느 계층에도 연결하지 않았습니다 — request factory는 여전히 PR #8
 schedule selector를 사용합니다. `weather-core → apps/api` 같은 역방향은 계속 금지합니다.
 
+PR #15의 KMA availability selector production wiring은 **신규 dependency도, 신규 package-level 의존도
+추가하지 않습니다.** 변경은 `apps/api` 내부에 국한됩니다: `services` request factory에 base-time
+selector 주입 seam(`KmaForecastBaseTimeSelector`)을 추가하고, `composition`의 grid scheduled
+composition이 `@life-weather/weather-core`의 PR #14 selector
+(`selectLatestKmaForecastBaseTimeAfterAvailabilityDelay`) 공개 export를 소비해 그 seam에 주입합니다.
+따라서 이 PR에서 강화되는 방향은 `composition → weather-core`(이제 converter에 더해 availability-delay
+selector도 선택)뿐이며, 이는 PR #13부터 이미 존재한 방향입니다. request factory 파일은 concrete PR #14
+selector를 직접 import하지 않고(selector-agnostic) default로 PR #8 selector만 사용하며, location
+composition은 grid composition 재사용으로 정책을 상속할 뿐 selector를 따로 import/주입하지 않습니다.
+`providers/kma → services`·`services → composition`·`weather-core → apps/api`·`contracts → apps/api`·
+`mobile → apps/api` 같은 역방향은 계속 금지하고, 순환 의존은 없습니다. Provider·normalizer·facade
+result·LOCATION 계약·weather-core runtime은 변경하지 않았습니다.
+
 향후 허용 방향:
 
 ```text
@@ -258,7 +283,7 @@ apps/mobile       → contracts
 lifestyle-engine  → contracts
 ```
 
-## 현재 구현 상태 요약 (PR #14 시점)
+## 현재 구현 상태 요약 (PR #15 시점)
 
 - `contracts`: PR #2에서 Zod 4 기반 공유 기상 계약을 정의했습니다.
 - `weather-core`: `classifyFreshness`(PR #2)와 KMA 단기·초단기예보 정규화 primitive(PR #3)에 더해,
@@ -303,9 +328,14 @@ lifestyle-engine  → contracts
   있으며, 그 공개 API는 변경되지 않았습니다. PR #14에서는 공식 API 제공 지연(단기 +10분·초단기 +15분)을
   반영하는 **별도 순수 selector**(`selectLatestKmaForecastBaseTimeAfterAvailabilityDelay`)를
   `weather-core`에 추가했습니다 — `reference − delay`에 PR #8 selector를 재사용할 뿐이며, 기존 schedule
-  selector와 request factory·composition·route는 **변경되지 않았습니다.** request factory는 여전히 PR #8
-  schedule selector(`createScheduledRequest`)를 사용하고, PR #14 신규 selector는 아직 어느 request
-  factory·composition·route에도 **연결되지 않았습니다.**
+  selector는 **변경되지 않았습니다.** PR #15에서는 request factory에 base-time selector 주입
+  seam(`KmaForecastBaseTimeSelector`, 선택적 두 번째 인자)을 추가하고, **production scheduled composition이
+  PR #14 availability-delay selector를 명시적으로 주입**하도록 배선했습니다 — factory default는 여전히
+  PR #8 schedule selector(`createScheduledRequest` 이름 유지)라 selector를 생략한 direct caller는
+  불변이고, location composition은 grid composition 재사용으로 이 정책을 자동 상속합니다(location runtime
+  불변). 두 production pipeline 모두 availability-threshold-aware가 됩니다(SHORT 05:00→0200·05:10→0500,
+  ULTRA 06:30→0530·06:45→0630; exact inclusive는 프로젝트 정책, live 보장 아님). request factory
+  input/output shape·composition dependencies type은 변경하지 않았습니다.
 - 위경도→grid **순수 변환**(`convertKmaLatitudeLongitudeToGrid`)은 PR #12에서 `weather-core`에 구현
   완료됐고, **PR #13에서 이를 실제 소비하는 latitude/longitude application adapter**(location facade
   `createKmaLocationScheduledHourlyForecastFacade`와 location composition
@@ -316,7 +346,7 @@ lifestyle-engine  → contracts
   조립할 뿐, 기존 facade·composition의 result·API는 그대로입니다. 다만 두 composition root 모두 아직
   `apps/api/src/index.ts`나 어떤 route에도 **연결되지 않았습니다**. `WeatherOverview` 조립,
   `SourceMetadata`, 현재 날씨, 일별 예보(`TMN`/`TMX`), 체감온도·생활지수 계산, 공통 Provider interface,
-  production composition root를 **app startup/route에 연결**하는 wiring, HTTP status mapping, API
-  availability fallback/retry, cache, `/weather` route, 별도 general `config` package는 아직
-  **미구현**입니다(후속 PR).
+  production composition root를 **app startup/route에 연결**하는 wiring, HTTP status mapping, live
+  availability fallback/retry(publication-in-progress·empty-data 대응), cache, `/weather` route, 별도
+  general `config` package는 아직 **미구현**입니다(후속 PR).
 - 이 문서의 나머지 "예정" 구조는 앞으로의 합의이며, 위 요약이 현재 코드베이스의 상태입니다.

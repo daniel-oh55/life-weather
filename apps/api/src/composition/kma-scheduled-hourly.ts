@@ -10,6 +10,7 @@
  *   → createKmaHourlyForecastService  (PR #7)       → KmaHourlyForecastService
  *
  * system clock adapter / injected clock
+ *   + selectLatestKmaForecastBaseTimeAfterAvailabilityDelay (PR #14)   // production selector choice
  *   → createKmaForecastRequestFactory (PR #9)       → KmaForecastRequestFactory
  *
  * request factory + hourly service
@@ -22,13 +23,19 @@
  * and `/health` imports free of any KMA configuration dependency and defers all startup / error
  * policy to an explicit caller (a later route / startup PR).
  *
- * Responsibility boundary: this layer only *selects* production dependencies and *sequences* the
- * existing public factories. It owns no KMA data rule, no transport, no normalization, no issue-time
- * math, no request-assembly rule, and no facade-wiring rule — those stay in the components it
- * composes. It reads and validates no service key of its own (the provider factory owns that), builds
- * no URL, calls no `fetch`, reads no clock, and adds no retry / fallback / logging. It consumes only
- * the `../providers/kma` and `../services` public surfaces. See `docs/kma-production-composition.md`.
+ * Responsibility boundary: this layer only *selects* production dependencies — including the
+ * production base-time policy, the PR #14 {@link selectLatestKmaForecastBaseTimeAfterAvailabilityDelay}
+ * selector, which it injects into the request factory — and *sequences* the existing public
+ * factories. It owns no KMA data rule, no transport, no normalization, no issue-time math, no
+ * availability-threshold math (the 단기예보 10-minute / 초단기예보 15-minute policy lives entirely in
+ * the PR #14 `weather-core` selector), no request-assembly rule, and no facade-wiring rule — those
+ * stay in the components it composes. It reads and validates no service key of its own (the provider
+ * factory owns that), builds no URL, calls no `fetch`, reads no clock, and adds no retry / fallback /
+ * logging. It consumes only the `../providers/kma`, `../services`, and `@life-weather/weather-core`
+ * (the PR #14 selector) public surfaces. See `docs/kma-production-composition.md`.
  */
+
+import { selectLatestKmaForecastBaseTimeAfterAvailabilityDelay } from '@life-weather/weather-core';
 
 import {
   createKmaForecastProviderFromEnv,
@@ -89,8 +96,10 @@ export type CreateKmaScheduledHourlyCompositionResult =
  *    no `fetch`.
  * 3. Otherwise pick the clock: the injected `clock` reference when supplied, else a fresh
  *    {@link createKmaSystemClock} adapter.
- * 4. Build the request factory from that clock, the hourly service from the provider, and the
- *    scheduled facade from the two.
+ * 4. Build the request factory from that clock and the PR #14
+ *    {@link selectLatestKmaForecastBaseTimeAfterAvailabilityDelay} availability-delay selector (the
+ *    fixed production base-time choice), the hourly service from the provider, and the scheduled
+ *    facade from the two.
  * 5. Return `{ ok: true, facade }`.
  *
  * Construction is side-effect-free beyond reading provider configuration: it reads no clock, issues
@@ -128,8 +137,14 @@ export function createKmaScheduledHourlyCompositionFromEnv(
   // Neither is called here; the first read is deferred to the facade's request-time factory call.
   const clock = dependencies?.clock ?? createKmaSystemClock();
 
-  // Steps 4–6: assemble the request factory, the hourly service, and the scheduled facade.
-  const requestFactory = createKmaForecastRequestFactory(clock);
+  // Steps 4–6: assemble the request factory — injecting the PR #14 availability-delay selector as
+  // the fixed production base-time policy (the schedule-only default is not used here) — the hourly
+  // service, and the scheduled facade. The selector is only referenced now; it first runs when the
+  // facade's request-time factory call reads the clock.
+  const requestFactory = createKmaForecastRequestFactory(
+    clock,
+    selectLatestKmaForecastBaseTimeAfterAvailabilityDelay,
+  );
   const hourlyService = createKmaHourlyForecastService(providerResult.provider);
   const facade = createKmaScheduledHourlyForecastFacade(
     requestFactory,

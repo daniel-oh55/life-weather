@@ -7,10 +7,17 @@
  * - The **grid-based** production facade (PR #11): the PR #5 provider-from-env → the PR #7 hourly
  *   service, a system clock adapter → the PR #9 request factory, and the PR #10 scheduled facade
  *   over the two — yielding one live `KmaScheduledHourlyForecastFacade` keyed by `product`/`nx`/`ny`.
+ *   As of PR #15 the grid composition injects the PR #14
+ *   `selectLatestKmaForecastBaseTimeAfterAvailabilityDelay` selector into the request factory as its
+ *   explicit production base-time choice, so every request is dated to an availability-threshold-aware
+ *   issuance (단기예보 10분 · 초단기예보 15분 project policy) rather than the schedule-only default.
  * - The **location-based** production facade (PR #13): the same grid-based composition reused
  *   verbatim, with the PR #12 `convertKmaLatitudeLongitudeToGrid` converter assembled in front of
  *   it — yielding one live `KmaLocationScheduledHourlyForecastFacade` keyed by
- *   `product`/`latitude`/`longitude`. The grid-based composition and its result are unchanged.
+ *   `product`/`latitude`/`longitude`. The grid-based composition and its result are unchanged, so
+ *   the location pipeline **inherits** the PR #14 availability policy without importing or injecting
+ *   the selector itself. Both production pipelines are availability-threshold-aware; the policy is a
+ *   deterministic project threshold, not an official SLA, and carries no live-readiness guarantee.
  *
  * Boundary properties:
  *
@@ -24,9 +31,9 @@
  *   to a `/weather` route — that is a later PR.
  *
  * It consumes only the `../providers/kma`, `../services`, and `@life-weather/weather-core` (the
- * PR #12 converter) public surfaces and is exported only from here (never re-exported from those
- * barrels or from `apps/api/src/index.ts`). See `docs/kma-production-composition.md` and
- * `docs/kma-location-scheduled-hourly.md`.
+ * PR #12 converter and the PR #14 availability-delay selector) public surfaces and is exported only
+ * from here (never re-exported from those barrels or from `apps/api/src/index.ts`). See
+ * `docs/kma-production-composition.md` and `docs/kma-location-scheduled-hourly.md`.
  */
 
 export { createKmaSystemClock } from './system-clock';

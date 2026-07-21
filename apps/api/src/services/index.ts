@@ -8,8 +8,12 @@
  *    the PR #5 HTTP provider and the PR #6 hourly normalizer in order and reports a `PROVIDER`- or
  *    `NORMALIZATION`-stage failure distinctly.
  * 2. The PR #9 KMA **request factory** (`createKmaForecastRequestFactory`): it combines an injected
- *    clock, the PR #8 scheduled issue-time selector, and caller-supplied `product`/`nx`/`ny` into a
- *    complete `KmaForecastRequest`.
+ *    clock, an injectable base-time selector, and caller-supplied `product`/`nx`/`ny` into a
+ *    complete `KmaForecastRequest`. The selector is a `KmaForecastBaseTimeSelector`; when omitted it
+ *    defaults to the PR #8 schedule-only `selectLatestKmaForecastBaseTime`. The factory itself fixes
+ *    **no** availability policy — the production composition (`../composition`) injects the PR #14
+ *    availability-delay selector as its explicit production choice, while a direct one-argument
+ *    caller still gets the schedule-only default. No HTTP route consumes any of this yet.
  * 3. The PR #10 KMA **scheduled hourly facade** (`createKmaScheduledHourlyForecastFacade`): a thin
  *    connector that runs the request factory then the hourly service in order (input → request →
  *    hourly result), passing `input`/request/`options`/Promise through by reference and adding no
@@ -41,6 +45,7 @@ export {
 
 export {
   createKmaForecastRequestFactory,
+  type KmaForecastBaseTimeSelector,
   type KmaForecastRequestClock,
   type KmaForecastRequestFactory,
   type KmaForecastRequestFactoryInput,

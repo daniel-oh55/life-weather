@@ -41,7 +41,10 @@ const SECRET_SHAPED_LOCATION_MUST_NOT_LEAK_PR13 = 90.000001;
 /**
  * The reference instant `2026-07-18T05:00:00.000+09:00` as absolute epoch milliseconds. Computed
  * with `Date.UTC` (a pure, deterministic function — not `Date.now`/`new Date`), so the value is a
- * fixed constant, not a read of the current time. `05:00 KST` == `2026-07-17T20:00:00.000Z`.
+ * fixed constant, not a read of the current time. `05:00 KST` == `2026-07-17T20:00:00.000Z`. The
+ * location pipeline reuses the grid production composition, so it inherits the PR #14 availability
+ * policy: this instant selects the SHORT `0200` issuance (the `0500` issuance's 10-minute threshold
+ * has not yet elapsed).
  */
 const CLOCK_AT_0500_KST_20260718 = Date.UTC(2026, 6, 17, 20, 0, 0, 0);
 
@@ -114,11 +117,15 @@ interface RawItem {
   ny: number;
 }
 
-/** A raw forecast item matching the 20260718/0500 → 0600 60/127 identity unless overridden. */
+/**
+ * A raw forecast item matching the 20260718/0200 → 0600 60/127 identity unless overridden. The
+ * `0200` base issuance is the inherited availability-delay selector's production choice at 05:00 KST,
+ * so the fixture's item identity matches the request the production location pipeline actually builds.
+ */
 function item(overrides: Partial<RawItem> = {}): RawItem {
   return {
     baseDate: '20260718',
-    baseTime: '0500',
+    baseTime: '0200',
     category: 'TMP',
     fcstDate: '20260718',
     fcstTime: '0600',
@@ -366,7 +373,8 @@ describe('createKmaLocationScheduledHourlyCompositionFromEnv — full Seoul SHOR
     const url = requestedUrl as URL;
     expect(url.pathname.endsWith('/getVilageFcst')).toBe(true);
     expect(url.searchParams.get('base_date')).toBe('20260718');
-    expect(url.searchParams.get('base_time')).toBe('0500');
+    // 05:00 KST → the inherited availability-delay selector picks 0200 (0500's threshold unmet).
+    expect(url.searchParams.get('base_time')).toBe('0200');
     // The Seoul lat/lon projected to nx=60, ny=127.
     expect(url.searchParams.get('nx')).toBe('60');
     expect(url.searchParams.get('ny')).toBe('127');
@@ -572,8 +580,9 @@ describe('createKmaLocationScheduledHourlyCompositionFromEnv — downstream fail
     if (result.stage !== 'NORMALIZATION') {
       throw new Error(`expected NORMALIZATION stage, got ${result.stage}`);
     }
+    // The slot's base issuance is 0200 — the inherited availability-delay production choice at 05:00 KST.
     expect(result.issues).toContainEqual({
-      slotKey: 'SHORT_FORECAST|20260718|0500|20260718|0600|60|127',
+      slotKey: 'SHORT_FORECAST|20260718|0200|20260718|0600|60|127',
       field: 'temperatureCelsius',
       reason: 'ABSENT',
     });
@@ -600,7 +609,8 @@ describe('createKmaLocationScheduledHourlyCompositionFromEnv — repeated indepe
     const { fetchImpl, calls: fetchCalls } = recordingFetch(() =>
       jsonOk(successBody(fullShortSlotItems())),
     );
-    // Two distinct instants; both are 0500 KST on 20260718 (same schedule bucket) but read twice.
+    // Two distinct instants (05:00 and 05:01 KST); both resolve to the 0200 availability bucket on
+    // 20260718 under the inherited production selector, but the clock is still read once per call.
     const { clock, nowEpochMilliseconds } = sequenceClock([
       CLOCK_AT_0500_KST_20260718,
       CLOCK_AT_0500_KST_20260718 + 60_000,
