@@ -113,7 +113,9 @@ As of PR #14 this package provides:
 - KMA grid converter (`convertKmaLatitudeLongitudeToGrid`) — implemented (PR #12).
 - **PR #14 KMA API-availability-delay selector**
   (`selectLatestKmaForecastBaseTimeAfterAvailabilityDelay`) — implemented. It composes the scheduled
-  selector with a fixed official delay (단기예보 +10m, 초단기예보 +15m), adds no new runtime
+  selector with guide-derived project thresholds (단기예보 +10m, 초단기예보 +15m), modelled from the
+  official guide's approximate provision times; the exact inclusive thresholds are a deterministic
+  project policy, not an official SLA or a live-availability guarantee. It adds no new runtime
   dependency, and (as of PR #15) is consumed by the `apps/api` production scheduled composition.
 
 `weather-core` still has **no runtime dependencies** (no Zod, no runtime dependency on

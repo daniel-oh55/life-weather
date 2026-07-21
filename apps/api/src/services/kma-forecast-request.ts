@@ -83,9 +83,10 @@ export type KmaForecastBaseTimeSelector = (
 
 /**
  * The caller-supplied part of a request: the forecast product and the **already-computed** KMA grid
- * point. The factory assumes a valid, typed grid coordinate is supplied here (lat/long → nx/ny
- * conversion is a later PR); it does not transform, round, clamp, swap, stringify, or default
- * `nx`/`ny`. The runtime trust-boundary validation of these values stays with the provider.
+ * point. The factory assumes a valid, typed grid coordinate is supplied here. Latitude/longitude
+ * conversion occurs upstream in the PR #12/#13 location pipeline; this factory accepts the
+ * already-computed `nx`/`ny` and does not transform, round, clamp, swap, stringify, or default them.
+ * The runtime trust-boundary validation of these values stays with the provider.
  */
 export interface KmaForecastRequestFactoryInput {
   readonly product: KmaForecastProduct;

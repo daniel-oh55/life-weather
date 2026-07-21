@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   KmaForecastProduct,
@@ -93,6 +93,12 @@ function throwingSelector(error: unknown) {
   };
   return { selector, calls };
 }
+
+// Safety net: restore any console (or other) spy even if an assertion in the test that installed it
+// throws before its explicit `mockRestore()` runs. Applies to every describe block below.
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('createKmaForecastRequestFactory — construction is side-effect-free', () => {
   it('does not call the clock on construction alone', () => {
