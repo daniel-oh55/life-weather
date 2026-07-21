@@ -123,8 +123,11 @@ a project on first run; that step is intentionally deferred to a later PR.
   scheduled issue-time selector (`selectLatestKmaForecastBaseTime` in `@life-weather/weather-core`),
   and caller-supplied `product`/`nx`/`ny` into a complete `KmaForecastRequest`. See
   [docs/kma-forecast-request-factory.md](../../docs/kma-forecast-request-factory.md). Highlights:
-  - Implemented: the injected-clock request factory, selecting the scheduled `baseDate`/`baseTime`
-    from the real PR #8 selector, and combining it with `product`/`nx`/`ny`.
+  - Implemented: the injected-clock request factory, selecting `baseDate`/`baseTime` from a base-time
+    selector and combining it with `product`/`nx`/`ny`. **PR #15** added a second, optional
+    `baseTimeSelector` parameter (type `KmaForecastBaseTimeSelector`); when omitted it defaults to the
+    PR #8 `selectLatestKmaForecastBaseTime` (schedule-only), and production composition injects the
+    PR #14 availability-delay selector (see the availability bullet below).
   - The clock is **injected** — the factory never reads a system clock (no `Date.now()`, `new Date()`,
     `performance`, `process`) and provides no default clock. Construction reads the clock **zero**
     times; each `createScheduledRequest()` reads it **exactly once**, with no argument, and forwards
@@ -227,14 +230,27 @@ a project on first run; that step is intentionally deferred to a later PR.
     (`{ latitude: 37.5665, longitude: 126.978 }` → `{ nx: 60, ny: 127 }`) through an injected in-memory
     `fetchImpl`, plus Tokyo-unsupported / invalid-coordinate / abort / provider-failure /
     normalization-failure / repeated-call / secret-non-leakage cases.
-- **KMA API-availability-delay selector lives in `weather-core`, not yet consumed here.** PR #14 adds
-  the pure `selectLatestKmaForecastBaseTimeAfterAvailabilityDelay` in `@life-weather/weather-core`
-  (단기예보 +10m, 초단기예보 +15m; see
-  [docs/kma-api-availability-time.md](../../docs/kma-api-availability-time.md)). **`apps/api` does not
-  consume it.** The PR #9 request factory still calls the PR #8 scheduled selector
-  (`selectLatestKmaForecastBaseTime`, method still `createScheduledRequest`), and neither the scheduled
-  nor the location production composition consumes the availability-delay selector. This app's runtime
-  behavior is **unchanged from PR #13**; wiring an availability-aware request factory is a later PR.
+- **KMA availability-delay selector wired into production (PR #15).** PR #14 added the pure
+  `selectLatestKmaForecastBaseTimeAfterAvailabilityDelay` in `@life-weather/weather-core` (단기예보
+  +10m, 초단기예보 +15m; see
+  [docs/kma-api-availability-time.md](../../docs/kma-api-availability-time.md)), and PR #15 now
+  **consumes it in `apps/api` production**. See
+  [docs/kma-production-composition.md](../../docs/kma-production-composition.md). Highlights:
+  - The PR #9 request factory gains a second, optional `baseTimeSelector` parameter (a new
+    `KmaForecastBaseTimeSelector` type). **Omitting it keeps the PR #8 schedule-only
+    `selectLatestKmaForecastBaseTime` default**, so an existing one-argument caller is unchanged; the
+    method is still `createScheduledRequest`, and the factory itself fixes no availability policy.
+  - `createKmaScheduledHourlyCompositionFromEnv` **explicitly injects** the PR #14 availability-delay
+    selector as its fixed production choice, so every production request is dated to an
+    availability-threshold-aware issuance (e.g. SHORT 05:00 KST → `0200`, 05:10 → `0500`; ULTRA 06:30 →
+    `0530`, 06:45 → `0630`).
+  - `createKmaLocationScheduledHourlyCompositionFromEnv` reuses that grid composition verbatim, so the
+    location production pipeline **inherits** the same policy without importing or injecting the
+    selector itself (the location composition runtime is unchanged).
+  - The exact SHORT-10-minute / ULTRA-15-minute inclusive threshold is a **deterministic project
+    policy**, not an official SLA — it carries **no live-readiness guarantee** and PR #15 adds **no**
+    retry, fallback, or live probe. A direct one-argument request-factory caller still gets the
+    schedule-only default, and no HTTP route consumes any of this yet.
 - **Still not implemented.** `WeatherOverview` assembly, `SourceMetadata`, current weather, daily
   forecast (incl. `TMN`/`TMX`), feels-like computation, a common provider interface, **running either
   production composition root at API app startup**, the `/weather` route and its query validation,
@@ -263,6 +279,7 @@ a project on first run; that step is intentionally deferred to a later PR.
   `services` layer; the location facade only adds type-only imports of the `weather-core` converter
   types (`ConvertKmaLatitudeLongitudeToGridInput`, `KmaForecastGridCoordinate`, `KmaForecastProduct`)
   and its sibling scheduled-facade types; and the composition layer consumes the `providers/kma`,
-  `services`, and (for the PR #13 location composition) `@life-weather/weather-core`
-  (`convertKmaLatitudeLongitudeToGrid`) public surfaces (its system clock uses Node's native
-  `Date.now`).
+  `services`, and `@life-weather/weather-core` public surfaces — the scheduled composition imports the
+  PR #14 `selectLatestKmaForecastBaseTimeAfterAvailabilityDelay` (added as a production injection in
+  PR #15) and the PR #13 location composition imports `convertKmaLatitudeLongitudeToGrid` (its system
+  clock uses Node's native `Date.now`). No new external dependency is added.

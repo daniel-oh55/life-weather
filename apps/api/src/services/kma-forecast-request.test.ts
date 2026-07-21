@@ -1,10 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { KmaForecastProduct } from '@life-weather/weather-core';
+import {
+  KmaForecastProduct,
+  selectLatestKmaForecastBaseTimeAfterAvailabilityDelay,
+  type SelectLatestKmaForecastBaseTimeInput,
+} from '@life-weather/weather-core';
 
 import type { KmaForecastRequest } from '../providers/kma';
 import {
   createKmaForecastRequestFactory,
+  type KmaForecastBaseTimeSelector,
   type KmaForecastRequestClock,
   type KmaForecastRequestFactoryInput,
 } from './kma-forecast-request';
@@ -57,6 +62,43 @@ function throwingClock(error: unknown) {
   const clock: KmaForecastRequestClock = { nowEpochMilliseconds };
   return { clock, nowEpochMilliseconds };
 }
+
+/**
+ * A fresh, test-local injected {@link KmaForecastBaseTimeSelector} that records every input it
+ * receives (by reference) and returns `result`. The `calls` array is created per invocation of this
+ * helper — never a module-scope mutable array or a shared `vi.fn` — so no call history is shared
+ * across tests (order-independent under shuffle). The default `result` is deliberately distinct from
+ * anything the real PR #8 selector would return, so a test can prove the factory used *this* result.
+ */
+function recordingSelector(
+  result: { baseDate: string; baseTime: string } = {
+    baseDate: '20200101',
+    baseTime: '1234',
+  },
+) {
+  const calls: SelectLatestKmaForecastBaseTimeInput[] = [];
+  const selector: KmaForecastBaseTimeSelector = (input) => {
+    calls.push(input);
+    return result;
+  };
+  return { selector, calls, result };
+}
+
+/** A fresh, test-local selector that throws `error` (the exact reference, for identity checks). */
+function throwingSelector(error: unknown) {
+  const calls: SelectLatestKmaForecastBaseTimeInput[] = [];
+  const selector: KmaForecastBaseTimeSelector = (input) => {
+    calls.push(input);
+    throw error;
+  };
+  return { selector, calls };
+}
+
+// Safety net: restore any console (or other) spy even if an assertion in the test that installed it
+// throws before its explicit `mockRestore()` runs. Applies to every describe block below.
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('createKmaForecastRequestFactory — construction is side-effect-free', () => {
   it('does not call the clock on construction alone', () => {
@@ -375,5 +417,404 @@ describe('createKmaForecastRequestFactory — error propagation', () => {
 
     expect(caught).toBe(sentinel);
     expect(returned).toBeUndefined();
+  });
+});
+
+describe('createKmaForecastRequestFactory — injected selector: construction is side-effect-free', () => {
+  it('does not call the injected selector on construction alone', () => {
+    const { clock, nowEpochMilliseconds } = fixedClock(
+      kstEpochMs('2026-07-18T05:00:00.000'),
+    );
+    const { selector, calls } = recordingSelector();
+    createKmaForecastRequestFactory(clock, selector);
+    expect(calls).toHaveLength(0);
+    expect(nowEpochMilliseconds).not.toHaveBeenCalled();
+  });
+
+  it('constructs from a frozen clock and a frozen selector reference without calling either', () => {
+    const nowEpochMilliseconds = vi.fn(() => kstEpochMs('2026-07-18T05:00:00.000'));
+    const clock = Object.freeze({ nowEpochMilliseconds });
+    const { selector, calls } = recordingSelector();
+    const frozenSelector = Object.freeze(selector);
+
+    const factory = createKmaForecastRequestFactory(clock, frozenSelector);
+
+    expect(nowEpochMilliseconds).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(0);
+    // The factory is usable and routes through the injected selector reference.
+    const result = factory.createScheduledRequest({ product: SHORT, nx: 60, ny: 127 });
+    expect(result).toMatchObject({ baseDate: '20200101', baseTime: '1234' });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('does not mutate the injected selector reference', () => {
+    const { clock } = fixedClock(kstEpochMs('2026-07-18T05:00:00.000'));
+    const { selector } = recordingSelector();
+    const before = { ...(selector as unknown as Record<string, unknown>) };
+    const factory = createKmaForecastRequestFactory(clock, selector);
+    factory.createScheduledRequest({ product: SHORT, nx: 60, ny: 127 });
+    expect({ ...(selector as unknown as Record<string, unknown>) }).toEqual(before);
+  });
+});
+
+describe('createKmaForecastRequestFactory — injected selector: input contract', () => {
+  it('calls the selector exactly once per request', () => {
+    const { clock } = fixedClock(kstEpochMs('2026-07-18T05:00:00.000'));
+    const { selector, calls } = recordingSelector();
+    const factory = createKmaForecastRequestFactory(clock, selector);
+    factory.createScheduledRequest({ product: SHORT, nx: 60, ny: 127 });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("passes a selector input whose own keys are exactly product + referenceEpochMilliseconds", () => {
+    const { clock } = fixedClock(kstEpochMs('2026-07-18T05:00:00.000'));
+    const { selector, calls } = recordingSelector();
+    const factory = createKmaForecastRequestFactory(clock, selector);
+
+    factory.createScheduledRequest({ product: SHORT, nx: 60, ny: 127 });
+
+    expect(Object.keys(calls[0]).sort()).toEqual([
+      'product',
+      'referenceEpochMilliseconds',
+    ]);
+    // No grid coordinate is forwarded into the selector input.
+    expect('nx' in calls[0]).toBe(false);
+    expect('ny' in calls[0]).toBe(false);
+  });
+
+  it('does not forward a runtime extra property from the factory input into the selector input', () => {
+    const EXTRA_MARKER = 'SECRET_SHAPED_EXTRA_MUST_NOT_LEAK_PR15';
+    const { clock } = fixedClock(kstEpochMs('2026-07-18T05:00:00.000'));
+    const { selector, calls } = recordingSelector();
+    const factory = createKmaForecastRequestFactory(clock, selector);
+    const input = {
+      product: SHORT,
+      nx: 60,
+      ny: 127,
+      [EXTRA_MARKER]: 'leak-me-if-you-spread-input',
+    } as unknown as KmaForecastRequestFactoryInput;
+
+    factory.createScheduledRequest(input);
+
+    expect(Object.keys(calls[0]).sort()).toEqual([
+      'product',
+      'referenceEpochMilliseconds',
+    ]);
+    expect(calls[0]).not.toHaveProperty(EXTRA_MARKER);
+  });
+
+  it('builds a selector input that is a distinct object reference from the factory input', () => {
+    const { clock } = fixedClock(kstEpochMs('2026-07-18T05:00:00.000'));
+    const { selector, calls } = recordingSelector();
+    const factory = createKmaForecastRequestFactory(clock, selector);
+    const input: KmaForecastRequestFactoryInput = { product: SHORT, nx: 60, ny: 127 };
+
+    factory.createScheduledRequest(input);
+
+    expect(calls[0]).not.toBe(input as unknown as SelectLatestKmaForecastBaseTimeInput);
+  });
+
+  it('forwards the exact clock value and product to the selector input', () => {
+    const epoch = kstEpochMs('2026-07-18T05:00:00.000');
+    const { clock } = fixedClock(epoch);
+    const { selector, calls } = recordingSelector();
+    const factory = createKmaForecastRequestFactory(clock, selector);
+
+    factory.createScheduledRequest({ product: ULTRA, nx: 55, ny: 124 });
+
+    expect(calls[0].referenceEpochMilliseconds).toBe(epoch);
+    expect(calls[0].product).toBe(ULTRA);
+  });
+
+  it('builds a fresh selector input object on every call', () => {
+    const { clock } = sequenceClock([
+      kstEpochMs('2026-07-18T05:00:00.000'),
+      kstEpochMs('2026-07-18T06:00:00.000'),
+    ]);
+    const { selector, calls } = recordingSelector();
+    const factory = createKmaForecastRequestFactory(clock, selector);
+
+    factory.createScheduledRequest({ product: SHORT, nx: 60, ny: 127 });
+    factory.createScheduledRequest({ product: SHORT, nx: 60, ny: 127 });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).not.toBe(calls[1]);
+  });
+});
+
+describe('createKmaForecastRequestFactory — injected selector: output contract', () => {
+  it("uses the selector's baseDate/baseTime verbatim in the request", () => {
+    const { clock } = fixedClock(kstEpochMs('2026-07-18T05:00:00.000'));
+    const { selector } = recordingSelector({ baseDate: '20191231', baseTime: '2359' });
+    const factory = createKmaForecastRequestFactory(clock, selector);
+
+    const result = factory.createScheduledRequest({ product: SHORT, nx: 60, ny: 127 });
+
+    expect(result).toEqual({
+      product: SHORT,
+      baseDate: '20191231',
+      baseTime: '2359',
+      nx: 60,
+      ny: 127,
+    });
+    expect(Object.keys(result).sort()).toEqual([...REQUEST_KEYS].sort());
+  });
+
+  it('does not expose an extra runtime property from the selector result', () => {
+    const EXTRA_MARKER = 'SECRET_SHAPED_SELECTOR_RESULT_MUST_NOT_LEAK_PR15';
+    const { clock } = fixedClock(kstEpochMs('2026-07-18T05:00:00.000'));
+    // A selector whose result carries an extra runtime key beyond baseDate/baseTime.
+    const selector: KmaForecastBaseTimeSelector = () =>
+      ({
+        baseDate: '20260718',
+        baseTime: '0200',
+        [EXTRA_MARKER]: 'leak-me-if-you-spread-result',
+      }) as unknown as ReturnType<KmaForecastBaseTimeSelector>;
+    const factory = createKmaForecastRequestFactory(clock, selector);
+
+    const result = factory.createScheduledRequest({ product: SHORT, nx: 60, ny: 127 });
+
+    expect(Object.keys(result).sort()).toEqual([...REQUEST_KEYS].sort());
+    expect(result).not.toHaveProperty(EXTRA_MARKER);
+    expect(JSON.stringify(result)).not.toContain(EXTRA_MARKER);
+  });
+
+  it('works with a frozen selector result and never mutates it', () => {
+    const { clock } = fixedClock(kstEpochMs('2026-07-18T05:00:00.000'));
+    const frozenResult = Object.freeze({ baseDate: '20260718', baseTime: '0200' });
+    const selector: KmaForecastBaseTimeSelector = () => frozenResult;
+    const factory = createKmaForecastRequestFactory(clock, selector);
+
+    const result = factory.createScheduledRequest({ product: SHORT, nx: 60, ny: 127 });
+
+    expect(result).toMatchObject({ baseDate: '20260718', baseTime: '0200' });
+    // The selector's result object is left exactly as it was returned.
+    expect(frozenResult).toEqual({ baseDate: '20260718', baseTime: '0200' });
+  });
+});
+
+describe('createKmaForecastRequestFactory — injected selector: error propagation', () => {
+  it('does not call the selector when the clock throws', () => {
+    const sentinel = new Error('CLOCK_SENTINEL_BEFORE_SELECTOR');
+    const { clock } = throwingClock(sentinel);
+    const { selector, calls } = recordingSelector();
+    const factory = createKmaForecastRequestFactory(clock, selector);
+
+    let caught: unknown;
+    try {
+      factory.createScheduledRequest({ product: SHORT, nx: 60, ny: 127 });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBe(sentinel);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('propagates the exact error the selector throws after reading the clock once', () => {
+    const sentinel = new Error('SELECTOR_SENTINEL_FOR_IDENTITY');
+    const { clock, nowEpochMilliseconds } = fixedClock(
+      kstEpochMs('2026-07-18T05:00:00.000'),
+    );
+    const { selector } = throwingSelector(sentinel);
+    const factory = createKmaForecastRequestFactory(clock, selector);
+
+    let caught: unknown;
+    let returned: KmaForecastRequest | undefined;
+    try {
+      returned = factory.createScheduledRequest({ product: SHORT, nx: 60, ny: 127 });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBe(sentinel);
+    expect(returned).toBeUndefined();
+    expect(nowEpochMilliseconds).toHaveBeenCalledTimes(1);
+  });
+
+  it('propagates a selector RangeError by the same reference (no new result union)', () => {
+    const sentinel = new RangeError('SELECTOR_RANGE_ERROR_FOR_IDENTITY');
+    const { clock } = fixedClock(kstEpochMs('2026-07-18T05:00:00.000'));
+    const { selector } = throwingSelector(sentinel);
+    const factory = createKmaForecastRequestFactory(clock, selector);
+
+    let caught: unknown;
+    try {
+      factory.createScheduledRequest({ product: SHORT, nx: 60, ny: 127 });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBe(sentinel);
+  });
+
+  it('logs nothing when the selector throws', () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { clock } = fixedClock(kstEpochMs('2026-07-18T05:00:00.000'));
+    const { selector } = throwingSelector(new Error('SELECTOR_SILENT'));
+    const factory = createKmaForecastRequestFactory(clock, selector);
+
+    expect(() =>
+      factory.createScheduledRequest({ product: SHORT, nx: 60, ny: 127 }),
+    ).toThrow();
+
+    expect(log).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    log.mockRestore();
+    error.mockRestore();
+    warn.mockRestore();
+  });
+});
+
+describe('createKmaForecastRequestFactory — default selector compatibility (schedule-only)', () => {
+  it('omitting the selector keeps the PR #8 schedule result for SHORT 05:00 KST → 0500', () => {
+    const { clock } = fixedClock(kstEpochMs('2026-07-18T05:00:00.000'));
+    // One-argument call: the historical API, unchanged.
+    const factory = createKmaForecastRequestFactory(clock);
+
+    const result = factory.createScheduledRequest({ product: SHORT, nx: 60, ny: 127 });
+
+    expect(result).toEqual({
+      product: SHORT,
+      baseDate: '20260718',
+      baseTime: '0500',
+      nx: 60,
+      ny: 127,
+    });
+  });
+
+  it('omitting the selector keeps the PR #8 schedule result for ULTRA 06:30 KST → 0630', () => {
+    const { clock } = fixedClock(kstEpochMs('2026-07-18T06:30:00.000'));
+    const factory = createKmaForecastRequestFactory(clock);
+
+    const result = factory.createScheduledRequest({ product: ULTRA, nx: 55, ny: 124 });
+
+    expect(result).toEqual({
+      product: ULTRA,
+      baseDate: '20260718',
+      baseTime: '0630',
+      nx: 55,
+      ny: 124,
+    });
+  });
+});
+
+describe('createKmaForecastRequestFactory — real PR #14 availability-delay selector', () => {
+  it('SHORT 05:00 KST selects the 0200 issuance (10-minute threshold not yet met for 0500)', () => {
+    const { clock } = fixedClock(kstEpochMs('2026-07-18T05:00:00.000'));
+    const factory = createKmaForecastRequestFactory(
+      clock,
+      selectLatestKmaForecastBaseTimeAfterAvailabilityDelay,
+    );
+
+    const result = factory.createScheduledRequest({ product: SHORT, nx: 60, ny: 127 });
+
+    expect(result).toEqual({
+      product: SHORT,
+      baseDate: '20260718',
+      baseTime: '0200',
+      nx: 60,
+      ny: 127,
+    });
+  });
+
+  it('SHORT 05:10 KST selects the 0500 issuance (10-minute threshold exactly met)', () => {
+    const { clock } = fixedClock(kstEpochMs('2026-07-18T05:10:00.000'));
+    const factory = createKmaForecastRequestFactory(
+      clock,
+      selectLatestKmaForecastBaseTimeAfterAvailabilityDelay,
+    );
+
+    const result = factory.createScheduledRequest({ product: SHORT, nx: 60, ny: 127 });
+
+    expect(result).toMatchObject({ baseDate: '20260718', baseTime: '0500' });
+  });
+
+  it('ULTRA 06:30 KST selects the 0530 issuance (15-minute threshold not yet met for 0630)', () => {
+    const { clock } = fixedClock(kstEpochMs('2026-07-18T06:30:00.000'));
+    const factory = createKmaForecastRequestFactory(
+      clock,
+      selectLatestKmaForecastBaseTimeAfterAvailabilityDelay,
+    );
+
+    const result = factory.createScheduledRequest({ product: ULTRA, nx: 55, ny: 124 });
+
+    expect(result).toMatchObject({ baseDate: '20260718', baseTime: '0530' });
+  });
+
+  it('ULTRA 06:45 KST selects the 0630 issuance (15-minute threshold exactly met)', () => {
+    const { clock } = fixedClock(kstEpochMs('2026-07-18T06:45:00.000'));
+    const factory = createKmaForecastRequestFactory(
+      clock,
+      selectLatestKmaForecastBaseTimeAfterAvailabilityDelay,
+    );
+
+    const result = factory.createScheduledRequest({ product: ULTRA, nx: 55, ny: 124 });
+
+    expect(result).toMatchObject({ baseDate: '20260718', baseTime: '0630' });
+  });
+});
+
+describe('createKmaForecastRequestFactory — injected selector: repeated calls', () => {
+  it('reads the clock once and calls the selector once per request across many calls', () => {
+    const { clock, nowEpochMilliseconds } = fixedClock(
+      kstEpochMs('2026-07-18T05:00:00.000'),
+    );
+    const { selector, calls } = recordingSelector();
+    const factory = createKmaForecastRequestFactory(clock, selector);
+
+    factory.createScheduledRequest({ product: SHORT, nx: 60, ny: 127 });
+    factory.createScheduledRequest({ product: SHORT, nx: 60, ny: 127 });
+    factory.createScheduledRequest({ product: SHORT, nx: 60, ny: 127 });
+
+    expect(nowEpochMilliseconds).toHaveBeenCalledTimes(3);
+    expect(calls).toHaveLength(3);
+  });
+
+  it('returns a fresh, uncached request object per call with the injected selector', () => {
+    const { clock } = fixedClock(kstEpochMs('2026-07-18T05:00:00.000'));
+    const { selector } = recordingSelector({ baseDate: '20260718', baseTime: '0200' });
+    const factory = createKmaForecastRequestFactory(clock, selector);
+    const input: KmaForecastRequestFactoryInput = { product: SHORT, nx: 60, ny: 127 };
+
+    const first = factory.createScheduledRequest(input);
+    const second = factory.createScheduledRequest(input);
+
+    expect(first).toEqual(second);
+    expect(first).not.toBe(second);
+  });
+
+  it('does not mix SHORT/ULTRA state across alternating calls with the real PR #14 selector', () => {
+    const factory = createKmaForecastRequestFactory(
+      fixedClock(kstEpochMs('2026-07-18T06:45:00.000')).clock,
+      selectLatestKmaForecastBaseTimeAfterAvailabilityDelay,
+    );
+    const runShort = () =>
+      factory.createScheduledRequest({ product: SHORT, nx: 60, ny: 127 });
+    const runUltra = () =>
+      factory.createScheduledRequest({ product: ULTRA, nx: 55, ny: 124 });
+
+    // At 06:45 KST: SHORT (−10m → 06:35) selects 0500; ULTRA (−15m → 06:30) selects 0630.
+    const expectedShort = {
+      product: SHORT,
+      baseDate: '20260718',
+      baseTime: '0500',
+      nx: 60,
+      ny: 127,
+    };
+    const expectedUltra = {
+      product: ULTRA,
+      baseDate: '20260718',
+      baseTime: '0630',
+      nx: 55,
+      ny: 124,
+    };
+    expect(runShort()).toEqual(expectedShort);
+    expect(runUltra()).toEqual(expectedUltra);
+    expect(runShort()).toEqual(expectedShort);
+    expect(runUltra()).toEqual(expectedUltra);
   });
 });
