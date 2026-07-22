@@ -187,6 +187,21 @@ ServiceKey, request URL, response body, `SourceMetadata`, `WeatherOverview`. 소
   Provider를 생성하거나 environment·clock을 읽지 않으며, composition root는 아직 API app
   startup이나 route에는 연결되지 않았습니다.
 
+## PR #17 fallback eligibility classifier와의 관계
+
+- 이 hourly service의 **result union은 그대로 유지**됩니다(success·`PROVIDER`·`NORMALIZATION` 세
+  variant, stage 구분, error/issues pass-through 불변). service 자체는 fallback을 **결정하지
+  않습니다.**
+- PR #17의 순수 classifier(`classifyKmaHourlyFallbackEligibility`,
+  [kma-fallback-eligibility.md](./kma-fallback-eligibility.md))가 이 service result를 **입력으로만**
+  받아 별도로 분류합니다 — `PROVIDER`/`KMA_UPSTREAM_ERROR`/`03`은 `KMA_NO_DATA`, empty hourly
+  success(`hourly.length === 0`)는 `EMPTY_HOURLY`, 그 외는 ineligible.
+- `empty hourly success`(`{ ok: true, hourly: [] }`)는 이 service의 정상 success 형태 중 하나이며(빈
+  Provider success 페이지 → 빈 slots → 빈 hourly), classifier는 이를 service-level empty-success
+  신호로만 관찰합니다.
+- classifier는 분류만 하며 **retry·fallback 실행을 하지 않습니다.** 이 service의 Provider/
+  Normalization pass-through 동작과 "요청 최대 1회" 정책은 변경되지 않았습니다.
+
 ## 후속 범위
 
 이 PR 이후 후보 PR:
@@ -223,4 +238,9 @@ v1 / PR #7 / 2026-07
 v2 / PR #11 / 2026-07 (production composition에서 소비)
 - PR #11 composition이 Provider(from env)를 생성해 이 hourly service에 주입
 - hourly service 공개 API와 stage contract 변경 없음, route 미연결
+
+v3 / PR #17 / 2026-07 (fallback eligibility classifier가 결과를 소비)
+- PR #17 classifier가 이 service result를 입력으로만 받아 eligible/ineligible 분류
+- service result union·stage 구분·Provider/Normalization pass-through 변경 없음
+- empty hourly success가 EMPTY_HOURLY 신호로 관찰됨, retry/fallback 실행 없음
 ```
