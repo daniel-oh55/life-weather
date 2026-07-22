@@ -198,8 +198,14 @@ trace, 최대 2회 Provider 호출)이 서로 다릅니다. 따라서 기존 res
   `facade`입니다. 이 grid root 자체의 공개 API·`{ ok, service }` 계약·runtime은 **불변**입니다.
 - **apps/api startup/route 미연결** — 이 root는 `apps/api/src/index.ts`·서버 startup·`/weather` route에
   연결되지 않았습니다. 기존 scheduled facade·기존 location facade와도 연결하지 않습니다.
-- **WeatherOverview / SourceMetadata / final primary·previous selection** — 없음. fallback service는
-  execution trace만 반환하며 최종 source 선택·merge·`fallbackUsed`/stale field를 만들지 않습니다.
+- **WeatherOverview / SourceMetadata** — 없음. fallback service는 execution trace만 반환하며 최종 source
+  선택·merge·stale field를 만들지 않습니다.
+- **final primary·previous selection 자동 연결** — 없음. 이 root(및 PR #21 location fallback root)는
+  계속 PR #19 **execution trace까지만** 반환합니다. PR #22에서 그 trace를 소비하는 **순수 selector**
+  (`selectKmaHourlyFallbackResult`, [kma-hourly-fallback-selection.md](./kma-hourly-fallback-selection.md))가
+  별도로 구현됐지만, 이 composition root는 아직 selector를 **자동으로 연결하지 않습니다** — grid/location
+  fallback roots의 `{ ok, service }`/`{ ok, facade }` contract·runtime은 **불변**이고, 후속 assembler가
+  selector를 소비할 예정입니다.
 - **cache / persistence / telemetry / metrics / logging / feature flag** — 없음.
 - **provider timeout/body-size override, arbitrary retry, third attempt, delay/backoff** — 없음.
 - **실제 인증 ServiceKey live test** — 없음. 자동 테스트는 fake key·in-memory fetch·deterministic
@@ -233,4 +239,10 @@ v2 / PR #21 / 2026-07 (location fallback root 추가; 이 grid root는 불변)
 - PR #21 location fallback composition이 이 grid fallback root를 그대로 재사용
 - 이 grid root의 공개 API·{ ok, service } 계약·runtime 변경 없음
 - location root의 성공 result key는 facade, route/startup은 여전히 미연결
+
+v3 / PR #22 / 2026-07 (execution trace selector 별도 구현; 이 root는 불변)
+- PR #22 selectKmaHourlyFallbackResult가 execution trace consumer로 별도 구현됨
+- 이 root(및 location fallback root)는 계속 execution trace까지만 반환, selector 자동 연결 없음
+- grid/location fallback roots 공개 API·contract·runtime 변경 없음
+- 후속 assembler가 selector를 소비 예정, route/startup/cache는 여전히 미연결
 ```

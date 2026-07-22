@@ -2,7 +2,7 @@
  * Public surface of `apps/api`'s **application services** — the orchestration layer that sequences
  * the KMA provider boundary and the domain normalizers, and assembles the requests they consume.
  *
- * Eight application components live here so far:
+ * Nine application components live here so far:
  *
  * 1. The PR #7 KMA **hourly-forecast orchestration** (`createKmaHourlyForecastService`): it calls
  *    the PR #5 HTTP provider and the PR #6 hourly normalizer in order and reports a `PROVIDER`- or
@@ -63,6 +63,19 @@
  *    fallback service; and lets a converter throw propagate synchronously. It duplicates **no**
  *    base-time, eligibility, provider, or abort policy — those stay with the fallback service and its
  *    collaborators.
+ * 9. The PR #22 KMA **hourly fallback result selector** (`selectKmaHourlyFallbackResult`): a **pure,
+ *    synchronous** function that reads one PR #19 execution trace and decides which hourly result — if
+ *    any — a later assembler may use as its data source. A result is **usable** only when it is a
+ *    success with a **non-empty** `hourly`; a usable `primary` is always selected first (fallback not
+ *    used); otherwise, only when the trace attempted fallback and its `previous` result is usable, the
+ *    previous result is selected; otherwise there is no selection. It is the sole owner of the
+ *    `fallbackAttempted` (previous *invoked*) vs `fallbackUsed` (previous usable data actually
+ *    *selected*) distinction — `fallbackUsed` is true only when the previous result is the selected
+ *    source. Every branch carries the same own keys (`execution`/`fallbackUsed`/`result`/`selected`/
+ *    `source`) and preserves the caller's exact `execution` reference and selected-result reference. It
+ *    executes nothing, calls no Provider/network/clock/eligibility classifier, ranks no error kind,
+ *    handles **no** `LOCATION` branch, and is wired into **no** `WeatherOverview`/`SourceMetadata`,
+ *    composition root, or route yet.
  *
  * The grid-based single-request **production composition root** (system clock adapter,
  * provider-from-env wiring, a live facade instance) is built in PR #11 and lives in `../composition`;
@@ -77,8 +90,8 @@
  * provider boundary) and are exported only from here, never from `providers/kma/index.ts`. See
  * `docs/kma-hourly-service.md`, `docs/kma-forecast-request-factory.md`,
  * `docs/kma-scheduled-hourly-facade.md`, `docs/kma-location-scheduled-hourly.md`,
- * `docs/kma-fallback-request-plan.md`, `docs/kma-hourly-fallback.md`, and
- * `docs/kma-location-hourly-fallback.md`.
+ * `docs/kma-fallback-request-plan.md`, `docs/kma-hourly-fallback.md`,
+ * `docs/kma-location-hourly-fallback.md`, and `docs/kma-hourly-fallback-selection.md`.
  */
 
 export {
@@ -144,3 +157,9 @@ export {
   type KmaLocationHourlyFallbackOptions,
   type KmaLocationHourlyFallbackResult,
 } from './kma-location-hourly-fallback';
+
+export {
+  selectKmaHourlyFallbackResult,
+  type KmaHourlyFallbackSelection,
+  type KmaHourlyFallbackSelectionSource,
+} from './kma-hourly-fallback-selection';
