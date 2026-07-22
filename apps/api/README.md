@@ -394,14 +394,44 @@ a project on first run; that step is intentionally deferred to a later PR.
     roots are unchanged, no new dependency option is added, and no route is registered. A supported
     location makes **at most two** provider calls per invocation; an unsupported/invalid location makes
     **zero**. Construction reads the clock/network/converter **zero** times.
-- **Still not implemented.** `WeatherOverview` assembly, `SourceMetadata`, final
-  primary/previous source selection, a `fallbackUsed` API field, current weather, daily forecast (incl.
-  `TMN`/`TMX`), feels-like computation, a common provider interface, **running any of the four
-  production composition roots at API app startup**, the `/weather` route and its query validation,
-  HTTP error/status mapping, API-availability retry beyond the single previous-issuance fallback, and
-  cache are **not** here — those are later PRs. None of the four composition roots (grid scheduled,
-  location scheduled, grid fallback, location fallback) is wired into `src/index.ts` and none is
-  connected to a route (`/health` unchanged).
+- **KMA hourly fallback result selector** — PR #22 adds `selectKmaHourlyFallbackResult`
+  (`src/services/`), a **pure, synchronous** function that reads one PR #19
+  `KmaHourlyFallbackServiceResult` execution trace and decides which hourly result — if any — a later
+  `WeatherOverview`/`SourceMetadata` assembler may use as its data source. See
+  [docs/kma-hourly-fallback-selection.md](../../docs/kma-hourly-fallback-selection.md). Highlights:
+  - A result is **usable** only when it is a success (`ok: true`) with a **non-empty** `hourly`
+    (`hourly.length > 0`); a success with an empty `hourly` and every error result (any
+    `PROVIDER`-stage error incl. `KMA_UPSTREAM_ERROR '03'`, and every `NORMALIZATION`-stage error) are
+    unusable. It reads only `ok`, `hourly.length`, and `fallbackAttempted` — never `resultCode`, a
+    provider-error kind, or normalization issues, and it does **not** rank error kinds.
+  - **Deterministic precedence:** a usable `primary` is always selected first
+    (`source: 'PRIMARY'`, `fallbackUsed: false`), even when a structurally-valid trace also carries a
+    usable `previous`; otherwise, only when the trace attempted fallback and its `previous` is usable,
+    the previous result is selected (`source: 'PREVIOUS'`, `fallbackUsed: true`); otherwise there is no
+    selection (`selected: false`, `source: null`, `result: null`, `fallbackUsed: false`).
+  - It owns the `fallbackAttempted` vs `fallbackUsed` distinction: **`fallbackAttempted`** (on the
+    PR #19 trace) means the previous service was *invoked*; **`fallbackUsed`** (computed here) means the
+    previous result's usable data was actually *selected*. A previous HTTP 503 or empty success is
+    `fallbackAttempted: true` but `fallbackUsed: false`.
+  - Every branch has the **same** own keys (`execution`/`fallbackUsed`/`result`/`selected`/`source`),
+    preserves the caller's exact `execution` reference and the selected result's exact reference (no
+    clone/spread/mutation), and returns a **fresh** wrapper per call. It is synchronous (no `Promise`),
+    logs nothing, holds no state, calls no Provider/network/clock/eligibility classifier, and handles
+    **no** `LOCATION` branch (its input is a `KmaHourlyFallbackServiceResult`, not a
+    `KmaLocationHourlyFallbackResult`).
+  - It is **not** wired into any composition root, facade, `WeatherOverview`/`SourceMetadata`
+    assembler, or route yet — this PR implements the **selection policy** only; its production
+    consumer/assembler is a later PR. It adds **no** new dependency.
+- **Still not implemented.** `WeatherOverview` assembly, `SourceMetadata`, the production
+  **consumer/assembler** that would apply the PR #22 selection policy, a `fallbackUsed` API field,
+  current weather, daily forecast (incl. `TMN`/`TMX`), feels-like computation, a common provider
+  interface, **running any of the four production composition roots at API app startup**, the
+  `/weather` route and its query validation, HTTP error/status mapping, API-availability retry beyond
+  the single previous-issuance fallback, and cache are **not** here — those are later PRs. The final
+  primary/previous **source-selection policy** is now implemented as a pure function (PR #22), but no
+  production consumer applies it yet. None of the four composition roots (grid scheduled, location
+  scheduled, grid fallback, location fallback) is wired into `src/index.ts` and none is connected to a
+  route (`/health` unchanged).
 
 ### Dependencies
 

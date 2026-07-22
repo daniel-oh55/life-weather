@@ -84,9 +84,14 @@
   fallback service를 통해 Provider/fetch를 최대 2회 호출할 수 있고, 지원되지 않거나 잘못된 위치는
   clock·Provider 실행 전에 종료됩니다(fetch 0회). 기존 세 root(grid/location scheduled·grid fallback)는
   변경되지 않았으며, 네 root 모두 아직 `apps/api/src/index.ts`·startup·route에 **연결되지 않았습니다**.
-  live availability fallback/retry 정책·`WeatherOverview` 조립·final primary/previous selection·
-  `/weather` API route·HTTP status mapping은 여전히 **미구현**(후속 PR)이며, 별도 general `config`
-  package도 여전히 미구현입니다.
+  PR #22에서는 PR #19 execution trace에서 primary/previous/none usable source를 고르는 **순수 selection
+  정책**(`selectKmaHourlyFallbackResult`, `src/services`)을 추가했습니다 — 이로써 execution 계층(무엇이
+  실행됐는지)과 selection 계층(무엇을 실제 사용하는지)이 분리되지만, 이 selector는 어느 composition
+  root·route에도 **연결되지 않았고** 네 composition root의 계약·runtime도 **불변**입니다. 따라서 final
+  primary/previous **selection 정책은 순수 함수로 구현 완료**됐으나 이를 소비하는 **production result
+  assembly**(`WeatherOverview`/`SourceMetadata` assembler)는 여전히 미구현입니다. live availability
+  fallback/retry 정책·`/weather` API route·HTTP status mapping은 여전히 **미구현**(후속 PR)이며, 별도
+  general `config` package도 여전히 미구현입니다.
   자세한 내용은
   [kma-response-boundary.md](./kma-response-boundary.md),
   [kma-http-provider.md](./kma-http-provider.md),
@@ -97,7 +102,8 @@
   [kma-production-composition.md](./kma-production-composition.md),
   [kma-location-scheduled-hourly.md](./kma-location-scheduled-hourly.md),
   [kma-hourly-fallback-composition.md](./kma-hourly-fallback-composition.md),
-  [kma-location-hourly-fallback.md](./kma-location-hourly-fallback.md) 참고.
+  [kma-location-hourly-fallback.md](./kma-location-hourly-fallback.md),
+  [kma-hourly-fallback-selection.md](./kma-hourly-fallback-selection.md) 참고.
 - `packages/contracts` — 모바일과 API가 공유할 정규화 요청/응답 계약의 위치입니다. **현재
   상태**: PR #2에서 Zod 4 기반 공유 기상 데이터 계약을 정의했습니다. 자세한 내용은
   [contracts.md](./contracts.md) 참고.
@@ -386,6 +392,17 @@ converter를 위해** `@life-weather/weather-core`의 `convertKmaLatitudeLongitu
 runtime·공개 API를 변경하지 않았습니다. `apps/api/src/index.ts`·startup·`/weather` route·final result
 selection·cache는 여전히 미구현입니다.
 
+PR #22의 KMA hourly fallback result selector(`apps/api/src/services/kma-hourly-fallback-selection.ts`)는
+**신규 dependency도, 신규 package-level 의존도 추가하지 않습니다.** 이 순수 함수는 같은 `services` 계층의
+두 sibling file에서 **타입만** import합니다 — `kma-hourly-forecast`(`KmaHourlyForecastServiceResult`)와
+`kma-hourly-fallback`(`KmaHourlyFallbackServiceResult`)(자기 barrel `./index` import 없음, Provider·
+composition·weather-core·contracts runtime import 없음). 따라서 새로 생기는 방향은
+`services → services`(type-only) 하나뿐이고 **composition 의존은 없습니다**(순환 없음). 이 selector는
+실행 계층(PR #19 orchestration)과 분리된 selection 계층으로, PR #19 execution trace를 순수 함수로 소비할
+뿐 어떤 것도 실행하지 않으며 eligibility classifier(PR #17)를 호출하지 않습니다. 네 composition root와
+그 공개 API·runtime은 **불변**이고, selector는 아직 어느 root·route에도 연결되지 않았습니다 — 이를
+소비하는 `WeatherOverview`/`SourceMetadata` assembler는 후속 PR입니다.
+
 향후 허용 방향:
 
 ```text
@@ -394,7 +411,7 @@ apps/mobile       → contracts
 lifestyle-engine  → contracts
 ```
 
-## 현재 구현 상태 요약 (PR #21 시점)
+## 현재 구현 상태 요약 (PR #22 시점)
 
 - `contracts`: PR #2에서 Zod 4 기반 공유 기상 계약을 정의했습니다.
 - `weather-core`: `classifyFreshness`(PR #2)와 KMA 단기·초단기예보 정규화 primitive(PR #3)에 더해,
@@ -515,4 +532,14 @@ lifestyle-engine  → contracts
   `facade`, config 실패는 `KmaProviderConfigError` 동일 reference). 다만 네 composition root 모두 아직
   `apps/api/src/index.ts`·startup·`/weather` route에 **연결되지 않았고**, final primary/previous selection·
   `WeatherOverview`/`SourceMetadata`·cache는 여전히 **미구현**입니다([kma-location-hourly-fallback.md](./kma-location-hourly-fallback.md)).
+- PR #22에서는 `apps/api` services 계층에 **순수 fallback result selector**
+  (`selectKmaHourlyFallbackResult`)를 추가했습니다 — PR #19 execution trace를 입력받아 nonempty success만
+  usable로 보고 primary를 우선 선택하며, primary가 unusable이고 previous가 usable이면 previous를,
+  둘 다 unusable이면 none을 반환합니다. `fallbackAttempted`(previous 호출)와 `fallbackUsed`(previous
+  usable data 실제 선택)를 구분하고, execution/selected result의 exact reference를 보존하는 fresh wrapper를
+  반환합니다. 순수·동기 함수로 Provider·network·clock·environment·eligibility classifier(PR #17)를 호출하지
+  않고 `LOCATION` branch를 처리하지 않으며, 실행 계층(PR #19)과 분리된 selection 계층입니다. 이 selector는
+  아직 어느 composition root·`/weather` route에도 연결되지 않았고(네 root 불변), 이를 소비하는
+  `WeatherOverview`/`SourceMetadata` assembler·cache는 여전히 미구현입니다
+  ([kma-hourly-fallback-selection.md](./kma-hourly-fallback-selection.md)).
 - 이 문서의 나머지 "예정" 구조는 앞으로의 합의이며, 위 요약이 현재 코드베이스의 상태입니다.
