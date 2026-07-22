@@ -2,7 +2,7 @@
  * Public surface of `apps/api`'s **application services** — the orchestration layer that sequences
  * the KMA provider boundary and the domain normalizers, and assembles the requests they consume.
  *
- * Six application components live here so far:
+ * Seven application components live here so far:
  *
  * 1. The PR #7 KMA **hourly-forecast orchestration** (`createKmaHourlyForecastService`): it calls
  *    the PR #5 HTTP provider and the PR #6 hourly normalizer in order and reports a `PROVIDER`- or
@@ -40,6 +40,18 @@
  *    two requests only — it performs **no** provider, hourly-service, or PR #17 classifier
  *    invocation and **no** fallback execution. It is **not** wired into the production composition
  *    yet (so current production behaviour is unchanged), and no HTTP route consumes it.
+ * 7. The PR #19 KMA **fallback orchestration service** (`createKmaHourlyFallbackService`): the first
+ *    component that actually **executes** a `previous` request. It combines the PR #18 request-plan
+ *    factory, this file's hourly service, and the PR #17 classifier into an at-most-two-attempt run —
+ *    build the plan **once**, run the `primary` request through the hourly service **once**, classify
+ *    that primary result **once**, and, only when the classifier reports eligible, run the plan's
+ *    `previous` request through the hourly service **once** (a **maximum of two** service calls; no
+ *    third attempt and no re-classification of the `previous` result). The same `options`/`AbortSignal`
+ *    reference is forwarded to both service calls. It returns an execution trace — a
+ *    `{ fallbackAttempted: false, primary }` or `{ fallbackAttempted: true, fallbackReason, primary,
+ *    previous }` union — and never merges the results, selects a final source, or builds a
+ *    `WeatherOverview`/`SourceMetadata`. It is **not** wired into the production composition yet, and
+ *    no HTTP route or cache consumes it.
  *
  * The grid-based **production composition root** (system clock adapter, provider-from-env wiring, a
  * live facade instance) is built in PR #11 and lives in `../composition`; PR #12 added the
@@ -50,8 +62,8 @@
  * Application services deliberately live **outside** `providers/kma` (they are not part of the
  * provider boundary) and are exported only from here, never from `providers/kma/index.ts`. See
  * `docs/kma-hourly-service.md`, `docs/kma-forecast-request-factory.md`,
- * `docs/kma-scheduled-hourly-facade.md`, `docs/kma-location-scheduled-hourly.md`, and
- * `docs/kma-fallback-request-plan.md`.
+ * `docs/kma-scheduled-hourly-facade.md`, `docs/kma-location-scheduled-hourly.md`,
+ * `docs/kma-fallback-request-plan.md`, and `docs/kma-hourly-fallback.md`.
  */
 
 export {
@@ -100,3 +112,12 @@ export {
   type KmaFallbackRequestPlanFactoryInput,
   type KmaForecastBaseTimeCandidatesSelector,
 } from './kma-fallback-request-plan';
+
+export {
+  createKmaHourlyFallbackService,
+  type KmaHourlyFallbackEligibilityClassifier,
+  type KmaHourlyFallbackService,
+  type KmaHourlyFallbackServiceInput,
+  type KmaHourlyFallbackServiceOptions,
+  type KmaHourlyFallbackServiceResult,
+} from './kma-hourly-fallback';

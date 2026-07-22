@@ -225,9 +225,17 @@ primary와 previous를 각각 만들기 위해 PR #9 single request factory를 *
 
 - factory는 Provider를 생성·호출하지 않고, hourly service를 호출하지 않으며, 실제 fallback을 실행하지
   않습니다. `createFallbackRequestPlan`은 Promise가 아니라 **동기 결과**를 반환합니다.
-- 이 factory는 **아직 production composition에 연결되지 않았습니다.** 현재 production은 계속 기존 PR #9
-  single request factory를 사용하며, facade 호출당 실제 Provider request는 **최대 1회**로 유지됩니다
-  ([kma-production-composition.md](./kma-production-composition.md)). PR #16/#17/#18 wiring은 후속입니다.
+- **PR #19가 이 plan을 실제로 실행하는 consumer**입니다
+  ([kma-hourly-fallback.md](./kma-hourly-fallback.md)): `createKmaHourlyFallbackService`가
+  `createFallbackRequestPlan`을 method당 1회 호출해 얻은 plan에서 `primary`를 hourly service로 먼저
+  소비하고, 그 결과가 PR #17 classifier로 eligible일 때만 `previous`를 hourly service로 소비합니다(primary
+  → previous 순서, previous는 조건부). 즉 plan에 `previous` request가 있다는 사실이 previous의 **무조건
+  실행**을 의미하지는 않습니다. 다만 그 orchestration이 PR #19에 생겼어도 **이 factory 자체는 여전히**
+  network·Provider·hourly service·PR #17 classifier를 호출하지 않습니다 — 조립만 합니다.
+- 이 factory(그리고 PR #19 orchestration)는 **아직 production composition에 연결되지 않았습니다.** 현재
+  production은 계속 기존 PR #9 single request factory를 사용하며, facade 호출당 실제 Provider request는
+  **최대 1회**로 유지됩니다([kma-production-composition.md](./kma-production-composition.md)). production
+  fallback wiring은 후속(PR #20)입니다.
 
 ## 실제 key·외부 네트워크 테스트 없음
 
@@ -237,16 +245,17 @@ primary와 previous를 각각 만들기 위해 PR #9 single request factory를 *
   timer·`Date.now` mock을 사용하지 않습니다. expected 값은 production selector/factory로 생성하지 않고
   literal로 고정합니다. shuffle seed 1·2·17에서 통과합니다.
 
-## 다음 orchestration PR (PR #19 권장 범위)
+## orchestration 진행 상태 (PR #19 완료 / 이후 후속)
 
-1. PR #18 plan + PR #17 classifier + hourly service orchestration
-2. primary 실행 1회
-3. classifier가 eligible인 경우 previous 최대 1회 실행
-4. `AbortSignal` 정책 / primary error preservation / fallback error precedence
-5. production composition wiring
-6. `WeatherOverview`/`SourceMetadata` 조립
-7. `/weather` API route
-8. cache / stale-data 정책
+1. ~~PR #18 plan + PR #17 classifier + hourly service orchestration~~ — **PR #19에서 완료**
+   (`createKmaHourlyFallbackService`, [kma-hourly-fallback.md](./kma-hourly-fallback.md))
+2. ~~primary 실행 1회~~ — **PR #19에서 완료**
+3. ~~classifier가 eligible인 경우 previous 최대 1회 실행(same `AbortSignal` pass-through 포함)~~ —
+   **PR #19에서 완료**
+4. production composition wiring (PR #20)
+5. `WeatherOverview`/`SourceMetadata` 조립 및 final result selection
+6. `/weather` API route와 HTTP status mapping
+7. cache / stale-data 정책
 
 ## 변경 이력
 
