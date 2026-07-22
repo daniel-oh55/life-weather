@@ -69,8 +69,20 @@
   프로젝트 정책)이며(예 SHORT 05:00→0200·05:10→0500, ULTRA 06:30→0530·06:45→0630), 이는 공식 SLA·live
   readiness 보장이 아닙니다. request factory 공개 API의 `createScheduledRequest` 이름·input/output
   shape과 composition dependencies type은 변경하지 않았습니다.
-  live availability fallback/retry 정책·`WeatherOverview` 조립·`/weather` API route·HTTP status
-  mapping은 여전히 **미구현**(후속 PR)이며, 별도 general `config` package도 여전히 미구현입니다.
+  PR #20에서는 PR #16~#19 fallback building block을 실제 서버용으로 조립하는 **세 번째 composition
+  root**(`src/composition`, `createKmaHourlyFallbackCompositionFromEnv`)를 기존 두 single-request root
+  옆에 **병렬로** 추가했습니다 — env → Provider-from-env → hourly service, system clock/injected clock +
+  **명시적으로 주입한 PR #16 candidate selector**(`selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay`)
+  → PR #18 request-plan factory, 그리고 plan factory + hourly service + **명시적으로 주입한 PR #17
+  classifier**(`classifyKmaHourlyFallbackEligibility`) → PR #19 `createKmaHourlyFallbackService`를 한 번의
+  함수 호출로 조립해 live `KmaHourlyFallbackService`를 반환합니다(생성 시 clock read·network 0회, config
+  실패는 Provider의 `KmaProviderConfigError` 값 그대로, 성공 시 `{ ok, service }`만 공개, 실행 시 primary
+  ineligible이면 fetch 최대 1회·eligible이면 최대 2회, third attempt 없음). 기존 grid/location scheduled
+  root와 그 `{ ok, facade }` 계약은 **불변**이고, location(위·경도) fallback root는 **아직 없습니다**(후속
+  PR). 이 root도 `apps/api/src/index.ts`나 route에 연결되지 않았습니다.
+  live availability fallback/retry 정책·`WeatherOverview` 조립·final primary/previous selection·
+  `/weather` API route·HTTP status mapping은 여전히 **미구현**(후속 PR)이며, 별도 general `config`
+  package도 여전히 미구현입니다.
   자세한 내용은
   [kma-response-boundary.md](./kma-response-boundary.md),
   [kma-http-provider.md](./kma-http-provider.md),
@@ -79,7 +91,8 @@
   [kma-forecast-request-factory.md](./kma-forecast-request-factory.md),
   [kma-scheduled-hourly-facade.md](./kma-scheduled-hourly-facade.md),
   [kma-production-composition.md](./kma-production-composition.md),
-  [kma-location-scheduled-hourly.md](./kma-location-scheduled-hourly.md) 참고.
+  [kma-location-scheduled-hourly.md](./kma-location-scheduled-hourly.md),
+  [kma-hourly-fallback-composition.md](./kma-hourly-fallback-composition.md) 참고.
 - `packages/contracts` — 모바일과 API가 공유할 정규화 요청/응답 계약의 위치입니다. **현재
   상태**: PR #2에서 Zod 4 기반 공유 기상 데이터 계약을 정의했습니다. 자세한 내용은
   [contracts.md](./contracts.md) 참고.
@@ -329,6 +342,23 @@ location composition·route)에 연결되지 않았습니다** — 기존 Provid
 공개 API는 변경하지 않았고(production 동작 불변, 두 production facade 호출당 KMA request 최대 1회 유지),
 result merge·final source selection·`WeatherOverview`/`SourceMetadata`·route·cache는 여전히 미구현입니다.
 
+PR #20의 KMA grid fallback composition(`apps/api/src/composition/kma-hourly-fallback.ts`)은 **신규
+dependency도, 신규 package-level 의존도 추가하지 않습니다.** 이 composition root는 `apps/api` 내부
+`providers/kma` 공개 surface(`createKmaForecastProviderFromEnv`·`KmaProviderConfigError`)와 `services`
+공개 surface(`classifyKmaHourlyFallbackEligibility`·`createKmaFallbackRequestPlanFactory`·
+`createKmaHourlyForecastService`·`createKmaHourlyFallbackService`·`KmaHourlyFallbackService`), 그리고
+`@life-weather/weather-core` 공개 selector(`selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay`)를
+소비하며, concrete `./system-clock`(`createKmaSystemClock`)와 type-only로 sibling
+`./kma-scheduled-hourly`(`KmaScheduledHourlyCompositionDependencies`)를 사용합니다(자기 barrel `./index`
+import 없음). 따라서 강화되는 방향은 `composition → providers/kma`·`composition → services`·
+`composition → weather-core`뿐이며 모두 기존에 허용된 방향이고, `providers/kma → composition`·
+`services → composition`·`weather-core → composition`·`contracts → composition`·`mobile → composition`
+같은 역방향은 계속 금지합니다(순환 의존 없음 — 특히 **services는 composition을 import하지 않습니다**).
+이 fallback root는 기존 grid/location single-request root를 **교체하지 않고 병렬로** 추가한 것이며,
+Provider·request-plan factory·hourly service·classifier·PR #19 orchestration·두 기존 composition의
+runtime과 공개 API를 변경하지 않았습니다. location(위·경도) fallback root는 후속 PR이고, route/cache는
+여전히 미구현입니다.
+
 향후 허용 방향:
 
 ```text
@@ -337,7 +367,7 @@ apps/mobile       → contracts
 lifestyle-engine  → contracts
 ```
 
-## 현재 구현 상태 요약 (PR #19 시점)
+## 현재 구현 상태 요약 (PR #20 시점)
 
 - `contracts`: PR #2에서 Zod 4 기반 공유 기상 계약을 정의했습니다.
 - `weather-core`: `classifyFreshness`(PR #2)와 KMA 단기·초단기예보 정규화 primitive(PR #3)에 더해,
@@ -430,4 +460,15 @@ lifestyle-engine  → contracts
   없습니다. 이 orchestration은 **아직 production composition·route에 연결되지 않아** production 동작은
   불변이며(두 production facade 호출당 KMA request 최대 1회 유지), result merge·final source selection·
   `WeatherOverview`/`SourceMetadata`·route·cache는 미구현입니다([kma-hourly-fallback.md](./kma-hourly-fallback.md)).
+- PR #20에서는 위 PR #16~#19 building block을 실제 서버용으로 조립하는 **세 번째 (grid) production
+  composition root**(`src/composition`, `createKmaHourlyFallbackCompositionFromEnv`)를 기존 두
+  single-request root 옆에 **병렬로** 추가했습니다 — env → Provider-from-env → hourly service, system
+  clock/injected clock + 명시적으로 주입한 PR #16 candidate selector → PR #18 request-plan factory,
+  plan factory + hourly service + 명시적으로 주입한 PR #17 classifier → PR #19 fallback service를 한 번의
+  함수 호출로 조립해 live `KmaHourlyFallbackService`(성공 시 `{ ok, service }`만 공개)를 반환합니다.
+  생성 시 clock read·network 0회, config 실패는 Provider의 `KmaProviderConfigError` 값 그대로 전달,
+  실행 시 primary ineligible이면 fetch 최대 1회·eligible이면 최대 2회(clock 호출당 1회, previous 재분류
+  없음, third attempt 없음)입니다. 기존 grid/location scheduled composition과 그 `{ ok, facade }`
+  계약·runtime은 **불변**이고, location(위·경도) fallback root·`/weather` route·startup 연결·result
+  assembly·cache는 여전히 **미구현**입니다([kma-hourly-fallback-composition.md](./kma-hourly-fallback-composition.md)).
 - 이 문서의 나머지 "예정" 구조는 앞으로의 합의이며, 위 요약이 현재 코드베이스의 상태입니다.
