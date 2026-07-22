@@ -358,8 +358,12 @@ output이 fresh합니다.
 ## LOCATION branch는 범위 밖
 
 이 assembler는 `KmaLocationHourlyFallbackResult`의 `LOCATION`/`UNSUPPORTED_LOCATION` branch를 **직접
-처리하지 않습니다.** 후속 application service가 먼저 location branch를 narrow하고, 성공적으로 grid로
-변환된 뒤 반환된 successful trace를 selector로 변환한 다음, 이 assembler를 호출합니다.
+처리하지 않으며**, selector도 스스로 실행하지 않습니다. 이 경계는 PR #24 application service
+(`createKmaLocationHourlyOverviewService`)가 이미 담당합니다 — facade result의 LOCATION branch를
+**assembler 호출 전에** narrow해, LOCATION이면 assembler를 호출하지 않고(0회) facade 결과를 그대로
+반환하며, 지원되는 execution trace에만 PR #22 selector를 적용한 뒤 selected면 resolver output을,
+no-selection이면 `source: null`을 이 assembler에 전달합니다. 자세한 pipeline은 아래
+`application-service consumer (PR #24)` section을 참조하세요.
 
 ## current/daily/AQ/alerts는 범위 밖
 
@@ -373,18 +377,31 @@ output이 fresh합니다.
 status/envelope mapping·cache/stale-data와도 무관합니다. contracts를 변경하지 않으며, 신규 dependency를
 추가하지 않습니다.
 
-## 다음 application-service 계획
+## application-service consumer (PR #24)
 
-이 assembler는 순수 조립 building block입니다. 후속 application service가 다음을 담당합니다.
+이 assembler의 **실제 consumer**는 PR #24 application service
+(`createKmaLocationHourlyOverviewService`)입니다. 그 service는 다음을 담당합니다.
 
-1. `KmaLocationHourlyFallbackResult`의 LOCATION branch narrow.
+1. `KmaLocationHourlyFallbackResult`의 LOCATION branch를 **assembler 호출 전에** narrow(LOCATION이면
+   assembler 미실행, facade 결과 그대로 반환).
 2. successful trace에 PR #22 selector 적용.
-3. selected source metadata context(provenance) 결정/wiring.
-4. 이 PR #23 assembler 호출.
+3. **selected일 때만** 주입된 resolver로 selected source의 metadata context(provenance)를 결정.
+4. 이 PR #23 assembler 호출 — selected면 resolver output을 `source` context로, no-selection이면
+   `source: null`로 전달.
 5. selection과 overview를 함께 application result로 반환.
-6. production composition·`/weather` route·cache/stale-data·authenticated KMA E2E.
 
-이번 PR에서 이 후속 service는 구현하지 않습니다.
+assembler의 공개 API·계약은 PR #24로 **불변**입니다. 이 service는 assembler를 실행하기만 할 뿐 조립 규칙을
+재구현하지 않습니다. PR #23 selected-empty guard도 그대로 유지되지만, 그 오류가 관찰되는 경계는 호출
+방식에 따라 다릅니다.
+
+- assembler 함수를 **직접** 호출하면 selected-empty 입력은 여전히 **동기 `ZodError`** throw입니다.
+- PR #24 integrated service에서는 assembler가 facade Promise의 `.then` fulfillment handler 안에서
+  호출되므로, assembler의 그 동기 throw는 service가 반환한 Promise를 **동일한 `ZodError` reference**로
+  reject시킵니다. 즉 caller는 returned Promise의 rejection으로 관찰하며, service method 자체가
+  selected-empty 때문에 동기 throw하는 것은 아닙니다. assembler runtime 계약 자체는 불변입니다.
+
+production metadata resolver·production composition·`/weather` route·cache/stale-data·authenticated KMA
+E2E는 여전히 후속 PR입니다.
 
 ## 변경 이력
 
@@ -401,4 +418,11 @@ v1 보완 / PR #23 / 2026-07 (same PR)
 - selected arm nonempty runtime validation 추가 (assembler-local nonEmptyHourlyForecasts)
 - contracts list invariant의 단방향 성격 명시 (empty→missing은 contracts가 강제하지 않음)
 - selected-empty regression tests 추가 (PRIMARY/PREVIOUS 각각 synchronous ZodError)
+
+v2 / PR #24 / 2026-07 (application-service consumer 추가; assembler 불변)
+- PR #24 createKmaLocationHourlyOverviewService가 이 assembler를 실제 consumer로 사용(공개 API·계약 불변)
+- LOCATION branch는 assembler 호출 전에 처리
+- selected면 resolver output을 source context로, no-selection이면 source: null로 전달
+- selected-empty guard 유지 — direct assembler call은 동기 ZodError, PR #24 service call은 동일 ZodError의 Promise rejection
+- production resolver/composition은 여전히 후속
 ```

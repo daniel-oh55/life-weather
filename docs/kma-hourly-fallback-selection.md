@@ -277,8 +277,12 @@ shape를 반환).
 
 - location result에는 `LOCATION`/`UNSUPPORTED_LOCATION` branch가 포함됩니다.
 - coordinate support 판정은 location facade의 책임입니다.
-- selector는 primary/previous hourly trace만 선택합니다.
-- 후속 assembler가 location branch를 먼저 narrow한 뒤 selector를 사용합니다.
+- selector 자체는 LOCATION branch를 처리하지 않고 primary/previous hourly trace만 선택합니다.
+- facade result의 LOCATION branch를 먼저 narrow하는 것은 PR #24
+  `createKmaLocationHourlyOverviewService`의 책임입니다. LOCATION이면 facade result를 그대로 반환하고
+  selector를 호출하지 않으며, 지원되는 execution trace일 때만 selector를 정확히 1회 호출합니다.
+- PR #23 assembler는 LOCATION branch를 처리하지도, selector를 호출하지도 않습니다 — PR #24 service가
+  전달한 precomputed selection만 소비합니다.
 
 이번 PR은 LOCATION branch 선택·unsupported location mapping·`RangeError` mapping·location response
 assembler를 구현하지 않습니다.
@@ -308,15 +312,17 @@ assembler를 구현하지 않습니다.
   `retrievalMode`)는 이 selector가 아니라 **caller가 assembler에 제공**합니다 — selector는 execution
   trace만 읽고 provenance를 만들지 않으며, assembler도 이를 추정하지 않습니다.
 
-selector와 assembler는 모두 순수 함수로 구현 완료됐지만, 아직 어떤 production composition·facade·route에도
-연결되지 않았습니다. 후속 계획:
+PR #24에서 이 selector의 **실제 consumer**인 application service
+(`createKmaLocationHourlyOverviewService`)가 추가됐습니다 — `KmaLocationHourlyFallbackResult`의 `LOCATION`
+branch를 먼저 narrow한 뒤, 지원되는 execution trace에 이 selector를 **정확히 1회** 적용하고, 그 결과를
+success result의 `selection`에 **exact reference**로 보존합니다(clone/spread/mutate 없음). selector의 공개
+API와 계약은 **불변**이며, 이 service는 selector를 실행하기만 할 뿐 selection 규칙을 재구현하지 않습니다.
+아직 어떤 production composition에도 조립되지 않았습니다. 후속 계획:
 
-1. `KmaLocationHourlyFallbackResult`의 `LOCATION` branch를 먼저 narrow하고, successful trace에 이 selector를
-   적용한 뒤 PR #23 assembler를 호출해 selection과 overview를 함께 반환하는 **application service**.
-2. selected source provenance resolver/wiring과 그 production location fallback composition.
-3. `/weather` route와 HTTP status mapping.
-4. cache / stale-data 정책.
-5. authenticated KMA end-to-end verification.
+1. selected source provenance resolver의 production 구현과 그 production location fallback composition.
+2. `/weather` route와 HTTP status mapping.
+3. cache / stale-data 정책.
+4. authenticated KMA end-to-end verification.
 
 ## 변경 이력
 
@@ -335,4 +341,10 @@ v2 / PR #23 / 2026-07 (첫 consumer 추가; selector 불변)
 - assembler는 selector를 호출하지 않고 precomputed selection을 소비(selection 재계산 없음)
 - selected source의 SourceMetadata provenance context는 caller가 assembler에 제공(selector 무관)
 - production integration(location narrow + selector + assembler application service)은 후속
+
+v3 / PR #24 / 2026-07 (application-service consumer 추가; selector 불변)
+- PR #24 createKmaLocationHourlyOverviewService가 이 selector를 실제 consumer로 사용(공개 API·계약 불변)
+- LOCATION narrow 이후 지원 trace에 selector를 정확히 1회 적용
+- selection은 success result에 exact reference로 보존(clone/spread/mutate 없음)
+- 여전히 production composition에는 미조립(production resolver/composition은 후속)
 ```

@@ -98,11 +98,25 @@
   fixed placeholder). provenance(`sourceId`/`issuedAt`/`fetchedAt`/`retrievalMode`)는 caller가 제공하고
   assembler는 `provider: 'KMA'`·`sections: ['HOURLY']`·`observedAt: null`만 고정하며 clock·base time을
   추정하지 않습니다. `weatherOverview.parse`로 동기 검증하는 순수·동기 함수로, PR #22 selector를 호출하지
-  않고 LOCATION branch·current/daily/AQ/alerts·composition·route를 다루지 않습니다. 따라서 이제
-  `apps/api` services 계층에는 **application component 10개**가 존재하며, final primary/previous
-  **selection 정책(PR #22)과 hourly-only assembler(PR #23)가 모두 순수 함수로 구현 완료**됐으나, 이 둘을
-  location result narrow와 함께 엮어 소비하는 **application service**(그리고 그 production composition)는
-  여전히 미구현입니다. live availability fallback/retry 정책·`/weather` API route·HTTP status mapping은
+  않고 LOCATION branch·current/daily/AQ/alerts·composition·route를 다루지 않습니다.
+  PR #24에서는 이 네 building block을 하나로 잇는 **location hourly `WeatherOverview` application
+  service**(`createKmaLocationHourlyOverviewService`, `src/services`)를 추가했습니다 — 호출당 (1) contracts
+  `weatherLocation.parse`를 **선행** 실행하고(invalid location이면 collaborator 0회로 동기 `ZodError`),
+  (2) parsed 위·경도로 PR #21 location fallback facade를 실행하고, (3) top-level `LOCATION` 실패는 facade
+  결과 그대로 반환하며, (4) 지원되는 trace에는 PR #22 selector를 적용하고, (5) **주입된** selected-source
+  metadata resolver를 selected trace에서만 **정확히 1회** 호출한 뒤, (6) PR #23 assembler로 `{ ok: true,
+  selection, overview }`를 조립합니다. 서비스 내부 dependency 방향은 **location facade → selector →
+  resolver seam → assembler** 한 방향이며(cycle 없음), 이 계층은 `apps/api/src/composition`에 대한 의존이
+  전혀 없습니다. no-selection trace도 application **성공**(`ok: true`)이고 Provider/Normalization 실패를
+  새 top-level error로 승격하지 않습니다. method는 `async`가 아니어서 location/facade 동기 throw는 동기로,
+  facade rejection과 selector/resolver/assembler throw는 Promise rejection으로 전파되며(동일 error
+  reference), broad catch·wrapping·logging이 없고 clock/env/network를 소유하지 않습니다(provenance는
+  주입된 resolver가 결정, 별도 clock으로 issuedAt을 재계산하지 않음). 따라서 이제 `apps/api` services
+  계층에는 **application component 11개**가 존재하며, PR #21 facade·PR #22 selection 정책·PR #23
+  assembler를 location result narrow와 함께 엮는 **application service는 구현 완료**됐으나, 이를 실제로
+  조립하는 **production metadata resolver와 PR #24 production composition**은 여전히 미구현입니다. 네
+  callable composition root(grid/location scheduled·grid/location fallback)와 그 공개 API·runtime은 이
+  PR로 **불변**입니다. live availability fallback/retry 정책·`/weather` API route·HTTP status mapping은
   여전히 **미구현**(후속 PR)이며, 별도 general `config` package도 여전히 미구현입니다.
   자세한 내용은
   [kma-response-boundary.md](./kma-response-boundary.md),
@@ -116,7 +130,8 @@
   [kma-hourly-fallback-composition.md](./kma-hourly-fallback-composition.md),
   [kma-location-hourly-fallback.md](./kma-location-hourly-fallback.md),
   [kma-hourly-fallback-selection.md](./kma-hourly-fallback-selection.md),
-  [kma-hourly-weather-overview.md](./kma-hourly-weather-overview.md) 참고.
+  [kma-hourly-weather-overview.md](./kma-hourly-weather-overview.md),
+  [kma-location-hourly-overview.md](./kma-location-hourly-overview.md) 참고.
 - `packages/contracts` — 모바일과 API가 공유할 정규화 요청/응답 계약의 위치입니다. **현재
   상태**: PR #2에서 Zod 4 기반 공유 기상 데이터 계약을 정의했습니다. 자세한 내용은
   [contracts.md](./contracts.md) 참고.
@@ -428,6 +443,20 @@ assembler는 PR #22 selector가 이미 계산한 selection을 소비할 뿐 sele
 branch를 다루지 않으며, 네 composition root와 그 공개 API·runtime은 **불변**입니다. selector → assembler를
 엮어 소비하는 application-service integration은 후속 PR입니다.
 
+PR #24의 KMA location hourly `WeatherOverview` application service
+(`apps/api/src/services/kma-location-hourly-overview.ts`)는 **신규 dependency도, 신규 package-level 의존도
+추가하지 않습니다.** 이 service는 `@life-weather/contracts` 공개 surface의 runtime schema
+`weatherLocation`(+ `WeatherLocation`/`WeatherOverview` **타입**)과, 같은 `services` 계층의 세 sibling에서
+runtime/타입을 import합니다 — `kma-hourly-fallback-selection`(`selectKmaHourlyFallbackResult` +
+`KmaHourlyFallbackSelection` 타입), `kma-hourly-weather-overview`(`assembleKmaHourlyWeatherOverview` +
+`KmaHourlySourceMetadataInput` 타입), `kma-location-hourly-fallback`(타입만)(자기 barrel `./index` import
+없음, Provider·composition·weather-core·request-plan factory runtime import 없음). 따라서 이 PR에서
+사용되는 방향은 `services → contracts`(이미 허용된 runtime 방향)와 `services → services`(PR #22/#23와
+동일) 뿐이며 서비스 내부 dependency 방향은 **location facade → selector → resolver seam → assembler**
+한 방향입니다(**composition 의존 없음**, 순환 없음). provenance는 주입된 resolver seam이 결정하고 이 service는
+clock/env/network를 소유하지 않으며, 네 composition root와 그 공개 API·runtime은 **불변**입니다. production
+metadata resolver와 이 service를 조립하는 production composition은 후속 PR입니다.
+
 향후 허용 방향:
 
 ```text
@@ -436,7 +465,7 @@ apps/mobile       → contracts
 lifestyle-engine  → contracts
 ```
 
-## 현재 구현 상태 요약 (PR #23 시점)
+## 현재 구현 상태 요약 (PR #24 시점)
 
 - `contracts`: PR #2에서 Zod 4 기반 공유 기상 계약을 정의했습니다.
 - `weather-core`: `classifyFreshness`(PR #2)와 KMA 단기·초단기예보 정규화 primitive(PR #3)에 더해,
@@ -580,4 +609,20 @@ lifestyle-engine  → contracts
   component는 **10개**가 됐고, selector(PR #22)와 assembler(PR #23)를 location result narrow와 함께 엮어
   소비하는 application service·production composition·`/weather` route·cache는 여전히 미구현입니다
   ([kma-hourly-weather-overview.md](./kma-hourly-weather-overview.md)).
+- PR #24에서는 `apps/api` services 계층에 **location hourly `WeatherOverview` application service**
+  (`createKmaLocationHourlyOverviewService`)를 추가했습니다 — 위 네 building block을 하나의 호출로
+  잇습니다. 호출당 contracts `weatherLocation.parse`를 **선행** 실행하고(invalid location이면 collaborator
+  0회로 동기 `ZodError`), parsed 위·경도로 PR #21 location fallback facade를 실행하고, top-level `LOCATION`
+  실패는 facade 결과 그대로 반환하며, 지원 trace에는 PR #22 selector를 적용하고, **주입된** selected-source
+  metadata resolver를 selected trace에서만 정확히 1회 호출한 뒤 PR #23 assembler로 `{ ok: true, selection,
+  overview }`를 조립합니다. 서비스 내부 방향은 **location facade → selector → resolver seam → assembler**
+  한 방향이고(composition 의존 없음, 순환 없음), no-selection도 성공(`ok: true`)이며 Provider/Normalization
+  실패를 top-level error로 승격하지 않습니다. method는 `async`가 아니어서 location/facade 동기 throw는 동기로,
+  facade rejection·selector/resolver/assembler throw는 Promise rejection으로 전파되며(동일 reference),
+  broad catch·wrapping·logging이 없고 clock/env/network를 소유하지 않습니다(provenance는 주입된 resolver가
+  결정, 별도 clock으로 issuedAt 재계산 없음). 이로써 services 계층 application component는 **11개**가 됐고, PR
+  #21 facade·PR #22 selector·PR #23 assembler를 엮는 **application service는 구현 완료**됐으나, 이를 조립하는
+  **production metadata resolver·PR #24 production composition·`/weather` route·cache는 여전히
+  미구현**입니다(네 composition root 불변)
+  ([kma-location-hourly-overview.md](./kma-location-hourly-overview.md)).
 - 이 문서의 나머지 "예정" 구조는 앞으로의 합의이며, 위 요약이 현재 코드베이스의 상태입니다.
