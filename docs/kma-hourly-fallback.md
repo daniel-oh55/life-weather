@@ -289,6 +289,20 @@ grid fallback composition**(`createKmaHourlyFallbackCompositionFromEnv`,
   factory·scheduled/location facade·composition은 변경되지 않았고, production은 여전히 facade 호출당 KMA
   request 최대 1회입니다.
 
+## PR #21 location fallback facade가 새로운 consumer
+
+PR #20 grid fallback composition에 이어, PR #21은 이 fallback service를 소비하는 두 번째 지점을
+추가했습니다 — 위·경도 → grid 변환을 앞단에 두는 **location fallback facade**
+([kma-location-hourly-fallback.md](./kma-location-hourly-fallback.md)).
+
+- 이 fallback service의 공개 method(`fetchHourlyForecastWithFallback`)·result union·primary → classifier →
+  optional previous 실행 계약(최대 2회 Provider 호출)은 **불변**입니다.
+- location facade는 `{ product, latitude, longitude }`를 `{ product, nx, ny }`로 바꾸는 **input adapter일
+  뿐**이며, 이 service를 요청당 정확히 한 번 호출합니다. base-time·eligibility·retry 정책을 다시 구현하지
+  않습니다.
+- primary/previous **최종 선택**(final source selection)·`WeatherOverview`/`SourceMetadata`·
+  `fallbackUsed`는 여전히 **미구현**입니다 — 이 service는 계속 execution trace만 반환합니다.
+
 ## 다음 production wiring PR 권장 범위
 
 1. PR #20 production fallback composition.
@@ -314,4 +328,9 @@ v2 / PR #20 / 2026-07
 - fixed PR #16 candidate selector / PR #17 classifier graph로 조립
 - service 자체 공개 API·실행 계약·result union은 불변
 - route/location fallback/final result selection은 여전히 제외
+
+v3 / PR #21 / 2026-07
+- PR #21 location fallback facade가 이 service를 소비(input adapter, 요청당 1회 호출)
+- service 자체 공개 API·실행 계약·result union은 불변
+- final result selection·route/startup은 여전히 제외
 ```

@@ -2,7 +2,7 @@
  * Public surface of `apps/api`'s **application services** — the orchestration layer that sequences
  * the KMA provider boundary and the domain normalizers, and assembles the requests they consume.
  *
- * Seven application components live here so far:
+ * Eight application components live here so far:
  *
  * 1. The PR #7 KMA **hourly-forecast orchestration** (`createKmaHourlyForecastService`): it calls
  *    the PR #5 HTTP provider and the PR #6 hourly normalizer in order and reports a `PROVIDER`- or
@@ -38,8 +38,9 @@
  *    `KmaForecastBaseTimeCandidatesSelector`; when omitted it defaults to the PR #16
  *    availability-aware `selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay`. It builds the
  *    two requests only — it performs **no** provider, hourly-service, or PR #17 classifier
- *    invocation and **no** fallback execution. It is **not** wired into the production composition
- *    yet (so current production behaviour is unchanged), and no HTTP route consumes it.
+ *    invocation and **no** fallback execution: the factory itself never executes anything. The PR #20
+ *    grid fallback composition (`../composition`) **consumes** it as its production request-plan
+ *    source; no HTTP route consumes it.
  * 7. The PR #19 KMA **fallback orchestration service** (`createKmaHourlyFallbackService`): the first
  *    component that actually **executes** a `previous` request. It combines the PR #18 request-plan
  *    factory, this file's hourly service, and the PR #17 classifier into an at-most-two-attempt run —
@@ -50,20 +51,34 @@
  *    reference is forwarded to both service calls. It returns an execution trace — a
  *    `{ fallbackAttempted: false, primary }` or `{ fallbackAttempted: true, fallbackReason, primary,
  *    previous }` union — and never merges the results, selects a final source, or builds a
- *    `WeatherOverview`/`SourceMetadata`. It is **not** wired into the production composition yet, and
- *    no HTTP route or cache consumes it.
+ *    `WeatherOverview`/`SourceMetadata`. The orchestration itself owns **no** composition
+ *    responsibility: the PR #20 grid fallback composition (`../composition`) **consumes** it as the
+ *    live production fallback service. No HTTP route or cache consumes it yet.
+ * 8. The PR #21 KMA **location hourly-forecast fallback facade**
+ *    (`createKmaLocationHourlyFallbackFacade`): a thin adapter that puts an injected
+ *    latitude/longitude → grid converter in front of the PR #19 fallback service (input → grid →
+ *    fallback execution trace). It calls the converter **exactly once**; on a supported location
+ *    calls the fallback service **exactly once** and returns its Promise verbatim; on an unsupported
+ *    location returns a fresh `LOCATION`-stage `UNSUPPORTED_LOCATION` result and never calls the
+ *    fallback service; and lets a converter throw propagate synchronously. It duplicates **no**
+ *    base-time, eligibility, provider, or abort policy — those stay with the fallback service and its
+ *    collaborators.
  *
- * The grid-based **production composition root** (system clock adapter, provider-from-env wiring, a
- * live facade instance) is built in PR #11 and lives in `../composition`; PR #12 added the
- * latitude/longitude → grid converter in `@life-weather/weather-core`; and PR #13's location facade
- * connects that converter to the scheduled facade (its production wiring also lives in
- * `../composition`). No HTTP route is wired to any of this yet — that is a later PR.
+ * The grid-based single-request **production composition root** (system clock adapter,
+ * provider-from-env wiring, a live facade instance) is built in PR #11 and lives in `../composition`;
+ * PR #12 added the latitude/longitude → grid converter in `@life-weather/weather-core`; PR #13's
+ * location facade connects that converter to the scheduled facade; PR #20 added the grid fallback
+ * composition root that consumes the PR #18 factory and PR #19 orchestration; and PR #21 added the
+ * location fallback composition root that wires the PR #12 converter in front of the PR #20 grid
+ * fallback service (all production wiring lives in `../composition`). No HTTP route or startup is
+ * wired to any of this yet — that is a later PR.
  *
  * Application services deliberately live **outside** `providers/kma` (they are not part of the
  * provider boundary) and are exported only from here, never from `providers/kma/index.ts`. See
  * `docs/kma-hourly-service.md`, `docs/kma-forecast-request-factory.md`,
  * `docs/kma-scheduled-hourly-facade.md`, `docs/kma-location-scheduled-hourly.md`,
- * `docs/kma-fallback-request-plan.md`, and `docs/kma-hourly-fallback.md`.
+ * `docs/kma-fallback-request-plan.md`, `docs/kma-hourly-fallback.md`, and
+ * `docs/kma-location-hourly-fallback.md`.
  */
 
 export {
@@ -121,3 +136,11 @@ export {
   type KmaHourlyFallbackServiceOptions,
   type KmaHourlyFallbackServiceResult,
 } from './kma-hourly-fallback';
+
+export {
+  createKmaLocationHourlyFallbackFacade,
+  type KmaLocationHourlyFallbackFacade,
+  type KmaLocationHourlyFallbackInput,
+  type KmaLocationHourlyFallbackOptions,
+  type KmaLocationHourlyFallbackResult,
+} from './kma-location-hourly-fallback';
