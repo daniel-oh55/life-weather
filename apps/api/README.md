@@ -330,17 +330,49 @@ a project on first run; that step is intentionally deferred to a later PR.
     propagates **verbatim** as the returned Promise's rejection (same reference), never a partial
     result. `fallbackAttempted: true` means a previous **invocation** happened — not HTTP transport,
     network success, or previous-result success.
-  - **Not wired into the production composition yet**, so production behaviour is unchanged and both
-    scheduled/location production facades still issue **at most one** KMA request per call. It performs
-    **no** result merge, final source selection, `WeatherOverview`/`SourceMetadata` assembly, route,
-    cache, or stale-data field, and adds **no** new dependency.
-- **Still not implemented.** `WeatherOverview` assembly, `SourceMetadata`, current weather, daily
-  forecast (incl. `TMN`/`TMX`), feels-like computation, a common provider interface, **running either
-  production composition root at API app startup**, the `/weather` route and its query validation,
-  HTTP error/status mapping, API-availability fallback/retry, and cache are **not** here — those are
-  later PRs. The latitude/longitude → grid adapter now exists (PR #13's location facade calls PR #12's
-  `convertKmaLatitudeLongitudeToGrid`), but neither composition root is wired into `src/index.ts` and
-  neither is connected to a route (`/health` unchanged).
+  - **Consumed by the PR #20 grid fallback composition** (a new parallel root — see below), but the two
+    existing scheduled/location production facades are **unchanged** and still issue **at most one** KMA
+    request per call. It performs **no** result merge, final source selection,
+    `WeatherOverview`/`SourceMetadata` assembly, route, cache, or stale-data field, and adds **no** new
+    dependency.
+- **KMA grid hourly fallback production composition** — PR #20 adds
+  `createKmaHourlyFallbackCompositionFromEnv` (`src/composition/`), a **third** callable production
+  root that assembles the PR #16–#19 fallback graph beside (never replacing) the two existing
+  single-request roots. See
+  [docs/kma-hourly-fallback-composition.md](../../docs/kma-hourly-fallback-composition.md). Highlights:
+  - Public API: `createKmaHourlyFallbackCompositionFromEnv(env?, dependencies?)` returns
+    `{ ok: true, service }` (own keys exactly `ok`/`service`; `service` exposes only
+    `fetchHourlyForecastWithFallback`) or, on a provider config failure,
+    `{ ok: false, error }` with the provider's `KmaProviderConfigError` passed through **by reference**.
+    `KmaHourlyFallbackCompositionDependencies` is a **direct alias** of
+    `KmaScheduledHourlyCompositionDependencies` (`{ fetchImpl?, clock? }`) — no selector / classifier /
+    timeout / retry / feature-flag option is added.
+  - It assembles provider-from-env → PR #7 hourly service; the selected clock (injected `clock`, else
+    `createKmaSystemClock`) + the **explicitly injected** PR #16
+    `selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay` selector → the PR #18 request-plan
+    factory; and the plan factory + hourly service + the **explicitly injected** PR #17
+    `classifyKmaHourlyFallbackEligibility` classifier → the PR #19 `createKmaHourlyFallbackService`.
+    Production defaults are native `fetch` (inside the provider factory) and the system clock; both are
+    injectable for tests.
+  - Construction reads the clock **zero** times and issues **zero** `fetch`es; the first clock read and
+    first `fetch` happen only when the returned service runs. A run makes **at most one** provider call
+    when the primary is ineligible and **at most two** (primary then a single previous) when the
+    classifier reports the primary a no-data signal — clock read once per run, previous never
+    re-classified, no third attempt.
+  - The two existing single-request roots and their `{ ok, facade }` contracts are **unchanged**; a
+    location → grid fallback root does **not** exist yet (PR #21), and this root is not wired into
+    `src/index.ts` or any route. It consumes only the `providers/kma`, `services`, and
+    `@life-weather/weather-core` public surfaces (the PR #16 selector) and adds **no** new dependency.
+- **Still not implemented.** A **location** (latitude/longitude) fallback facade/composition in front
+  of the PR #20 grid fallback service, `WeatherOverview` assembly, `SourceMetadata`, final
+  primary/previous source selection, current weather, daily forecast (incl. `TMN`/`TMX`), feels-like
+  computation, a common provider interface, **running any of the three production composition roots at
+  API app startup**, the `/weather` route and its query validation, HTTP error/status mapping,
+  API-availability retry beyond the single previous-issuance fallback, and cache are **not** here —
+  those are later PRs. The latitude/longitude → grid adapter exists for the **single-request** location
+  pipeline (PR #13's location facade calls PR #12's `convertKmaLatitudeLongitudeToGrid`), but none of
+  the three composition roots is wired into `src/index.ts` and none is connected to a route (`/health`
+  unchanged).
 
 ### Dependencies
 
@@ -364,5 +396,7 @@ a project on first run; that step is intentionally deferred to a later PR.
   and its sibling scheduled-facade types; and the composition layer consumes the `providers/kma`,
   `services`, and `@life-weather/weather-core` public surfaces — the scheduled composition imports the
   PR #14 `selectLatestKmaForecastBaseTimeAfterAvailabilityDelay` (added as a production injection in
-  PR #15) and the PR #13 location composition imports `convertKmaLatitudeLongitudeToGrid` (its system
-  clock uses Node's native `Date.now`). No new external dependency is added.
+  PR #15), the PR #13 location composition imports `convertKmaLatitudeLongitudeToGrid`, and the PR #20
+  grid fallback composition imports the PR #16 `selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay`
+  and (type-only) the scheduled composition's dependency shape (its system clock uses Node's native
+  `Date.now`). No new external dependency is added.

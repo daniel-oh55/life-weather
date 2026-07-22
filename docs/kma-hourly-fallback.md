@@ -256,10 +256,25 @@ returned Promise rejection으로 **같은 error reference를 전파**합니다.
   reference를 생성합니다. 반환 wrapper는 매 호출 fresh object이고, global mutable state·cache·result
   singleton·retry counter가 없습니다.
 
-## 보장하지 않는 것 (이번 PR 범위 밖)
+## PR #20 갱신: production consumption
 
-- **no production composition wiring.** environment-based factory·system clock wiring·provider-from-env
-  wiring을 하지 않습니다.
+이 service는 PR #19에서 **어느 production composition에도 연결되지 않은** 상태였으나, **PR #20에서 신규
+grid fallback composition**(`createKmaHourlyFallbackCompositionFromEnv`,
+[kma-hourly-fallback-composition.md](./kma-hourly-fallback-composition.md))이 이 service를 소비합니다.
+정확한 현재 상태:
+
+- PR #20 grid fallback composition이 `createKmaHourlyFallbackService`를 fixed PR #16 candidate selector와
+  PR #17 classifier가 주입된 그래프로 조립해 소비합니다.
+- **이 service 자체의 공개 API·실행 계약·result union은 불변**입니다(아래 계약 그대로).
+- 기존 scheduled/location single-request composition에는 **연결되지 않습니다**(그 두 root는 불변).
+- `apps/api/src/index.ts`·서버 startup·`/weather` route에는 **아직 연결되지 않았습니다.**
+- location(위·경도) fallback·result assembly·cache는 여전히 **미구현**입니다(후속 PR).
+
+## 보장하지 않는 것 (service 계약 범위 밖)
+
+- **no production composition wiring in this service.** 이 service 자체는 environment-based factory·
+  system clock·provider-from-env wiring을 수행하지 않습니다 — 그 조립은 PR #20 composition의 몫이며,
+  service는 주입된 collaborator만 소비합니다.
 - **no route / cache.** `/weather` route·query validation·HTTP status mapping·cache·persistence·
   telemetry·metrics·logs가 없습니다.
 - **no result assembly.** `WeatherOverview`·`SourceMetadata`·`fallbackUsed` API field·stale-data field가
@@ -293,4 +308,10 @@ v1 / PR #19 / 2026-07
 - same options/AbortSignal pass-through
 - previous 재분류 및 third attempt 제외
 - production composition/route/response assembly 제외
+
+v2 / PR #20 / 2026-07
+- production grid fallback composition(createKmaHourlyFallbackCompositionFromEnv)에서 소비
+- fixed PR #16 candidate selector / PR #17 classifier graph로 조립
+- service 자체 공개 API·실행 계약·result union은 불변
+- route/location fallback/final result selection은 여전히 제외
 ```
