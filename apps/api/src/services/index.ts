@@ -2,7 +2,7 @@
  * Public surface of `apps/api`'s **application services** — the orchestration layer that sequences
  * the KMA provider boundary and the domain normalizers, and assembles the requests they consume.
  *
- * Ten application components live here so far:
+ * Eleven application components live here so far:
  *
  * 1. The PR #7 KMA **hourly-forecast orchestration** (`createKmaHourlyForecastService`): it calls
  *    the PR #5 HTTP provider and the PR #6 hourly normalizer in order and reports a `PROVIDER`- or
@@ -97,6 +97,26 @@
  *    fresh output every call, and mutates nothing. It runs the selector for **nobody** (the caller does
  *    that first), handles **no** `LOCATION` branch, builds no `current`/`daily`/air-quality/alerts data,
  *    and is wired into **no** composition root or route yet.
+ * 11. The PR #24 KMA **location hourly `WeatherOverview` application service**
+ *    (`createKmaLocationHourlyOverviewService`): the orchestration layer that connects the previous four
+ *    hourly building blocks into a single call. Per call it (a) runs the contracts `weatherLocation`
+ *    runtime parse on the caller's location **upfront** — an invalid location throws a **synchronous**
+ *    Zod error and **no** collaborator runs — then (b) runs the PR #21 location fallback facade with the
+ *    parsed `latitude`/`longitude`, (c) narrows a top-level `LOCATION` failure and returns it
+ *    **verbatim**, (d) applies the PR #22 selector to a supported execution trace, (e) calls the
+ *    **injected** selected-source metadata resolver **exactly once** *only* on a selected trace (never on
+ *    a no-selection trace), and (f) applies the PR #23 assembler, returning `{ ok: true, selection,
+ *    overview }`. A no-selection trace is still an application **success** (`ok: true`) whose
+ *    "no usable hourly data" fact is expressed inside the result (`selection.selected: false`,
+ *    `overview.hourly: []`, `HOURLY` in `missingSections`) — a Provider/Normalization failure in the
+ *    trace is **never** promoted to a new top-level error. The method is intentionally **not** `async`:
+ *    an invalid location and a facade synchronous throw propagate synchronously (same error reference),
+ *    while a facade rejection and a selector/resolver/assembler throw reject the returned Promise (same
+ *    error reference), with **no** broad `try`/`catch`, wrapping, logging, or partial result. Provenance
+ *    is **not** inferred: the service owns **no** clock/env/network, defines only the selected-source
+ *    resolver *seam*, and never rebuilds a request plan or reconstructs a KMA base time. The **production
+ *    resolver** and **production composition** (and the `/weather` route) are a later PR — this service
+ *    is wired into **no** composition root or route yet.
  *
  * The grid-based single-request **production composition root** (system clock adapter,
  * provider-from-env wiring, a live facade instance) is built in PR #11 and lives in `../composition`;
@@ -112,8 +132,8 @@
  * `docs/kma-hourly-service.md`, `docs/kma-forecast-request-factory.md`,
  * `docs/kma-scheduled-hourly-facade.md`, `docs/kma-location-scheduled-hourly.md`,
  * `docs/kma-fallback-request-plan.md`, `docs/kma-hourly-fallback.md`,
- * `docs/kma-location-hourly-fallback.md`, `docs/kma-hourly-fallback-selection.md`, and
- * `docs/kma-hourly-weather-overview.md`.
+ * `docs/kma-location-hourly-fallback.md`, `docs/kma-hourly-fallback-selection.md`,
+ * `docs/kma-hourly-weather-overview.md`, and `docs/kma-location-hourly-overview.md`.
  */
 
 export {
@@ -191,3 +211,13 @@ export {
   type KmaHourlySourceMetadataInput,
   type KmaHourlyWeatherOverviewInput,
 } from './kma-hourly-weather-overview';
+
+export {
+  createKmaLocationHourlyOverviewService,
+  type KmaLocationHourlyOverviewInput,
+  type KmaLocationHourlyOverviewOptions,
+  type KmaSelectedHourlySourceMetadataResolverInput,
+  type KmaSelectedHourlySourceMetadataResolver,
+  type KmaLocationHourlyOverviewResult,
+  type KmaLocationHourlyOverviewService,
+} from './kma-location-hourly-overview';

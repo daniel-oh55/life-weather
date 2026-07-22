@@ -457,22 +457,58 @@ a project on first run; that step is intentionally deferred to a later PR.
     no `Promise`, Provider, network, clock, environment, or `AbortSignal`; it runs the PR #22 selector
     for **nobody** (the caller does that first), handles **no** `LOCATION` branch, and builds no
     `current`/`daily`/air-quality/alerts data.
-  - **Production wiring not implemented.** The assembler is wired into **no** composition root or route;
-    the application service that would narrow a location result's `LOCATION` branch, apply the selector,
-    resolve the selected source's provenance, call this assembler, and return selection + overview is a
-    later PR. It changes no existing runtime and adds **no** new dependency.
-- **Still not implemented.** The **application service** that would narrow a location result's
-  `LOCATION` branch, apply the PR #22 selection policy, resolve the selected source's provenance, and
-  call the PR #23 assembler; `current`/`daily`/air-quality/alerts `WeatherOverview` sections and their
-  `SourceMetadata`; a `fallbackUsed` API field; current weather, daily forecast (incl. `TMN`/`TMX`),
-  feels-like computation; a common provider interface; **running any of the four production composition
-  roots at API app startup**; the `/weather` route and its query validation; HTTP error/status mapping;
-  API-availability retry beyond the single previous-issuance fallback; and cache are **not** here —
-  those are later PRs. The final primary/previous **source-selection policy** (PR #22) and the **pure
-  hourly-only `WeatherOverview`/`SourceMetadata` assembler** (PR #23) are now both implemented, but no
-  production consumer applies them yet. None of the four composition roots (grid scheduled, location
-  scheduled, grid fallback, location fallback) is wired into `src/index.ts` and none is connected to a
-  route (`/health` unchanged).
+  - **Production wiring not implemented.** The assembler is wired into **no** composition root or route.
+    The PR #24 application service (below) now narrows a location result's `LOCATION` branch, applies the
+    selector, resolves the selected source's provenance via an **injected** resolver, and calls this
+    assembler; the **production resolver** and **production composition** remain later PRs. It changes no
+    existing runtime and adds **no** new dependency.
+- **KMA location hourly `WeatherOverview` application service** — PR #24 adds
+  `createKmaLocationHourlyOverviewService` (`src/services/`), the orchestration layer that connects the
+  previous four hourly building blocks into a single call. See
+  [docs/kma-location-hourly-overview.md](../../docs/kma-location-hourly-overview.md). Highlights:
+  - Public API: `createKmaLocationHourlyOverviewService(locationFallbackFacade, sourceMetadataResolver,
+    selectionPolicy?, overviewAssembler?): KmaLocationHourlyOverviewService` whose single method
+    `fetchHourlyWeatherOverviewForLocation(input, options?): Promise<KmaLocationHourlyOverviewResult>`
+    takes `KmaLocationHourlyOverviewInput` (`{ product, location: WeatherLocation }`) and
+    `KmaLocationHourlyOverviewOptions` (alias of the PR #21 facade options). The resolver
+    (`KmaSelectedHourlySourceMetadataResolver`, with `KmaSelectedHourlySourceMetadataResolverInput`) is a
+    **required** dependency; `selectionPolicy`/`overviewAssembler` default to the real
+    `selectKmaHourlyFallbackResult` / `assembleKmaHourlyWeatherOverview`. No new class.
+  - **Pipeline** — `weatherLocation.parse(location)` **upfront** (an invalid location throws a
+    synchronous `ZodError` and **no** collaborator runs) → PR #21 facade with the parsed
+    `latitude`/`longitude` → a top-level `LOCATION` failure is returned **verbatim** → PR #22 selector on
+    a supported trace → the injected resolver **exactly once** *only* on a selected trace → PR #23
+    assembler → `{ ok: true, selection, overview }`.
+  - **Result** — `LOCATION` is the exact facade result reference (no `overview`/`selection`/coordinates
+    added). Every supported trace is `ok: true`; a **no-selection** trace is still a success whose "no
+    usable hourly data" fact lives inside the result (`selection.selected: false`, `overview.hourly: []`,
+    `HOURLY` in `missingSections`). A Provider/Normalization failure in the trace is **never** promoted to
+    a new top-level error. Success own keys are exactly `ok`/`overview`/`selection`; the overview carries
+    no application trace.
+  - **Provenance boundary** — the service infers **no** provenance: it owns no clock/env/network, defines
+    only the selected-source resolver *seam*, and never rebuilds a request plan or reconstructs a KMA base
+    time (a plan built during the run and a resolver reading a clock afterwards can disagree at an
+    availability-delay boundary). `issuedAt: null` is passed through.
+  - **Errors** — the method is **not** `async`: an invalid location and a facade synchronous throw
+    propagate synchronously (same reference); a facade rejection and a selector/resolver/assembler throw
+    reject the returned Promise (same reference). No broad `try`/`catch`, wrapping, logging, or partial
+    result. The PR #23 selected-empty guard still fires (synchronous `ZodError`) through the integrated
+    service.
+  - **Application service implemented; production resolver and production composition not.** It is wired
+    into **no** composition root or route; the production metadata resolver and PR #24 production
+    composition (and the `/weather` route) are later PRs. It changes no existing runtime and adds **no**
+    new dependency.
+- **Still not implemented.** The **production metadata resolver** and the **PR #24 production
+  composition** that would assemble this application service into a callable root; `current`/`daily`/
+  air-quality/alerts `WeatherOverview` sections and their `SourceMetadata`; a `fallbackUsed` API field;
+  current weather, daily forecast (incl. `TMN`/`TMX`), feels-like computation; a common provider
+  interface; **running any of the four production composition roots at API app startup**; the `/weather`
+  route and its query validation; HTTP error/status mapping; API-availability retry beyond the single
+  previous-issuance fallback; and cache are **not** here — those are later PRs. The PR #24 **application
+  service** now connects the PR #21 facade, PR #22 selection policy, and PR #23 assembler, but no
+  production resolver or production composition applies it yet. None of the four composition roots (grid
+  scheduled, location scheduled, grid fallback, location fallback) is wired into `src/index.ts` and none
+  is connected to a route (`/health` unchanged).
 
 ### Dependencies
 
