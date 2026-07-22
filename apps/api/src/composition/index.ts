@@ -2,7 +2,7 @@
  * Public surface of `apps/api`'s **server-side production composition** boundary.
  *
  * This layer is the explicit place that assembles the KMA components built by the earlier PRs into
- * live pipelines. **Three** callable production roots are composed here:
+ * live pipelines. **Four** callable production roots are composed here:
  *
  * - The **grid-based single-request** facade (PR #11): the PR #5 provider-from-env → the PR #7 hourly
  *   service, a system clock adapter → the PR #9 request factory, and the PR #10 scheduled facade
@@ -27,8 +27,16 @@
  *   keyed by `product`/`nx`/`ny`. It assembles the PR #16–#19 graph: a primary attempt and, only when
  *   the classifier reports the primary a no-data signal (exact upstream `'03'` or empty hourly), a
  *   single previous-issuance attempt (**at most two** provider calls, no third attempt). The two
- *   existing single-request roots are **unchanged**; this is a parallel root added beside them. A
- *   location → grid fallback root does **not** exist yet — that is a later PR.
+ *   existing single-request roots are **unchanged**; this is a parallel root added beside them.
+ * - The **location-based fallback** facade (PR #21, new): the same PR #20 grid fallback composition
+ *   reused verbatim, with the PR #12 `convertKmaLatitudeLongitudeToGrid` converter assembled in front
+ *   of it through the PR #21 location fallback facade — yielding one live
+ *   `KmaLocationHourlyFallbackFacade` keyed by `product`/`latitude`/`longitude`. A supported location
+ *   converts to a grid and runs the grid fallback service (**at most two** provider calls per call);
+ *   an unsupported (physically valid but off-grid) location returns a value-free
+ *   `LOCATION`/`UNSUPPORTED_LOCATION` result with **zero** provider calls; and an out-of-physical-range
+ *   coordinate throws a converter `RangeError` synchronously. The PR #20 grid fallback root and both
+ *   single-request roots are **unchanged**; this is a fourth parallel root added beside them.
  *
  * Boundary properties:
  *
@@ -45,7 +53,8 @@
  * PR #12 converter, the PR #14 availability-delay selector, and the PR #16 candidate selector) public
  * surfaces and is exported only from here (never re-exported from those barrels or from
  * `apps/api/src/index.ts`). See `docs/kma-production-composition.md`,
- * `docs/kma-location-scheduled-hourly.md`, and `docs/kma-hourly-fallback-composition.md`.
+ * `docs/kma-location-scheduled-hourly.md`, `docs/kma-hourly-fallback-composition.md`, and
+ * `docs/kma-location-hourly-fallback.md`.
  */
 
 export { createKmaSystemClock } from './system-clock';
@@ -67,3 +76,9 @@ export {
   type CreateKmaHourlyFallbackCompositionResult,
   type KmaHourlyFallbackCompositionDependencies,
 } from './kma-hourly-fallback';
+
+export {
+  createKmaLocationHourlyFallbackCompositionFromEnv,
+  type CreateKmaLocationHourlyFallbackCompositionResult,
+  type KmaLocationHourlyFallbackCompositionDependencies,
+} from './kma-location-hourly-fallback';

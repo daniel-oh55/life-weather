@@ -190,8 +190,12 @@ trace, 최대 2회 Provider 호출)이 서로 다릅니다. 따라서 기존 res
 
 ## 아직 하지 않는 것 (이 PR의 범위 밖)
 
-- **location fallback** — 이 root는 grid(`product`/`nx`/`ny`) 입력만 받습니다. 위·경도 → grid 변환을
-  신규 fallback service 앞단에 연결하는 별도 location fallback facade/composition은 후속 PR(PR #21)입니다.
+- **location fallback (PR #21에서 추가됨)** — 이 grid root는 계속 grid(`product`/`nx`/`ny`) 입력만
+  받습니다. 위·경도 → grid 변환을 이 fallback service 앞단에 연결하는 별도 location fallback
+  facade/composition은 **PR #21**에서 추가됐습니다
+  ([kma-location-hourly-fallback.md](./kma-location-hourly-fallback.md)) — 이 grid fallback root를
+  **그대로 재사용**하고 PR #12 converter를 앞단에 조립하며, 그 성공 result의 key는 `service`가 아니라
+  `facade`입니다. 이 grid root 자체의 공개 API·`{ ok, service }` 계약·runtime은 **불변**입니다.
 - **apps/api startup/route 미연결** — 이 root는 `apps/api/src/index.ts`·서버 startup·`/weather` route에
   연결되지 않았습니다. 기존 scheduled facade·기존 location facade와도 연결하지 않습니다.
 - **WeatherOverview / SourceMetadata / final primary·previous selection** — 없음. fallback service는
@@ -224,4 +228,9 @@ v1 / PR #20 / 2026-07
 - config failure exact-reference pass-through, success result { ok, service }
 - 기존 scheduled/location roots 불변 (parallel root 추가)
 - route/location fallback/result assembly 제외
+
+v2 / PR #21 / 2026-07 (location fallback root 추가; 이 grid root는 불변)
+- PR #21 location fallback composition이 이 grid fallback root를 그대로 재사용
+- 이 grid root의 공개 API·{ ok, service } 계약·runtime 변경 없음
+- location root의 성공 result key는 facade, route/startup은 여전히 미연결
 ```

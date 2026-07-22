@@ -304,11 +304,17 @@ a project on first run; that step is intentionally deferred to a later PR.
     reference-epoch / retry metadata. A clock error and a selector `RangeError` propagate **verbatim**
     (no partial plan, no broad `try/catch`, no logging).
   - **No PR #17 classifier invocation, no Provider / hourly-service call, and no fallback execution** —
-    the request plan is built *before* execution, whereas eligibility is decided *after* a primary
-    service result exists, so a `previous` request being present does not mean it will be sent
-    (that is PR #19's decision). It is **not** wired into the production composition yet, so current
-    production behaviour is unchanged and the facade still issues **at most one** KMA request per call;
-    no route consumes it.
+    the factory itself only assembles the `{ primary, previous }` pair; the request plan is built
+    *before* execution, whereas eligibility is decided *after* a primary service result exists, so a
+    `previous` request being present does not mean it will be sent (that is the PR #19 fallback
+    service's decision, not the factory's).
+  - **Consumed in production by the fallback roots.** The **PR #20 grid fallback composition** assembles
+    this factory (with the PR #16 candidate selector) into its production graph, and the **PR #21
+    location fallback composition** reuses that same PR #20 root, so it consumes this factory
+    indirectly. In those fallback roots an eligible primary lets the provider be called **at most
+    twice** per run; the existing grid/location **single-request scheduled roots** still call it **at
+    most once** per call. None of the four production roots is wired into `src/index.ts`, app startup,
+    or the `/weather` route yet.
 - **KMA hourly fallback orchestration service** — PR #19 adds `createKmaHourlyFallbackService`
   (`src/services/`), the application service that combines the PR #18 request-plan factory, the PR #7
   hourly service, and the PR #17 classifier into an at-most-two-attempt run. It is the first component
@@ -359,20 +365,43 @@ a project on first run; that step is intentionally deferred to a later PR.
     when the primary is ineligible and **at most two** (primary then a single previous) when the
     classifier reports the primary a no-data signal — clock read once per run, previous never
     re-classified, no third attempt.
-  - The two existing single-request roots and their `{ ok, facade }` contracts are **unchanged**; a
-    location → grid fallback root does **not** exist yet (PR #21), and this root is not wired into
+  - The two existing single-request roots and their `{ ok, facade }` contracts are **unchanged**; the
+    location → grid fallback root is added in PR #21 (below), and this root is not wired into
     `src/index.ts` or any route. It consumes only the `providers/kma`, `services`, and
     `@life-weather/weather-core` public surfaces (the PR #16 selector) and adds **no** new dependency.
-- **Still not implemented.** A **location** (latitude/longitude) fallback facade/composition in front
-  of the PR #20 grid fallback service, `WeatherOverview` assembly, `SourceMetadata`, final
-  primary/previous source selection, current weather, daily forecast (incl. `TMN`/`TMX`), feels-like
-  computation, a common provider interface, **running any of the three production composition roots at
-  API app startup**, the `/weather` route and its query validation, HTTP error/status mapping,
-  API-availability retry beyond the single previous-issuance fallback, and cache are **not** here —
-  those are later PRs. The latitude/longitude → grid adapter exists for the **single-request** location
-  pipeline (PR #13's location facade calls PR #12's `convertKmaLatitudeLongitudeToGrid`), but none of
-  the three composition roots is wired into `src/index.ts` and none is connected to a route (`/health`
-  unchanged).
+- **KMA location hourly fallback facade + production composition** — PR #21 adds
+  `createKmaLocationHourlyFallbackFacade` (`src/services/`), a thin adapter that puts the PR #12
+  latitude/longitude → grid converter in front of the PR #19 fallback service, plus
+  `createKmaLocationHourlyFallbackCompositionFromEnv` (`src/composition/`), a **fourth** callable
+  production root that reuses the PR #20 grid fallback composition verbatim. See
+  [docs/kma-location-hourly-fallback.md](../../docs/kma-location-hourly-fallback.md). Highlights:
+  - `fetchHourlyForecastWithFallbackForLocation({ product, latitude, longitude }, options)` calls the
+    converter **exactly once** with a fresh `{ latitude, longitude }` (never the caller input spread,
+    never carrying `product`); on a supported location it calls the fallback service **exactly once**
+    with a fresh `{ product, nx, ny }` and returns its Promise as the **same** reference (not marked
+    `async`, no Promise layer, `options`/`signal` forwarded by reference).
+  - A physically valid but off-grid coordinate becomes a value-free
+    `{ ok: false, stage: 'LOCATION', error: { kind: 'UNSUPPORTED_LOCATION' } }` (fresh per call, no
+    coordinate/grid/message, no fallback-service call); a converter throw (e.g. an out-of-range
+    `RangeError`) propagates **verbatim and synchronously** and the fallback service is **not** called.
+    The `KmaLocationHourlyFallbackResult` reuses the PR #13 `LOCATION` branch via `Extract` and the
+    PR #19 execution trace unchanged — no `fallbackUsed`/`selected`/`final`/`grid` field is added.
+  - **Location fallback production composition** — `createKmaLocationHourlyFallbackCompositionFromEnv`
+    reuses `createKmaHourlyFallbackCompositionFromEnv` (config `CONFIG_ERROR` passed through by
+    reference, no facade built), selects the production `convertKmaLatitudeLongitudeToGrid` from the
+    `@life-weather/weather-core` public surface (no private deep import), and wires the location facade.
+    Success exposes **only** `{ ok, facade }`; the PR #20 grid fallback root and both single-request
+    roots are unchanged, no new dependency option is added, and no route is registered. A supported
+    location makes **at most two** provider calls per invocation; an unsupported/invalid location makes
+    **zero**. Construction reads the clock/network/converter **zero** times.
+- **Still not implemented.** `WeatherOverview` assembly, `SourceMetadata`, final
+  primary/previous source selection, a `fallbackUsed` API field, current weather, daily forecast (incl.
+  `TMN`/`TMX`), feels-like computation, a common provider interface, **running any of the four
+  production composition roots at API app startup**, the `/weather` route and its query validation,
+  HTTP error/status mapping, API-availability retry beyond the single previous-issuance fallback, and
+  cache are **not** here — those are later PRs. None of the four composition roots (grid scheduled,
+  location scheduled, grid fallback, location fallback) is wired into `src/index.ts` and none is
+  connected to a route (`/health` unchanged).
 
 ### Dependencies
 
@@ -399,4 +428,7 @@ a project on first run; that step is intentionally deferred to a later PR.
   PR #15), the PR #13 location composition imports `convertKmaLatitudeLongitudeToGrid`, and the PR #20
   grid fallback composition imports the PR #16 `selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay`
   and (type-only) the scheduled composition's dependency shape (its system clock uses Node's native
-  `Date.now`). No new external dependency is added.
+  `Date.now`). The PR #21 location fallback facade adds only **type-only** imports of its sibling
+  location-scheduled and fallback-service types, and the PR #21 location fallback composition reuses the
+  PR #20 grid fallback composition plus the public `convertKmaLatitudeLongitudeToGrid`. No new external
+  dependency is added.

@@ -291,6 +291,21 @@ location facade, location composition. reference clock `2026-07-18T05:00:00.000+
 - **`WeatherOverview` / `SourceMetadata` / `CurrentWeather` / `DailyForecast`** — 없음.
 - **AirKorea / mobile / 신규 dependency** — 없음.
 
+## PR #21 위경도 fallback pipeline과의 관계 (별도 병렬 pipeline)
+
+PR #21은 이 single-request location pipeline을 **교체하지 않고**, 그 옆에 별도의 위경도 **fallback**
+pipeline([kma-location-hourly-fallback.md](./kma-location-hourly-fallback.md))을 병렬로 추가했습니다.
+
+- 이 문서의 single-request location pipeline(facade·composition·`LOCATION` 계약·API)은 **불변**입니다.
+- 두 pipeline은 같은 `product`/`latitude`/`longitude` caller shape와 같은 `LOCATION`/`UNSUPPORTED_LOCATION`
+  미지원 위치 결과를 공유하지만, 다음이 다릅니다.
+  - **method**: single-request는 `fetchScheduledHourlyForecastForLocation`, fallback은
+    `fetchHourlyForecastWithFallbackForLocation`.
+  - **result**: single-request는 `KmaScheduledHourlyForecastResult`(success·`PROVIDER`·`NORMALIZATION`),
+    fallback은 `KmaHourlyFallbackServiceResult`(primary + optional previous execution trace).
+  - **지원 위치 Provider 호출**: single-request는 호출당 **최대 1회**, fallback은 primary ineligible이면
+    최대 1회·eligible이면 **최대 2회**.
+
 ## 후속 범위
 
 1. `/weather` route와 query validation.
@@ -314,4 +329,8 @@ v2 / PR #15 / 2026-07 (grid composition의 availability selector 정책 상속)
 - grid production composition이 PR #14 availability-delay selector를 주입하므로 location pipeline도
   자동 상속(별도 selector import/주입 없음)
 - 서울 05:00 KST pipeline base_time이 0200으로 갱신됨(문서·테스트 기대만 조정)
+
+v3 / PR #21 / 2026-07 (별도 위경도 fallback pipeline 추가; 이 pipeline은 불변)
+- 이 single-request location facade/composition·API·LOCATION 계약 변경 없음
+- 별도 병렬 위경도 fallback pipeline이 추가됨(kma-location-hourly-fallback.md)
 ```
