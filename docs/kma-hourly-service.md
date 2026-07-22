@@ -202,6 +202,18 @@ ServiceKey, request URL, response body, `SourceMetadata`, `WeatherOverview`. 소
 - classifier는 분류만 하며 **retry·fallback 실행을 하지 않습니다.** 이 service의 Provider/
   Normalization pass-through 동작과 "요청 최대 1회" 정책은 변경되지 않았습니다.
 
+## PR #19 fallback orchestration에서의 재사용
+
+- **이 hourly service 자체는 여전히 request 1개만 처리**합니다(한 번의 `fetchHourlyForecast` 호출 =
+  Provider 1회 = request 1개). 공개 API·result union·stage 오류 계약은 이 PR에서도 **불변**입니다.
+- PR #19의 `createKmaHourlyFallbackService`([kma-hourly-fallback.md](./kma-hourly-fallback.md))가 **동일한
+  hourly service instance를 최대 2회 순차 호출**합니다 — plan의 `primary` request로 한 번, 그 결과가
+  eligible이면 plan의 `previous` request로 한 번 더. 두 호출은 순차적이며(병렬 아님) 각 호출은 여전히
+  request 1개만 처리합니다.
+- orchestration은 caller의 `options`(같은 `AbortSignal` reference 포함)를 두 호출에 **reference 그대로**
+  전달하고, request runtime validation과 abort 처리는 여전히 **Provider가 소유**합니다(hourly service는
+  request·signal을 그대로 넘길 뿐이며 새 `AbortController`를 만들지 않습니다).
+
 ## 후속 범위
 
 이 PR 이후 후보 PR:
@@ -223,9 +235,13 @@ ServiceKey, request URL, response body, `SourceMetadata`, `WeatherOverview`. 소
    `createKmaForecastProviderFromEnv`로 Provider를 생성해 이 hourly service에 **주입**합니다 —
    hourly service 자체의 공개 API와 Provider/normalization stage 계약은 변경되지 않았습니다. 실제
    route 연결은 아직 없습니다.
-5. 위경도 → KMA grid(nx/ny) 변환
-6. `SourceMetadata`와 `WeatherOverview` 조립
-7. `/weather` API route
+5. ~~이 hourly service를 primary 1회 + previous 최대 1회로 순차 호출하는 fallback orchestration~~ —
+   **PR #19에서 완료**(`createKmaHourlyFallbackService`,
+   [kma-hourly-fallback.md](./kma-hourly-fallback.md)). 이 hourly service의 공개 API·result·stage 오류
+   계약은 변경 없음.
+6. 위경도 → KMA grid(nx/ny) 변환 (production 연결)
+7. `SourceMetadata`와 `WeatherOverview` 조립
+8. `/weather` API route
 
 ## 변경 이력
 
@@ -243,4 +259,9 @@ v3 / PR #17 / 2026-07 (fallback eligibility classifier가 결과를 소비)
 - PR #17 classifier가 이 service result를 입력으로만 받아 eligible/ineligible 분류
 - service result union·stage 구분·Provider/Normalization pass-through 변경 없음
 - empty hourly success가 EMPTY_HOURLY 신호로 관찰됨, retry/fallback 실행 없음
+
+v4 / PR #19 / 2026-07 (fallback orchestration이 이 service를 최대 2회 순차 호출)
+- PR #19 createKmaHourlyFallbackService가 동일 hourly service를 primary 1회 + eligible 시 previous 1회 호출
+- 이 hourly service 공개 API·result union·stage 오류 계약 변경 없음(여전히 호출당 request 1개)
+- same options/AbortSignal reference pass-through, Provider validation·abort ownership 유지
 ```

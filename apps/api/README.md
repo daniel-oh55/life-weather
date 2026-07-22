@@ -309,6 +309,31 @@ a project on first run; that step is intentionally deferred to a later PR.
     (that is PR #19's decision). It is **not** wired into the production composition yet, so current
     production behaviour is unchanged and the facade still issues **at most one** KMA request per call;
     no route consumes it.
+- **KMA hourly fallback orchestration service** — PR #19 adds `createKmaHourlyFallbackService`
+  (`src/services/`), the application service that combines the PR #18 request-plan factory, the PR #7
+  hourly service, and the PR #17 classifier into an at-most-two-attempt run. It is the first component
+  that actually **executes** a `previous` request. See
+  [docs/kma-hourly-fallback.md](../../docs/kma-hourly-fallback.md). Highlights:
+  - One `fetchHourlyForecastWithFallback(input, options)` call builds the plan **once**, runs the
+    plan's `primary` request through the hourly service **once**, and classifies that primary result
+    **once**. On an ineligible primary it returns `{ fallbackAttempted: false, primary }` and never
+    runs the previous request; on an eligible primary it runs the plan's `previous` request through the
+    hourly service **once** and returns `{ fallbackAttempted: true, fallbackReason, primary, previous }`
+    — a **maximum of two** service calls, no third attempt, and the `previous` result is **never
+    re-classified** (the reason stays the primary's eligibility reason).
+  - `input`, the plan's `primary`/`previous` requests, and both nested service results pass through
+    **by reference** (no clone/spread/merge); the same `options`/`AbortSignal` reference is forwarded to
+    both service calls (omitted → exactly `undefined`). It creates no `AbortController`, registers no
+    listener, and never inspects `signal.aborted` — the provider keeps its existing abort ownership.
+  - It defines **no** new result union and **no** new error type, wraps the collaborators in no broad
+    `try/catch`, and logs nothing: a plan-factory / primary / classifier / previous collaborator error
+    propagates **verbatim** as the returned Promise's rejection (same reference), never a partial
+    result. `fallbackAttempted: true` means a previous **invocation** happened — not HTTP transport,
+    network success, or previous-result success.
+  - **Not wired into the production composition yet**, so production behaviour is unchanged and both
+    scheduled/location production facades still issue **at most one** KMA request per call. It performs
+    **no** result merge, final source selection, `WeatherOverview`/`SourceMetadata` assembly, route,
+    cache, or stale-data field, and adds **no** new dependency.
 - **Still not implemented.** `WeatherOverview` assembly, `SourceMetadata`, current weather, daily
   forecast (incl. `TMN`/`TMX`), feels-like computation, a common provider interface, **running either
   production composition root at API app startup**, the `/weather` route and its query validation,
