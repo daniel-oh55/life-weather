@@ -597,6 +597,19 @@ describe('validation failures', () => {
       name: 'malformed fetchedAt',
       input: () => makePrimaryInput({ source: makeSource({ fetchedAt: 'nope' }) }),
     },
+    {
+      // A directly-constructed selected PRIMARY input with an empty `hourly` — the public selected type
+      // allows it (its `result.hourly` is a plain `readonly HourlyForecast[]`, no cast needed here), but
+      // the assembler's module-local nonempty guard rejects it before any overview/source is built.
+      name: 'selected PRIMARY with empty hourly',
+      input: () => makePrimaryInput({ hourly: [] }),
+    },
+    {
+      // Same nonempty boundary regardless of the selected source discriminator: a selected PREVIOUS
+      // input with an empty `hourly` is rejected identically.
+      name: 'selected PREVIOUS with empty hourly',
+      input: () => makePreviousInput({ hourly: [] }),
+    },
   ];
 
   for (const { name, input } of invalidCases) {

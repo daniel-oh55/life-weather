@@ -442,9 +442,16 @@ a project on first run; that step is intentionally deferred to a later PR.
     **no** clock/base-time to reconstruct provenance. Every other section is a fixed placeholder
     (`current: null`, `daily: []`, `airQuality.current: null`, `airQuality.daily: []`, `alerts: []`), so
     the `WeatherOverview` `superRefine` invariant keeps placeholders and `missingSections` consistent.
-  - It returns `weatherOverview.parse(overview)`, so a malformed location/timestamp/`sourceId` or an
-    invariant breach throws a **synchronous** Zod error (no `safeParse` error union, no broad
-    `try/catch`, no logging, no fallback/default timestamp). It allocates a fresh output per call
+  - **Selected-empty boundary guard.** The public selected type allows an empty `hourly` and the
+    contracts list invariant is one-directional (it only rejects populated data in a section marked
+    missing, never an empty `hourly` whose `HOURLY` is *not* marked missing), so the assembler owns that
+    boundary: a **selected** result's `hourly` must pass an assembler-local nonempty schema, and a
+    selected-empty input throws a **synchronous** Zod error before any overview/source is built. A
+    **no-selection** empty `hourly` is normal (`HOURLY` is marked missing).
+  - It returns `weatherOverview.parse(overview)`, so a malformed location/timestamp/`sourceId`, a
+    selected-empty `hourly`, or an invariant breach throws a **synchronous** Zod error (no `safeParse`
+    error union, no broad `try/catch`, no logging, no fallback/default timestamp). It allocates a fresh
+    output per call
     (`hourly` is copied into a new array; parse produces fresh nested objects), mutates nothing, and
     preserves hourly value/order (no reference identity is contractual). It is **pure and synchronous**:
     no `Promise`, Provider, network, clock, environment, or `AbortSignal`; it runs the PR #22 selector

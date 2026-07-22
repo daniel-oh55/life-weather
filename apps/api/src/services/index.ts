@@ -86,11 +86,17 @@
  *    lists exactly the sections not yet supplied. The source metadata's provenance
  *    (`sourceId`/`issuedAt`/`fetchedAt`/`retrievalMode`) is **caller-provided** — the assembler infers
  *    none of it and fixes only `provider: 'KMA'`, `sections: ['HOURLY']`, and `observedAt: null`; an
- *    unknown issuance is passed as an explicit `issuedAt: null`. It validates the payload with
- *    `weatherOverview.parse` (a malformed location/timestamp/`sourceId` or invariant breach throws a
- *    synchronous Zod error), allocates a fresh output every call, and mutates nothing. It runs the
- *    selector for **nobody** (the caller does that first), handles **no** `LOCATION` branch, builds no
- *    `current`/`daily`/air-quality/alerts data, and is wired into **no** composition root or route yet.
+ *    unknown issuance is passed as an explicit `issuedAt: null`. Because the public selected type allows
+ *    an empty `hourly` and the contracts list invariant is one-directional (it only rejects populated
+ *    data in a section marked missing, never an empty `hourly` whose `HOURLY` is *not* marked missing),
+ *    the assembler owns that boundary: a **selected** result's `hourly` is validated with an
+ *    assembler-local nonempty schema, so a selected-empty input throws a **synchronous** Zod error before
+ *    any overview/source is built; a **no-selection** empty `hourly` is normal (`HOURLY` is marked
+ *    missing). It then validates the whole payload with `weatherOverview.parse` (a malformed
+ *    location/timestamp/`sourceId` or invariant breach also throws a synchronous Zod error), allocates a
+ *    fresh output every call, and mutates nothing. It runs the selector for **nobody** (the caller does
+ *    that first), handles **no** `LOCATION` branch, builds no `current`/`daily`/air-quality/alerts data,
+ *    and is wired into **no** composition root or route yet.
  *
  * The grid-based single-request **production composition root** (system clock adapter,
  * provider-from-env wiring, a live facade instance) is built in PR #11 and lives in `../composition`;

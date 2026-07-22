@@ -17,11 +17,17 @@
  * 3. `missingSections` names exactly the sections this partial overview does **not** yet supply.
  *
  * Every other section is a fixed placeholder: `current: null`, `daily: []`, `airQuality.current: null`,
- * `airQuality.daily: []`, `alerts: []`. The `WeatherOverview` `superRefine` invariant is what keeps the
- * placeholders and `missingSections` honest — a `null`/empty section must appear in `missingSections`,
- * and a populated `hourly` must **not**. The assembler returns `weatherOverview.parse(overview)`, so a
- * malformed location, a bad timestamp, an empty `sourceId`, or any invariant breach surfaces as a
- * synchronous Zod validation error rather than a silently-wrong payload.
+ * `airQuality.daily: []`, `alerts: []`. The contracts `weatherOverview` schema enforces the
+ * object-section biconditionals (`current` ↔ `CURRENT`, `airQuality.current` ↔ `AIR_QUALITY_CURRENT`)
+ * and rejects populated list data when its section is marked missing (a populated `hourly` must **not**
+ * mark `HOURLY` missing). Because the schema does **not** by itself reject an empty `hourly` list whose
+ * section is *not* marked missing, this assembler additionally validates that every selected result
+ * contains at least one hourly entry (the module-local `nonEmptyHourlyForecasts` guard) before creating
+ * the selected overview; the no-selection arm instead empties `hourly` and marks `HOURLY` missing. So in
+ * every assembled output `HOURLY` presence matches the selected / no-selection state exactly. The
+ * assembler returns `weatherOverview.parse(overview)`, so a malformed location, a bad timestamp, an
+ * empty `sourceId`, a selected-empty `hourly`, or any invariant breach surfaces as a synchronous Zod
+ * validation error rather than a silently-wrong payload.
  *
  * ### Selected vs no-selection
  *
@@ -67,6 +73,7 @@
  */
 
 import {
+  hourlyForecast,
   weatherOverview,
   type SourceMetadata,
   type WeatherLocation,
@@ -74,6 +81,23 @@ import {
 } from '@life-weather/contracts';
 
 import type { KmaHourlyFallbackSelection } from './kma-hourly-fallback-selection';
+
+/**
+ * The assembler-local **nonempty guard** for a *selected* result's hourly list. The public
+ * {@link KmaHourlyFallbackSelection} selected arm types `result.hourly` as a plain
+ * `readonly HourlyForecast[]`, so an empty array is structurally allowed at the type level even though a
+ * correct PR #22 selector never produces one. The contracts `weatherOverview` schema does not reject an
+ * empty `hourly` whose `HOURLY` section is *not* marked missing either (its list invariant is
+ * one-directional: it only rejects populated data in a section that *is* marked missing). So this module
+ * composes the contracts public `hourlyForecast` element schema into a `min(1)` array and validates the
+ * selected result at the assembler boundary — turning a selected-empty input into a synchronous Zod
+ * error before any overview object or source metadata is built.
+ *
+ * It is module-local (never exported), parses nothing at import time, reads no clock/network/environment
+ * and logs nothing, and adds no new dependency: it only combines the contracts public `hourlyForecast`
+ * schema (`zod` is never imported directly here).
+ */
+const nonEmptyHourlyForecasts = hourlyForecast.array().min(1);
 
 /**
  * The provenance a caller must supply for a **selected** hourly source. It is exactly the four
@@ -139,11 +163,13 @@ function isSelectedOverviewInput(
 /**
  * Assemble the hourly-only partial {@link WeatherOverview} from one precomputed PR #22 selection.
  *
- * On a selected source it maps the selected `hourly` into the overview, records the caller's provenance
- * as one KMA `HOURLY` {@link SourceMetadata}, and leaves `HOURLY` out of `missingSections`; on no
- * selection it emits an empty `hourly`/`sources` and adds `HOURLY` to the missing set. Every other
- * section is a fixed placeholder. The result is validated with `weatherOverview.parse`, so an invalid
- * location, timestamp, `sourceId`, or invariant breach throws a synchronous Zod error.
+ * On a selected source it first rejects an empty selected `hourly` with the module-local
+ * `nonEmptyHourlyForecasts` guard, then maps the selected `hourly` into the overview, records the
+ * caller's provenance as one KMA `HOURLY` {@link SourceMetadata}, and leaves `HOURLY` out of
+ * `missingSections`; on no selection it emits an empty `hourly`/`sources` and adds `HOURLY` to the
+ * missing set. Every other section is a fixed placeholder. The result is validated with
+ * `weatherOverview.parse`, so an invalid location, timestamp, `sourceId`, a selected-empty `hourly`, or
+ * an invariant breach throws a synchronous Zod error.
  *
  * Pure and synchronous: it reads only the caller's `location`, `selection`, and (when selected)
  * `source`, allocates a fresh overview each call, and mutates nothing. It infers no provenance, reads no
@@ -153,12 +179,18 @@ export function assembleKmaHourlyWeatherOverview(
   input: KmaHourlyWeatherOverviewInput,
 ): WeatherOverview {
   if (isSelectedOverviewInput(input)) {
-    // A hourly source was selected: its forecast becomes the overview's `hourly` (copied into a new
-    // array), the caller's provenance becomes the one KMA `HOURLY` source, and `HOURLY` is not missing.
+    // A hourly source was selected. The public selected type allows an empty `hourly`, and the contracts
+    // schema does not reject an empty `hourly` whose HOURLY section is not marked missing, so guard the
+    // selected precondition here: a selected result must carry at least one hourly entry. This throws a
+    // synchronous ZodError before any overview object or source metadata is built.
+    const hourly = nonEmptyHourlyForecasts.parse(input.selection.result.hourly);
+
+    // The selected forecast becomes the overview's `hourly` (a fresh array from the parse above), the
+    // caller's provenance becomes the one KMA `HOURLY` source, and `HOURLY` is not missing.
     const overview = {
       location: input.location,
       current: null,
-      hourly: [...input.selection.result.hourly],
+      hourly,
       daily: [],
       airQuality: {
         current: null,
