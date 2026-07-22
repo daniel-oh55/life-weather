@@ -83,9 +83,11 @@ export function createKmaFallbackRequestPlanFactory(
   이는 **availability-aware primary**와 바로 **이전 scheduled issuance인 previous**를 생성합니다.
 - 이는 기존 PR #9 single request factory의 default(schedule-only PR #8 selector)와 **다릅니다.** 이
   factory는 기존 factory의 default selector를 **변경하지 않습니다.**
-- 이 default는 **아직 production composition에 연결하지 않습니다.** default가 존재해도 현재 production
-  동작은 바뀌지 않습니다. 호출자는 test나 다른 정책을 위해 custom candidates selector를 주입할 수
-  있습니다.
+- **PR #20 grid fallback composition은 이 selector를 (default에 의존하지 않고) 명시적으로 주입**해 이
+  factory를 production에서 소비합니다(아래 "Provider / service / fallback 실행 없음 · production 연결
+  상태" 참조). 그 신규 fallback root는 아직 startup/route에 연결되지 않았고, 기존 grid/location scheduled
+  composition은 계속 PR #9 single request factory를 써서 호출당 request 최대 1회로 불변입니다. 호출자는
+  test나 다른 정책을 위해 custom candidates selector를 주입할 수 있습니다.
 - 실제 declaration은 optional parameter가 아니라 **default parameter**로 작성합니다:
 
   ```ts
@@ -221,7 +223,7 @@ primary와 previous를 각각 만들기 위해 PR #9 single request factory를 *
 - PR #18: primary/previous 완성 request plan 생성 (이 문서)
 - PR #19: primary 실행 → eligibility 검사 → 필요한 경우 previous 최대 1회 실행
 
-## Provider / service / fallback 실행 없음 · production 미연결
+## Provider / service / fallback 실행 없음 · production 연결 상태
 
 - factory는 Provider를 생성·호출하지 않고, hourly service를 호출하지 않으며, 실제 fallback을 실행하지
   않습니다. `createFallbackRequestPlan`은 Promise가 아니라 **동기 결과**를 반환합니다.
