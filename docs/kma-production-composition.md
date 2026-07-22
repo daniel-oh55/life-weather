@@ -416,23 +416,41 @@ usable source를 고르는 **순수 selector**(`selectKmaHourlyFallbackResult`,
 - final `WeatherOverview`/`SourceMetadata` assembly는 여전히 **미구현**이고, `/weather` route·cache도
   **미구현**입니다(후속 PR에서 selector를 소비하는 assembler를 조립할 예정).
 
+## PR #23: hourly WeatherOverview assembler (composition root 추가 없음)
+
+PR #23도 새 composition root를 추가하지 않습니다. 대신 PR #22 selection을 소비해 hourly section만 조립하는
+**순수 assembler**(`assembleKmaHourlyWeatherOverview`,
+[kma-hourly-weather-overview.md](./kma-hourly-weather-overview.md))를 services 계층에 추가합니다.
+
+- **네 callable root(grid scheduled·location scheduled·grid fallback·location fallback)는 모두
+  불변**입니다 — 공개 API·result·runtime 변경 없음.
+- 이 assembler는 순수 함수로 caller의 `WeatherLocation`·precomputed PR #22 selection·(선택 시) selected
+  source provenance를 받아 hourly-only `WeatherOverview`를 조립하고 `weatherOverview.parse`로 동기
+  검증합니다. clock·network·환경·Provider·composition을 건드리지 않으며 PR #22 selector도 호출하지
+  않습니다(caller가 먼저 selection을 계산).
+- **PR #23 pure assembler는 구현 완료**됐지만, **어느 composition root에도 아직 조립되지 않았습니다** —
+  두 fallback root는 계속 PR #19 execution trace를 반환하고, assembler는 composition·route·startup에
+  연결되지 않습니다.
+- selector(PR #22)와 assembler(PR #23)를 location result narrow와 함께 엮는 **application service와 그
+  production composition**은 여전히 **미구현**이고, `/weather` route·cache도 **미구현**입니다.
+
 ## 후속 범위
 
-source-selection policy는 PR #22에서 구현 완료됐고, 네 callable composition root(grid/location ×
-scheduled/fallback)는 그대로 4개로 유지됩니다 — 이 문서 수정에서 새 composition root를 제안하거나 구현하지
-않습니다. 남은 후속 범위는 selector를 소비하는 production result assembly와 그 wiring이며, dependency 순서는
-다음과 같습니다.
+source-selection policy(PR #22)와 hourly-only `WeatherOverview`/`SourceMetadata` assembler(PR #23)는 모두
+순수 함수로 구현 완료됐고, 네 callable composition root(grid/location × scheduled/fallback)는 그대로 4개로
+유지됩니다 — 이 문서 수정에서 새 composition root를 제안하거나 구현하지 않습니다. 남은 후속 범위는 이 순수
+component들을 엮어 소비하는 application service와 그 production wiring이며, dependency 순서는 다음과 같습니다.
 
-1. PR #22 selector(`selectKmaHourlyFallbackResult`)를 소비하는 `WeatherOverview`/`SourceMetadata` result
-   assembler.
-2. location `LOCATION` branch를 먼저 처리하고 successful execution trace에 selection을 적용하는 application
-   service.
-3. 기존 PR #21 location fallback root와 이 assembler를 조립하는 별도의 application-facing production
-   composition.
-4. `apps/api/src/index.ts` startup wiring.
-5. `/weather` route, query validation과 HTTP status/envelope mapping.
-6. cache/stale-data 정책.
-7. authenticated KMA E2E verification.
+1. location `LOCATION` branch를 먼저 narrow하고, successful execution trace에 PR #22
+   selector(`selectKmaHourlyFallbackResult`)를 적용한 뒤, selected source provenance를 결정해 PR #23
+   assembler(`assembleKmaHourlyWeatherOverview`)를 호출하고 selection과 `WeatherOverview`를 함께 반환하는
+   application service.
+2. 기존 PR #21 location fallback root와 이 application service를 조립하는 별도의 application-facing
+   production composition.
+3. `apps/api/src/index.ts` startup wiring.
+4. `/weather` route, query validation과 HTTP status/envelope mapping.
+5. cache/stale-data 정책.
+6. authenticated KMA E2E verification.
 
 ## 변경 이력
 
@@ -501,4 +519,12 @@ v10 / PR #22 / 2026-07 (execution trace selector; composition root 추가 없음
 - 네 callable root 모두 불변(공개 API·result·runtime 변경 없음), roots는 계속 execution trace 반환
 - selector는 어느 composition root에도 아직 조립되지 않음
 - WeatherOverview/SourceMetadata assembly·route·cache는 여전히 미구현
+
+v11 / PR #23 / 2026-07 (hourly WeatherOverview assembler; composition root 추가 없음)
+- PR #23 assembleKmaHourlyWeatherOverview(순수 assembler)가 services 계층에 구현됨(PR #22 selection →
+  hourly-only WeatherOverview)
+- 네 callable root 모두 불변(공개 API·result·runtime 변경 없음)
+- assembler는 어느 composition root에도 아직 조립되지 않음(PR #22 selector도 호출하지 않음)
+- 다음 단계는 location fallback + selector + assembler를 엮는 application service/composition
+- route·cache는 여전히 미구현
 ```
