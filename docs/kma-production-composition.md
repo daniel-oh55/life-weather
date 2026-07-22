@@ -418,11 +418,21 @@ usable source를 고르는 **순수 selector**(`selectKmaHourlyFallbackResult`,
 
 ## 후속 범위
 
-1. 이 네 composition root를 소비하는 `/weather` route 계약과 query validation.
-2. HTTP status mapping.
-3. final primary/previous result selection.
-4. `WeatherOverview`/`SourceMetadata` 조립.
-5. cache/stale-data 정책.
+source-selection policy는 PR #22에서 구현 완료됐고, 네 callable composition root(grid/location ×
+scheduled/fallback)는 그대로 4개로 유지됩니다 — 이 문서 수정에서 새 composition root를 제안하거나 구현하지
+않습니다. 남은 후속 범위는 selector를 소비하는 production result assembly와 그 wiring이며, dependency 순서는
+다음과 같습니다.
+
+1. PR #22 selector(`selectKmaHourlyFallbackResult`)를 소비하는 `WeatherOverview`/`SourceMetadata` result
+   assembler.
+2. location `LOCATION` branch를 먼저 처리하고 successful execution trace에 selection을 적용하는 application
+   service.
+3. 기존 PR #21 location fallback root와 이 assembler를 조립하는 별도의 application-facing production
+   composition.
+4. `apps/api/src/index.ts` startup wiring.
+5. `/weather` route, query validation과 HTTP status/envelope mapping.
+6. cache/stale-data 정책.
+7. authenticated KMA E2E verification.
 
 ## 변경 이력
 
