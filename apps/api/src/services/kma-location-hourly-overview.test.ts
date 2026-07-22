@@ -600,7 +600,11 @@ describe('fetchHourlyWeatherOverviewForLocation — PRIMARY selected', () => {
     const input = makeInput();
     await service.fetchHourlyWeatherOverviewForLocation(input);
 
-    // The resolver and assembler share one parsed location, structurally equal to the caller's.
+    // Neither collaborator receives the caller's original location object: `weatherLocation.parse`
+    // produces a fresh parsed value, so both see a different reference than `input.location`.
+    expect(resolverCalls[0].location).not.toBe(input.location);
+    expect(assemblerCalls[0].location).not.toBe(input.location);
+    // The resolver and assembler share that one parsed location, structurally equal to the caller's.
     expect(resolverCalls[0].location).toBe(assemblerCalls[0].location);
     expect(resolverCalls[0].location).toEqual(input.location);
   });
@@ -815,7 +819,9 @@ describe('fetchHourlyWeatherOverviewForLocation — invalid WeatherLocation', ()
   }> = [
     { name: 'invalid timezone', location: () => makeLocation({ timezone: 'Seoul' }) },
     { name: 'out-of-range latitude', location: () => makeLocation({ latitude: 999 }) },
+    { name: 'out-of-range longitude', location: () => makeLocation({ longitude: 999 }) },
     { name: 'empty id', location: () => makeLocation({ id: '' }) },
+    { name: 'empty displayName', location: () => makeLocation({ displayName: '' }) },
     { name: 'invalid countryCode', location: () => makeLocation({ countryCode: 'kr' }) },
   ];
 

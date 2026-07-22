@@ -277,8 +277,12 @@ shape를 반환).
 
 - location result에는 `LOCATION`/`UNSUPPORTED_LOCATION` branch가 포함됩니다.
 - coordinate support 판정은 location facade의 책임입니다.
-- selector는 primary/previous hourly trace만 선택합니다.
-- 후속 assembler가 location branch를 먼저 narrow한 뒤 selector를 사용합니다.
+- selector 자체는 LOCATION branch를 처리하지 않고 primary/previous hourly trace만 선택합니다.
+- facade result의 LOCATION branch를 먼저 narrow하는 것은 PR #24
+  `createKmaLocationHourlyOverviewService`의 책임입니다. LOCATION이면 facade result를 그대로 반환하고
+  selector를 호출하지 않으며, 지원되는 execution trace일 때만 selector를 정확히 1회 호출합니다.
+- PR #23 assembler는 LOCATION branch를 처리하지도, selector를 호출하지도 않습니다 — PR #24 service가
+  전달한 precomputed selection만 소비합니다.
 
 이번 PR은 LOCATION branch 선택·unsupported location mapping·`RangeError` mapping·location response
 assembler를 구현하지 않습니다.

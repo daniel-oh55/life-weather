@@ -492,8 +492,14 @@ a project on first run; that step is intentionally deferred to a later PR.
   - **Errors** — the method is **not** `async`: an invalid location and a facade synchronous throw
     propagate synchronously (same reference); a facade rejection and a selector/resolver/assembler throw
     reject the returned Promise (same reference). No broad `try`/`catch`, wrapping, logging, or partial
-    result. The PR #23 selected-empty guard still fires (synchronous `ZodError`) through the integrated
-    service.
+    result. The PR #23 assembler's selected-empty nonempty guard is itself a **synchronous** `ZodError`
+    when the assembler is called directly, but in this integrated service the assembler runs inside the
+    facade Promise's `.then` fulfillment handler: the guard throws inside the fulfillment handler, so the
+    PR #24 caller observes a **rejection** of the returned Promise with that same `ZodError` reference —
+    the service method itself does not throw synchronously on selected-empty. So the two error boundaries
+    are: **synchronous throw** — invalid `WeatherLocation`, facade synchronous throw; **returned-Promise
+    rejection** — facade rejection, selector throw, resolver throw, assembler throw, and the selected-empty
+    assembler `ZodError`.
   - **Application service implemented; production resolver and production composition not.** It is wired
     into **no** composition root or route; the production metadata resolver and PR #24 production
     composition (and the `/weather` route) are later PRs. It changes no existing runtime and adds **no**
