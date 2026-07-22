@@ -422,14 +422,48 @@ a project on first run; that step is intentionally deferred to a later PR.
   - It is **not** wired into any composition root, facade, `WeatherOverview`/`SourceMetadata`
     assembler, or route yet — this PR implements the **selection policy** only; its production
     consumer/assembler is a later PR. It adds **no** new dependency.
-- **Still not implemented.** `WeatherOverview` assembly, `SourceMetadata`, the production
-  **consumer/assembler** that would apply the PR #22 selection policy, a `fallbackUsed` API field,
-  current weather, daily forecast (incl. `TMN`/`TMX`), feels-like computation, a common provider
-  interface, **running any of the four production composition roots at API app startup**, the
-  `/weather` route and its query validation, HTTP error/status mapping, API-availability retry beyond
-  the single previous-issuance fallback, and cache are **not** here — those are later PRs. The final
-  primary/previous **source-selection policy** is now implemented as a pure function (PR #22), but no
-  production consumer applies it yet. None of the four composition roots (grid scheduled, location
+- **KMA hourly `WeatherOverview` assembler** — PR #23 adds `assembleKmaHourlyWeatherOverview`
+  (`src/services/`), a **pure, synchronous** function that consumes a **precomputed PR #22 selection**
+  and assembles the **hourly-only** partial `@life-weather/contracts` `WeatherOverview`. See
+  [docs/kma-hourly-weather-overview.md](../../docs/kma-hourly-weather-overview.md). Highlights:
+  - Public API: `assembleKmaHourlyWeatherOverview(input): WeatherOverview` with
+    `KmaHourlyWeatherOverviewInput` (a `{ location, selection, source }` union correlated so a selected
+    hourly source carries a `KmaHourlySourceMetadataInput` provenance context and a no-selection outcome
+    carries `source: null`) and `KmaHourlySourceMetadataInput` (`Pick<SourceMetadata, 'sourceId' |
+    'issuedAt' | 'fetchedAt' | 'retrievalMode'>`). No new factory/interface/class.
+  - **Selected policy** — the selected result's `hourly` becomes the overview's `hourly`; `sources`
+    carries exactly **one** KMA `HOURLY` `SourceMetadata`; `HOURLY` is **not** in `missingSections`
+    (`CURRENT`/`DAILY`/`AIR_QUALITY_CURRENT`/`AIR_QUALITY_FORECAST`/`ALERTS` are). **No-selection
+    policy** — `hourly` is `[]`, `sources` is `[]`, and `HOURLY` joins the missing set (all six
+    sections missing); no source metadata is fabricated for a source that was not chosen.
+  - **Provenance is caller-provided, never inferred** — `sourceId`/`issuedAt`/`fetchedAt`/
+    `retrievalMode` come from the caller (an unknown issuance is passed as an explicit `issuedAt: null`);
+    the assembler fixes only `provider: 'KMA'`, `sections: ['HOURLY']`, and `observedAt: null`, and reads
+    **no** clock/base-time to reconstruct provenance. Every other section is a fixed placeholder
+    (`current: null`, `daily: []`, `airQuality.current: null`, `airQuality.daily: []`, `alerts: []`), so
+    the `WeatherOverview` `superRefine` invariant keeps placeholders and `missingSections` consistent.
+  - It returns `weatherOverview.parse(overview)`, so a malformed location/timestamp/`sourceId` or an
+    invariant breach throws a **synchronous** Zod error (no `safeParse` error union, no broad
+    `try/catch`, no logging, no fallback/default timestamp). It allocates a fresh output per call
+    (`hourly` is copied into a new array; parse produces fresh nested objects), mutates nothing, and
+    preserves hourly value/order (no reference identity is contractual). It is **pure and synchronous**:
+    no `Promise`, Provider, network, clock, environment, or `AbortSignal`; it runs the PR #22 selector
+    for **nobody** (the caller does that first), handles **no** `LOCATION` branch, and builds no
+    `current`/`daily`/air-quality/alerts data.
+  - **Production wiring not implemented.** The assembler is wired into **no** composition root or route;
+    the application service that would narrow a location result's `LOCATION` branch, apply the selector,
+    resolve the selected source's provenance, call this assembler, and return selection + overview is a
+    later PR. It changes no existing runtime and adds **no** new dependency.
+- **Still not implemented.** The **application service** that would narrow a location result's
+  `LOCATION` branch, apply the PR #22 selection policy, resolve the selected source's provenance, and
+  call the PR #23 assembler; `current`/`daily`/air-quality/alerts `WeatherOverview` sections and their
+  `SourceMetadata`; a `fallbackUsed` API field; current weather, daily forecast (incl. `TMN`/`TMX`),
+  feels-like computation; a common provider interface; **running any of the four production composition
+  roots at API app startup**; the `/weather` route and its query validation; HTTP error/status mapping;
+  API-availability retry beyond the single previous-issuance fallback; and cache are **not** here —
+  those are later PRs. The final primary/previous **source-selection policy** (PR #22) and the **pure
+  hourly-only `WeatherOverview`/`SourceMetadata` assembler** (PR #23) are now both implemented, but no
+  production consumer applies them yet. None of the four composition roots (grid scheduled, location
   scheduled, grid fallback, location fallback) is wired into `src/index.ts` and none is connected to a
   route (`/health` unchanged).
 

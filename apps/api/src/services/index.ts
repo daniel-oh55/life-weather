@@ -2,7 +2,7 @@
  * Public surface of `apps/api`'s **application services** — the orchestration layer that sequences
  * the KMA provider boundary and the domain normalizers, and assembles the requests they consume.
  *
- * Nine application components live here so far:
+ * Ten application components live here so far:
  *
  * 1. The PR #7 KMA **hourly-forecast orchestration** (`createKmaHourlyForecastService`): it calls
  *    the PR #5 HTTP provider and the PR #6 hourly normalizer in order and reports a `PROVIDER`- or
@@ -76,6 +76,21 @@
  *    executes nothing, calls no Provider/network/clock/eligibility classifier, ranks no error kind,
  *    handles **no** `LOCATION` branch, and is wired into **no** `WeatherOverview`/`SourceMetadata`,
  *    composition root, or route yet.
+ * 10. The PR #23 KMA **hourly `WeatherOverview` assembler** (`assembleKmaHourlyWeatherOverview`): a
+ *    **pure, synchronous** function that consumes a **precomputed PR #22 selection** and assembles the
+ *    hourly-only partial contracts `WeatherOverview`. When a hourly source is selected it maps the
+ *    selected result's `hourly` into the overview and records **one** KMA `HOURLY` `SourceMetadata`;
+ *    when there is no selection it emits an empty `hourly`/`sources` and adds `HOURLY` to
+ *    `missingSections`. Every other section is a fixed placeholder (`current: null`, `daily: []`,
+ *    `airQuality.current: null`, `airQuality.daily: []`, `alerts: []`), so `missingSections` always
+ *    lists exactly the sections not yet supplied. The source metadata's provenance
+ *    (`sourceId`/`issuedAt`/`fetchedAt`/`retrievalMode`) is **caller-provided** — the assembler infers
+ *    none of it and fixes only `provider: 'KMA'`, `sections: ['HOURLY']`, and `observedAt: null`; an
+ *    unknown issuance is passed as an explicit `issuedAt: null`. It validates the payload with
+ *    `weatherOverview.parse` (a malformed location/timestamp/`sourceId` or invariant breach throws a
+ *    synchronous Zod error), allocates a fresh output every call, and mutates nothing. It runs the
+ *    selector for **nobody** (the caller does that first), handles **no** `LOCATION` branch, builds no
+ *    `current`/`daily`/air-quality/alerts data, and is wired into **no** composition root or route yet.
  *
  * The grid-based single-request **production composition root** (system clock adapter,
  * provider-from-env wiring, a live facade instance) is built in PR #11 and lives in `../composition`;
@@ -91,7 +106,8 @@
  * `docs/kma-hourly-service.md`, `docs/kma-forecast-request-factory.md`,
  * `docs/kma-scheduled-hourly-facade.md`, `docs/kma-location-scheduled-hourly.md`,
  * `docs/kma-fallback-request-plan.md`, `docs/kma-hourly-fallback.md`,
- * `docs/kma-location-hourly-fallback.md`, and `docs/kma-hourly-fallback-selection.md`.
+ * `docs/kma-location-hourly-fallback.md`, `docs/kma-hourly-fallback-selection.md`, and
+ * `docs/kma-hourly-weather-overview.md`.
  */
 
 export {
@@ -163,3 +179,9 @@ export {
   type KmaHourlyFallbackSelection,
   type KmaHourlyFallbackSelectionSource,
 } from './kma-hourly-fallback-selection';
+
+export {
+  assembleKmaHourlyWeatherOverview,
+  type KmaHourlySourceMetadataInput,
+  type KmaHourlyWeatherOverviewInput,
+} from './kma-hourly-weather-overview';

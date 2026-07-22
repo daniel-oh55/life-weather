@@ -292,12 +292,28 @@ assembler를 구현하지 않습니다.
 - mutation·cache·singleton·global state·broad catch가 없습니다.
 - 기존 execution을 **읽기만** 합니다.
 
-## 후속 consumer 계획
+## 첫 consumer (PR #23 assembler)와 후속 계획
 
-이 selector는 아직 어떤 production composition·facade·route에도 연결되지 않았습니다. 후속 계획:
+이 selector의 **첫 consumer**는 PR #23 hourly `WeatherOverview` assembler
+(`assembleKmaHourlyWeatherOverview`, [kma-hourly-weather-overview.md](./kma-hourly-weather-overview.md))
+입니다. 그 assembler는 이 selector가 반환한 `KmaHourlyFallbackSelection`을 입력으로 받아 hourly section만
+조립한 partial `WeatherOverview`를 만듭니다. 이때 두 component의 책임 경계는 다음과 같습니다.
 
-1. PR #23 `WeatherOverview`/`SourceMetadata` result assembler가 이 selector를 소비.
-2. production location fallback + selector assembly.
+- **selector contract는 불변**입니다 — PR #23은 이 selector의 공개 API·branch shape·exact key·reference
+  보존 정책을 전혀 바꾸지 않습니다.
+- assembler는 이 selector를 **호출하지 않습니다.** caller가 먼저 selector를 실행해 selection을 얻고, 그
+  precomputed selection을 assembler에 전달합니다. assembler는 selection을 **재계산하지 않고**(eligibility
+  재검사·error 종류·PRIMARY/PREVIOUS 정책 판단 없음) `selection.result.hourly`만 사용합니다.
+- selected source의 **`SourceMetadata` provenance context**(`sourceId`/`issuedAt`/`fetchedAt`/
+  `retrievalMode`)는 이 selector가 아니라 **caller가 assembler에 제공**합니다 — selector는 execution
+  trace만 읽고 provenance를 만들지 않으며, assembler도 이를 추정하지 않습니다.
+
+selector와 assembler는 모두 순수 함수로 구현 완료됐지만, 아직 어떤 production composition·facade·route에도
+연결되지 않았습니다. 후속 계획:
+
+1. `KmaLocationHourlyFallbackResult`의 `LOCATION` branch를 먼저 narrow하고, successful trace에 이 selector를
+   적용한 뒤 PR #23 assembler를 호출해 selection과 overview를 함께 반환하는 **application service**.
+2. selected source provenance resolver/wiring과 그 production location fallback composition.
 3. `/weather` route와 HTTP status mapping.
 4. cache / stale-data 정책.
 5. authenticated KMA end-to-end verification.
@@ -313,4 +329,10 @@ v1 / PR #22 / 2026-07
 - execution/result exact-reference 보존, fresh wrapper
 - pure/synchronous, no Provider/network/clock/classifier
 - no composition/route/result assembly wiring
+
+v2 / PR #23 / 2026-07 (첫 consumer 추가; selector 불변)
+- PR #23 assembleKmaHourlyWeatherOverview가 이 selection의 첫 consumer(selector 공개 API·계약 불변)
+- assembler는 selector를 호출하지 않고 precomputed selection을 소비(selection 재계산 없음)
+- selected source의 SourceMetadata provenance context는 caller가 assembler에 제공(selector 무관)
+- production integration(location narrow + selector + assembler application service)은 후속
 ```
