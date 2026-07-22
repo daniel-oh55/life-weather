@@ -256,7 +256,7 @@ returned Promise rejection으로 **같은 error reference를 전파**합니다.
   reference를 생성합니다. 반환 wrapper는 매 호출 fresh object이고, global mutable state·cache·result
   singleton·retry counter가 없습니다.
 
-## PR #20 갱신: production consumption
+## PR #20~#21 갱신: production consumers
 
 이 service는 PR #19에서 **어느 production composition에도 연결되지 않은** 상태였으나, **PR #20에서 신규
 grid fallback composition**(`createKmaHourlyFallbackCompositionFromEnv`,
@@ -267,8 +267,12 @@ grid fallback composition**(`createKmaHourlyFallbackCompositionFromEnv`,
   PR #17 classifier가 주입된 그래프로 조립해 소비합니다.
 - **이 service 자체의 공개 API·실행 계약·result union은 불변**입니다(아래 계약 그대로).
 - 기존 scheduled/location single-request composition에는 **연결되지 않습니다**(그 두 root는 불변).
+- **PR #21 location fallback facade/composition**도 이 PR #20 grid fallback root를 통해 이 service를
+  소비합니다 — 좌표 → grid adapter일 뿐 실행 정책을 바꾸지 않습니다(아래 "PR #21 location fallback
+  facade가 새로운 consumer" 참조).
 - `apps/api/src/index.ts`·서버 startup·`/weather` route에는 **아직 연결되지 않았습니다.**
-- location(위·경도) fallback·result assembly·cache는 여전히 **미구현**입니다(후속 PR).
+- primary/previous **final source selection**·`WeatherOverview`/`SourceMetadata`·result assembly·cache는
+  여전히 **미구현**입니다(후속 PR).
 
 ## 보장하지 않는 것 (service 계약 범위 밖)
 
@@ -285,9 +289,10 @@ grid fallback composition**(`createKmaHourlyFallbackCompositionFromEnv`,
   없습니다.
 - **no authenticated live KMA test.** 실제 `ServiceKey`를 사용한 end-to-end 검증은 이 PR에서 수행하지
   않았습니다.
-- **production 동작 불변.** Provider·parser·normalizer·기존 hourly service·classifier·request-plan
-  factory·scheduled/location facade·composition은 변경되지 않았고, production은 여전히 facade 호출당 KMA
-  request 최대 1회입니다.
+- **이 service는 기존 동작을 바꾸지 않음.** Provider·parser·normalizer·기존 hourly service·classifier·
+  request-plan factory·scheduled/location facade·composition은 변경되지 않았습니다. 기존 scheduled/location
+  single-request facade는 여전히 호출당 KMA request 최대 1회이고, 이 service를 소비하는 PR #20/#21 fallback
+  root만 eligible primary에 한해 Provider를 최대 2회 호출합니다.
 
 ## PR #21 location fallback facade가 새로운 consumer
 

@@ -78,8 +78,12 @@
   함수 호출로 조립해 live `KmaHourlyFallbackService`를 반환합니다(생성 시 clock read·network 0회, config
   실패는 Provider의 `KmaProviderConfigError` 값 그대로, 성공 시 `{ ok, service }`만 공개, 실행 시 primary
   ineligible이면 fetch 최대 1회·eligible이면 최대 2회, third attempt 없음). 기존 grid/location scheduled
-  root와 그 `{ ok, facade }` 계약은 **불변**이고, location(위·경도) fallback root는 **아직 없습니다**(후속
-  PR). 이 root도 `apps/api/src/index.ts`나 route에 연결되지 않았습니다.
+  root와 그 `{ ok, facade }` 계약은 **불변**입니다. 이어서 **PR #21**에서는 이 PR #20 grid fallback
+  pipeline 앞에 PR #12 위·경도 → grid converter를 두는 **네 번째 병렬 production
+  root**(`createKmaLocationHourlyFallbackCompositionFromEnv`)를 추가했습니다 — 지원되는 위치는 grid
+  fallback service를 통해 Provider/fetch를 최대 2회 호출할 수 있고, 지원되지 않거나 잘못된 위치는
+  clock·Provider 실행 전에 종료됩니다(fetch 0회). 기존 세 root(grid/location scheduled·grid fallback)는
+  변경되지 않았으며, 네 root 모두 아직 `apps/api/src/index.ts`·startup·route에 **연결되지 않았습니다**.
   live availability fallback/retry 정책·`WeatherOverview` 조립·final primary/previous selection·
   `/weather` API route·HTTP status mapping은 여전히 **미구현**(후속 PR)이며, 별도 general `config`
   package도 여전히 미구현입니다.

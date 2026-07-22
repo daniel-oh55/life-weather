@@ -304,11 +304,17 @@ a project on first run; that step is intentionally deferred to a later PR.
     reference-epoch / retry metadata. A clock error and a selector `RangeError` propagate **verbatim**
     (no partial plan, no broad `try/catch`, no logging).
   - **No PR #17 classifier invocation, no Provider / hourly-service call, and no fallback execution** —
-    the request plan is built *before* execution, whereas eligibility is decided *after* a primary
-    service result exists, so a `previous` request being present does not mean it will be sent
-    (that is PR #19's decision). It is **not** wired into the production composition yet, so current
-    production behaviour is unchanged and the facade still issues **at most one** KMA request per call;
-    no route consumes it.
+    the factory itself only assembles the `{ primary, previous }` pair; the request plan is built
+    *before* execution, whereas eligibility is decided *after* a primary service result exists, so a
+    `previous` request being present does not mean it will be sent (that is the PR #19 fallback
+    service's decision, not the factory's).
+  - **Consumed in production by the fallback roots.** The **PR #20 grid fallback composition** assembles
+    this factory (with the PR #16 candidate selector) into its production graph, and the **PR #21
+    location fallback composition** reuses that same PR #20 root, so it consumes this factory
+    indirectly. In those fallback roots an eligible primary lets the provider be called **at most
+    twice** per run; the existing grid/location **single-request scheduled roots** still call it **at
+    most once** per call. None of the four production roots is wired into `src/index.ts`, app startup,
+    or the `/weather` route yet.
 - **KMA hourly fallback orchestration service** — PR #19 adds `createKmaHourlyFallbackService`
   (`src/services/`), the application service that combines the PR #18 request-plan factory, the PR #7
   hourly service, and the PR #17 classifier into an at-most-two-attempt run. It is the first component
