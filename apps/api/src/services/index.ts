@@ -2,7 +2,7 @@
  * Public surface of `apps/api`'s **application services** — the orchestration layer that sequences
  * the KMA provider boundary and the domain normalizers, and assembles the requests they consume.
  *
- * Five application components live here so far:
+ * Six application components live here so far:
  *
  * 1. The PR #7 KMA **hourly-forecast orchestration** (`createKmaHourlyForecastService`): it calls
  *    the PR #5 HTTP provider and the PR #6 hourly normalizer in order and reports a `PROVIDER`- or
@@ -30,6 +30,16 @@
  *    exactly `'03'` (`KMA_NO_DATA`) or a success with an empty `hourly` array (`EMPTY_HOURLY`);
  *    every other result is ineligible. It performs **no** actual fallback execution and is not the
  *    provider's, facade's, or composition's responsibility; no route consumes it yet.
+ * 6. The PR #18 KMA **fallback request-plan factory** (`createKmaFallbackRequestPlanFactory`):
+ *    combines an injected clock, an injectable candidate selector, and caller-supplied
+ *    `product`/`nx`/`ny` into a `{ primary, previous }` pair of complete `KmaForecastRequest`s from a
+ *    **single** absolute reference — the clock is read **exactly once** and the candidate selector is
+ *    called **exactly once** per plan (construction calls neither). The selector is a
+ *    `KmaForecastBaseTimeCandidatesSelector`; when omitted it defaults to the PR #16
+ *    availability-aware `selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay`. It builds the
+ *    two requests only — it performs **no** provider, hourly-service, or PR #17 classifier
+ *    invocation and **no** fallback execution. It is **not** wired into the production composition
+ *    yet (so current production behaviour is unchanged), and no HTTP route consumes it.
  *
  * The grid-based **production composition root** (system clock adapter, provider-from-env wiring, a
  * live facade instance) is built in PR #11 and lives in `../composition`; PR #12 added the
@@ -40,7 +50,8 @@
  * Application services deliberately live **outside** `providers/kma` (they are not part of the
  * provider boundary) and are exported only from here, never from `providers/kma/index.ts`. See
  * `docs/kma-hourly-service.md`, `docs/kma-forecast-request-factory.md`,
- * `docs/kma-scheduled-hourly-facade.md`, and `docs/kma-location-scheduled-hourly.md`.
+ * `docs/kma-scheduled-hourly-facade.md`, `docs/kma-location-scheduled-hourly.md`, and
+ * `docs/kma-fallback-request-plan.md`.
  */
 
 export {
@@ -81,3 +92,11 @@ export {
   type KmaHourlyFallbackEligibility,
   type KmaHourlyFallbackReason,
 } from './kma-hourly-fallback-eligibility';
+
+export {
+  createKmaFallbackRequestPlanFactory,
+  type KmaFallbackRequestPlan,
+  type KmaFallbackRequestPlanFactory,
+  type KmaFallbackRequestPlanFactoryInput,
+  type KmaForecastBaseTimeCandidatesSelector,
+} from './kma-fallback-request-plan';

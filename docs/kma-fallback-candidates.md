@@ -198,6 +198,14 @@ validation 순서는 기존 selector 계약을 따릅니다(epoch 우선 검증)
   추가됐지만, candidate selector와 classifier는 **아직 서로 독립적**입니다. candidate selector는 service
   결과를 검사하지 않고 base-time 후보만 계산하며, classifier는 base-time 후보를 계산하지 않고 service
   결과만 분류합니다. 둘을 조합하는 orchestration은 다음 PR입니다.
+- PR #18에서 **fallback request-plan factory**
+  (`createKmaFallbackRequestPlanFactory`, `apps/api/src/services`,
+  [kma-fallback-request-plan.md](./kma-fallback-request-plan.md))가 이 candidate pair를 **완성된 request
+  pair**(`{ primary, previous }`)로 조립합니다 — 이 candidate selector 자체는 `apps/api`의
+  `KmaForecastRequest` type을 알지 못하고, clock을 읽지도 않습니다("현재 시각"은 caller 입력). request
+  plan을 조립할 때 **injected clock을 정확히 한 번** 읽는 쪽은 그 request-plan factory이며, factory는
+  그 한 epoch를 이 selector에 그대로 전달합니다. 이 조립은 여전히 **실제 fallback을 실행하지
+  않습니다**(plan 생성뿐, production 미연결).
 
 ## 다음 orchestration PR 권장 범위
 
@@ -205,7 +213,10 @@ validation 순서는 기존 selector 계약을 따릅니다(epoch 우선 검증)
    (`classifyKmaHourlyFallbackEligibility`, `apps/api/src/services`,
    [kma-fallback-eligibility.md](./kma-fallback-eligibility.md)). 아직 이 candidate selector와
    조합되지 않음.
-2. primary + previous request plan factory
+2. ~~primary + previous request plan factory~~ — **PR #18에서 완료**
+   (`createKmaFallbackRequestPlanFactory`, `apps/api/src/services`,
+   [kma-fallback-request-plan.md](./kma-fallback-request-plan.md)). 아직 classifier·orchestration과
+   조합되지 않음.
 3. 이전 issuance 단일 fallback orchestration
 4. `WeatherOverview`/`SourceMetadata` assembler
 5. `/weather` route와 HTTP mapping

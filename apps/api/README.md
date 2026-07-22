@@ -281,6 +281,34 @@ a project on first run; that step is intentionally deferred to a later PR.
   - **Not yet wired to the PR #16 candidates.** This PR only classifies — no request plan, no second
     request, no retry, and no fallback execution. The production facade still issues **at most one** KMA
     request per call, and no route consumes the classifier.
+- **KMA fallback request-plan factory** — PR #18 adds `createKmaFallbackRequestPlanFactory`
+  (`src/services/`), the application-level factory that combines an **injected clock** and an
+  **injectable candidate selector** with caller-supplied `product`/`nx`/`ny` into a
+  `{ primary, previous }` pair of complete `KmaForecastRequest`s from a **single** absolute reference.
+  See [docs/kma-fallback-request-plan.md](../../docs/kma-fallback-request-plan.md). Highlights:
+  - Implemented: from one clock read it builds two complete requests — `primary` (the PR #16
+    availability-aware candidate) and `previous` (the one-step-back candidate) — sharing the same
+    `product`/`nx`/`ny` and differing only in `baseDate`/`baseTime`. The selector is a
+    `KmaForecastBaseTimeCandidatesSelector`; when omitted it defaults to the PR #16
+    `selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay`, and the caller input type is the PR #9
+    `KmaForecastRequestFactoryInput` alias. It does not change the PR #9 single request factory's
+    schedule-only default.
+  - Construction reads the clock and calls the selector **zero** times; each
+    `createFallbackRequestPlan()` reads the clock **exactly once** (no argument, epoch forwarded
+    verbatim) and calls the selector **exactly once**, so both requests come from one candidate pair.
+    It does **not** call the PR #9 single request factory (calling it twice could read the clock twice
+    and split the pair across an availability boundary).
+  - Each request carries exactly `product`/`baseDate`/`baseTime`/`nx`/`ny` (explicit fields, never an
+    `input` or candidate spread); the plan is fresh with distinct `primary`/`previous` objects per
+    call, never mutates the input or the candidate result, and exposes no eligibility / candidate /
+    reference-epoch / retry metadata. A clock error and a selector `RangeError` propagate **verbatim**
+    (no partial plan, no broad `try/catch`, no logging).
+  - **No PR #17 classifier invocation, no Provider / hourly-service call, and no fallback execution** —
+    the request plan is built *before* execution, whereas eligibility is decided *after* a primary
+    service result exists, so a `previous` request being present does not mean it will be sent
+    (that is PR #19's decision). It is **not** wired into the production composition yet, so current
+    production behaviour is unchanged and the facade still issues **at most one** KMA request per call;
+    no route consumes it.
 - **Still not implemented.** `WeatherOverview` assembly, `SourceMetadata`, current weather, daily
   forecast (incl. `TMN`/`TMX`), feels-like computation, a common provider interface, **running either
   production composition root at API app startup**, the `/weather` route and its query validation,
