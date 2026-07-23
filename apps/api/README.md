@@ -460,8 +460,9 @@ a project on first run; that step is intentionally deferred to a later PR.
   - **Production wiring not implemented.** The assembler is wired into **no** composition root or route.
     The PR #24 application service (below) now narrows a location result's `LOCATION` branch, applies the
     selector, resolves the selected source's provenance via an **injected** resolver, and calls this
-    assembler; the **production resolver** and **production composition** remain later PRs. It changes no
-    existing runtime and adds **no** new dependency.
+    assembler; the **production resolver** is now the PR #26
+    `createKmaLiveSelectedHourlySourceMetadataResolver` (below), while the **production composition**
+    remains a later PR. It changes no existing runtime and adds **no** new dependency.
 - **KMA location hourly `WeatherOverview` application service** — PR #24 adds
   `createKmaLocationHourlyOverviewService` (`src/services/`), the orchestration layer that connects the
   previous four hourly building blocks into a single call. See
@@ -491,7 +492,8 @@ a project on first run; that step is intentionally deferred to a later PR.
     availability-delay boundary). `issuedAt: null` is passed through. Since PR #25 the injected resolver
     can read the **actual** executed issuance from `input.selection.execution.primaryIssuance` (and, after
     narrowing `fallbackAttempted`, `previousIssuance`) instead of recomputing it — the sanitized identity
-    is preserved on the trace, but the production resolver that consumes it is still a later PR.
+    is preserved on the trace and the PR #26 `createKmaLiveSelectedHourlySourceMetadataResolver` (below)
+    is the production resolver that consumes it.
   - **Errors** — the method is **not** `async`: an invalid location and a facade synchronous throw
     propagate synchronously (same reference); a facade rejection and a selector/resolver/assembler throw
     reject the returned Promise (same reference). No broad `try`/`catch`, wrapping, logging, or partial
@@ -503,10 +505,11 @@ a project on first run; that step is intentionally deferred to a later PR.
     are: **synchronous throw** — invalid `WeatherLocation`, facade synchronous throw; **returned-Promise
     rejection** — facade rejection, selector throw, resolver throw, assembler throw, and the selected-empty
     assembler `ZodError`.
-  - **Application service implemented; production resolver and production composition not.** It is wired
-    into **no** composition root or route; the production metadata resolver and PR #24 production
-    composition (and the `/weather` route) are later PRs. It changes no existing runtime and adds **no**
-    new dependency.
+  - **Application service implemented; production resolver now implemented (PR #26); production
+    composition not.** It is wired into **no** composition root or route; the production metadata resolver
+    is the PR #26 `createKmaLiveSelectedHourlySourceMetadataResolver` (below), while the PR #24 production
+    composition (and the `/weather` route) remain later PRs. It changes no existing runtime and adds
+    **no** new dependency.
 - **KMA forecast sanitized issuance identity in the execution trace** — PR #25 adds the public type
   `KmaForecastIssuanceIdentity` (`src/services/kma-forecast-issuance-identity.ts`,
   `product`/`baseDate`/`baseTime` only) and preserves it inside the PR #19 execution trace, derived from
@@ -530,19 +533,56 @@ a project on first run; that step is intentionally deferred to a later PR.
     top level. The PR #24 injected resolver reaches the actual issuance via
     `input.selection.execution.primaryIssuance` (and, after narrowing `fallbackAttempted`,
     `previousIssuance`) — its resolver input own keys stay exactly `product`/`location`/`selection`.
-  - No `issuedAt`/`fetchedAt`/`sourceId`/`retrievalMode` converter, **no production metadata resolver**,
-    no production composition, and no route mapper are added — those are PR #26/#27. `error`/`Promise`/
-    abort contracts are unchanged; providers, contracts, weather-core, and all composition runtime are
-    unchanged; and it adds **no** new dependency.
-- **Still not implemented.** The **production metadata resolver** and the **PR #24 production
-  composition** that would assemble this application service into a callable root; `current`/`daily`/
+  - PR #25 itself adds no `issuedAt`/`fetchedAt`/`sourceId`/`retrievalMode` converter and no production
+    metadata resolver — those are the PR #26 live resolver (below); no production composition and no route
+    mapper are added (PR #27). `error`/`Promise`/abort contracts are unchanged; providers, contracts,
+    weather-core, and all composition runtime are unchanged; and it adds **no** new dependency.
+- **KMA live selected-source metadata resolver** — PR #26 adds
+  `createKmaLiveSelectedHourlySourceMetadataResolver` and the public converter
+  `convertKmaForecastIssuanceToIssuedAt` (`src/services/kma-selected-hourly-source-metadata.ts`), the
+  production `KmaSelectedHourlySourceMetadataResolver` the PR #24 service injects. See
+  [docs/kma-selected-hourly-source-metadata.md](../../docs/kma-selected-hourly-source-metadata.md).
+  Highlights:
+  - Public API: `createKmaLiveSelectedHourlySourceMetadataResolver(clock:
+    KmaSelectedHourlySourceMetadataClock)` and `convertKmaForecastIssuanceToIssuedAt(issuance):
+    NonNullable<SourceMetadata['issuedAt']>`. No new class.
+  - **Identity mapping** — a `PRIMARY` selection uses the actual `execution.primaryIssuance`; a
+    `PREVIOUS` selection uses the actual `execution.previousIssuance` (present only on a fallback-attempted
+    trace). PRIMARY precedence is honored even on a fallback-attempted trace. It never re-runs the
+    selection policy or re-checks usability/eligibility — it defends only the source ↔ execution-arm
+    correlation.
+  - **`issuedAt`** — the issuance's `baseDate`/`baseTime` become a KST (`+09:00`) instant with seconds
+    (`YYYY-MM-DDTHH:mm:00+09:00`), built by explicit string composition (never a `Date`) and validated by
+    the contracts `isoDateTime` schema (which rejects a non-leap `20260229`, month `13`, day `00`, hour
+    `24`, minute `60`). Schedule canonicality is **not** re-validated, so a structurally valid `0615`
+    converts; `SHORT`/`ULTRA_SHORT` with the same date/time produce the same `issuedAt`.
+  - **`sourceId`** — a fixed per-product app-internal id (`kma-short-forecast-hourly` /
+    `kma-ultra-short-forecast-hourly`) encoding **neither** the issuance, the `PRIMARY`/`PREVIOUS`
+    distinction, `fallbackUsed`, nor the location. **`retrievalMode`** is fixed `'LIVE'` (no cache yet).
+  - **`fetchedAt`** — the resolver-materialization server time, read from the injected clock **exactly
+    once** per valid call, as a UTC `Z` millisecond instant. It is **not** an exact transport timestamp; a
+    future cache layer will preserve the upstream `fetchedAt` and report `retrievalMode: 'CACHE'`.
+  - **Errors** — `input.product === issuance.product` is asserted **before** the clock is read; a
+    non-object/unsupported issuance, non-selected/unknown-source selection, `PREVIOUS` without fallback,
+    product mismatch, or invalid clock value each throw a **static** `RangeError` (raw values never
+    included) **before** the clock is read (clock read zero times on invalid input). A throwing clock
+    propagates the same reference. Direct calls are synchronous; inside the PR #24 `.then` handler the
+    throw becomes the returned Promise's rejection. Output has exactly the four sorted own keys
+    `fetchedAt`/`issuedAt`/`retrievalMode`/`sourceId`, is fresh per call, and leaks no
+    transport/selection/location field.
+  - **Not implemented.** It is wired into **no** composition root or route; production composition and
+    cache are PR #27. It reads no env/network, opens no `fetch`/`AbortController`, and adds **no** new
+    dependency.
+- **Still not implemented.** The **PR #24 production composition** that would assemble the application
+  service and the PR #26 live resolver into a callable root; `current`/`daily`/
   air-quality/alerts `WeatherOverview` sections and their `SourceMetadata`; a `fallbackUsed` API field;
   current weather, daily forecast (incl. `TMN`/`TMX`), feels-like computation; a common provider
   interface; **running any of the four production composition roots at API app startup**; the `/weather`
   route and its query validation; HTTP error/status mapping; API-availability retry beyond the single
   previous-issuance fallback; and cache are **not** here — those are later PRs. The PR #24 **application
-  service** now connects the PR #21 facade, PR #22 selection policy, and PR #23 assembler, but no
-  production resolver or production composition applies it yet. None of the four composition roots (grid
+  service** now connects the PR #21 facade, PR #22 selection policy, and PR #23 assembler, and the PR #26
+  **live resolver** materializes the selected source's provenance, but no production composition applies
+  them yet. None of the four composition roots (grid
   scheduled, location scheduled, grid fallback, location fallback) is wired into `src/index.ts` and none
   is connected to a route (`/health` unchanged).
 

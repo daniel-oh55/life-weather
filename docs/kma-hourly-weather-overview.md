@@ -271,10 +271,11 @@ provenance context는 caller가 **명시적으로** 제공합니다.
 
 ### issuedAt이 null을 허용하는 이유
 
-현재 fallback pipeline은 발표시각을 `WeatherOverview` 조립 시점에 알 수 없습니다(request plan/base time
-복원은 이 PR의 범위 밖). 그래서 caller가 `issuedAt: null`을 **명시적으로** 전달할 수 있습니다. contracts의
-`SourceMetadata`도 `issuedAt`을 nullable로 정의합니다(forecast는 `issuedAt`+`observedAt: null`, 관측은
-그 반대). assembler는 현재 시각을 읽거나 KMA base time을 추정해 `issuedAt`을 채우지 않습니다.
+발표시각을 아는 caller — PR #26 live resolver(`createKmaLiveSelectedHourlySourceMetadataResolver`)는 PR #25
+trace가 보존한 issuance identity로 concrete `issuedAt`을 만듭니다 — 는 구체 값을 전달하고, 알 수 없는 caller는
+`issuedAt: null`을 **명시적으로** 전달할 수 있습니다. contracts의 `SourceMetadata`도 `issuedAt`을 nullable로
+정의합니다(forecast는 `issuedAt`+`observedAt: null`, 관측은 그 반대). 어느 경우든 **assembler 자체**는 현재
+시각을 읽거나 KMA base time을 추정해 `issuedAt`을 채우지 않습니다(provenance-agnostic·clock-free 정책 불변).
 
 ### provider / sections / observedAt를 assembler가 고정하는 이유
 
@@ -400,8 +401,9 @@ assembler의 공개 API·계약은 PR #24로 **불변**입니다. 이 service는
   reject시킵니다. 즉 caller는 returned Promise의 rejection으로 관찰하며, service method 자체가
   selected-empty 때문에 동기 throw하는 것은 아닙니다. assembler runtime 계약 자체는 불변입니다.
 
-production metadata resolver·production composition·`/weather` route·cache/stale-data·authenticated KMA
-E2E는 여전히 후속 PR입니다.
+production metadata resolver는 PR #26에서 구현됐습니다
+([kma-selected-hourly-source-metadata.md](./kma-selected-hourly-source-metadata.md)). production
+composition·`/weather` route·cache/stale-data·authenticated KMA E2E는 여전히 후속 PR입니다.
 
 ## 변경 이력
 
@@ -425,4 +427,9 @@ v2 / PR #24 / 2026-07 (application-service consumer 추가; assembler 불변)
 - selected면 resolver output을 source context로, no-selection이면 source: null로 전달
 - selected-empty guard 유지 — direct assembler call은 동기 ZodError, PR #24 service call은 동일 ZodError의 Promise rejection
 - production resolver/composition은 여전히 후속
+
+v3 / PR #26 / 2026-07 (live resolver output을 caller가 제공 가능; assembler 불변)
+- PR #26 createKmaLiveSelectedHourlySourceMetadataResolver가 이 assembler의 source context(sourceId/issuedAt/fetchedAt/retrievalMode)를 만듦
+- assembler는 여전히 provenance를 추정하지 않고 caller-provided source만 사용(clock/purity/output 계약 불변)
+- production composition/route/cache는 여전히 후속(PR #27)
 ```

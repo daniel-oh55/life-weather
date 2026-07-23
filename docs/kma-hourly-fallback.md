@@ -408,13 +408,17 @@ PR #25는 execution trace에 실제 request plan에서 파생한 sanitized `KmaF
 
 - **정확한 현재 상태**: fallback service가 actual plan에서 sanitized primary/previous issuance identity를
   보존합니다(full request/plan/grid는 노출하지 않음). no-fallback은 `primaryIssuance`만, fallback-attempted는
-  `primaryIssuance` + `previousIssuance`를 담습니다. **production metadata resolver는 아직 없습니다.**
-- **아직 구현하지 않음 (PR #26 범위)**: KST `issuedAt` converter, fixed product `sourceId`, `retrievalMode`
-  `LIVE`, `fetchedAt` resolver clock, 그리고 이 identity를 읽는 production selected-source metadata resolver.
+  `primaryIssuance` + `previousIssuance`를 담습니다. **PR #26 production metadata resolver가 이 identity를
+  소비합니다** (아래 참조).
+- **PR #26에서 구현 완료**: KST `issuedAt` converter(`convertKmaForecastIssuanceToIssuedAt`), fixed product
+  `sourceId`(`kma-short-forecast-hourly`/`kma-ultra-short-forecast-hourly`), `retrievalMode` `LIVE`,
+  `fetchedAt` resolver clock, 그리고 이 identity를 읽는 production selected-source metadata resolver
+  (`createKmaLiveSelectedHourlySourceMetadataResolver`). 자세한 내용은
+  [kma-selected-hourly-source-metadata.md](./kma-selected-hourly-source-metadata.md).
 - **selector 계약 불변**: PR #22 selector는 identity를 선택·복제하지 않고 execution reference만 보존합니다.
-- **resolver seam(PR #24)**: injected resolver는 `selection.execution.primaryIssuance`(그리고
-  `fallbackAttempted` narrow 후 `previousIssuance`)로 actual issuance에 접근할 수 있습니다. 실제 resolver
-  로직은 이 PR에서 구현하지 않습니다.
+- **resolver seam(PR #24) → resolver(PR #26)**: injected resolver는 `selection.execution.primaryIssuance`
+  (그리고 `fallbackAttempted` narrow 후 `previousIssuance`)로 actual issuance에 접근하며, PR #26 live
+  resolver가 그 실제 로직을 구현합니다. 이 fallback service 자체의 runtime은 불변입니다.
 - **future `/weather` route 보안 원칙**: `{ ok, selection, overview }` 전체를 그대로 mobile에 serialize하지
   않습니다. `selection.execution`은 internal application/observability 값이며, mobile-facing response는 별도
   mapper를 통해 `overview`만 반환해야 합니다. raw `baseDate`/`baseTime`은 execution trace 내부에만 존재하고,
@@ -455,4 +459,10 @@ v5 / PR #25 / 2026-07 (sanitized issuance identity를 execution trace에 보존)
 - actual plan request에서 fresh object로 파생; clock 재읽기·plan/selector 재호출 없음; nx/ny 미포함
 - primary/previous result reference·error/Promise/Abort 계약 불변; selector/assembler/PR #24 runtime 불변
 - production metadata resolver·issuedAt/fetchedAt/sourceId/retrievalMode는 PR #26 범위
+
+v6 / PR #26 / 2026-07 (live selected-source metadata resolver가 이 identity를 소비; 이 service runtime은 불변)
+- createKmaLiveSelectedHourlySourceMetadataResolver가 PRIMARY→primaryIssuance / PREVIOUS→previousIssuance로 issuance를 선택
+- convertKmaForecastIssuanceToIssuedAt가 baseDate/baseTime을 KST +09:00 issuedAt으로 변환(Date 미사용)
+- fixed product sourceId, retrievalMode LIVE, resolver-time fetchedAt clock(유효 입력당 1회)
+- 이 fallback service의 공개 API·실행 계약·result union·issuance 보존 로직은 불변
 ```
