@@ -2,7 +2,7 @@
  * Public surface of `apps/api`'s **server-side production composition** boundary.
  *
  * This layer is the explicit place that assembles the KMA components built by the earlier PRs into
- * live pipelines. **Four** callable production roots are composed here:
+ * live pipelines. **Five** callable production roots are composed here:
  *
  * - The **grid-based single-request** facade (PR #11): the PR #5 provider-from-env → the PR #7 hourly
  *   service, a system clock adapter → the PR #9 request factory, and the PR #10 scheduled facade
@@ -37,6 +37,19 @@
  *   `LOCATION`/`UNSUPPORTED_LOCATION` result with **zero** provider calls; and an out-of-physical-range
  *   coordinate throws a converter `RangeError` synchronously. The PR #20 grid fallback root and both
  *   single-request roots are **unchanged**; this is a fourth parallel root added beside them.
+ * - The **location-based hourly overview** application service (PR #27, new): the PR #21
+ *   location-based fallback facade, the PR #26 `createKmaLiveSelectedHourlySourceMetadataResolver`
+ *   selected-source metadata resolver, and the PR #24 `createKmaLocationHourlyOverviewService` hourly
+ *   `WeatherOverview` application service assembled into one live `KmaLocationHourlyOverviewService`.
+ *   It reuses the PR #21 location fallback composition verbatim (config failure passed through by the
+ *   same `KmaProviderConfigError` reference) and only *selects* the metadata resolver's clock — the
+ *   injected clock when supplied (shared with the request plan), else a fresh system clock adapter —
+ *   leaving the PR #22 selector and PR #23 assembler as the PR #24 service's own defaults. A caller
+ *   supplies a `product` + a full `WeatherLocation`; the result is the existing **PR #24 internal
+ *   application result** (`{ ok, selection, overview }` on a supported location, or the `LOCATION`
+ *   failure verbatim), which a future mobile-facing route must map to `overview` only rather than
+ *   serialize directly. The four existing roots are **unchanged**; this is a fifth parallel root, and
+ *   like the others it is **not yet wired into startup or any `/weather` route**.
  *
  * Boundary properties:
  *
@@ -53,8 +66,8 @@
  * PR #12 converter, the PR #14 availability-delay selector, and the PR #16 candidate selector) public
  * surfaces and is exported only from here (never re-exported from those barrels or from
  * `apps/api/src/index.ts`). See `docs/kma-production-composition.md`,
- * `docs/kma-location-scheduled-hourly.md`, `docs/kma-hourly-fallback-composition.md`, and
- * `docs/kma-location-hourly-fallback.md`.
+ * `docs/kma-location-scheduled-hourly.md`, `docs/kma-hourly-fallback-composition.md`,
+ * `docs/kma-location-hourly-fallback.md`, and `docs/kma-location-hourly-overview-composition.md`.
  */
 
 export { createKmaSystemClock } from './system-clock';
@@ -82,3 +95,9 @@ export {
   type CreateKmaLocationHourlyFallbackCompositionResult,
   type KmaLocationHourlyFallbackCompositionDependencies,
 } from './kma-location-hourly-fallback';
+
+export {
+  createKmaLocationHourlyOverviewCompositionFromEnv,
+  type CreateKmaLocationHourlyOverviewCompositionResult,
+  type KmaLocationHourlyOverviewCompositionDependencies,
+} from './kma-location-hourly-overview';

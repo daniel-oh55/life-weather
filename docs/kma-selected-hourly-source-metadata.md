@@ -276,11 +276,15 @@ raw body·`stale`.
 - module-level mutable object가 없습니다. source ID table은 immutable constant뿐입니다.
 - selected issuance는 읽기만 하며 clone하지 않아도 되고, output에 그 reference를 포함하지 않습니다.
 
-## composition 미구현
+## composition (PR #27에서 조립됨)
 
-이 resolver는 아직 어떤 production composition root에도 조립되지 않았습니다. callable production composition
-root 수는 여전히 **4**개(grid scheduled·location scheduled·grid fallback·location fallback)입니다. PR #27
-에서 location fallback root + 이 resolver + PR #24 service를 조립할 예정입니다.
+이 resolver 자체는 어떤 production composition을 내장하지 않습니다(factory는 clock만 close over). **PR #27
+갱신**: PR #27의 다섯 번째 callable root(`createKmaLocationHourlyOverviewCompositionFromEnv`,
+[kma-location-hourly-overview-composition.md](./kma-location-hourly-overview-composition.md))가 PR #21
+location fallback root + 이 resolver + PR #24 service를 조립합니다. 이로써 callable production composition
+root 수는 **5**개(grid scheduled·location scheduled·grid fallback·location fallback + location hourly
+overview)가 됩니다. 이 resolver의 공개 API·runtime은 PR #27로도 **불변**입니다. 다섯 번째 root 역시 아직
+`/weather` route·startup에 연결되지 않았습니다.
 
 ## route / cache 미구현
 
@@ -324,4 +328,11 @@ v1 / PR #26 / 2026-07
 - fetchedAt: resolver-time clock, UTC Z ms
 - clock: 유효 입력당 1회, invalid 입력 0회, throw는 동일 reference 전파
 - production composition/route/cache 제외 (PR #27 예정)
+
+v2 / PR #27 / 2026-07 (production composition 조립; 이 resolver runtime은 불변)
+- createKmaLocationHourlyOverviewCompositionFromEnv(다섯 번째 callable root)가 이 resolver를 주입해 조립
+  ([kma-location-hourly-overview-composition.md](./kma-location-hourly-overview-composition.md))
+- injected clock 주입 시 request plan과 이 resolver가 같은 clock reference 공유, 생략 시 resolver용 fresh system clock
+- callable production composition root 수 4 → 5; 이 resolver의 공개 API·runtime 불변
+- /weather route·startup·cache는 여전히 미구현
 ```

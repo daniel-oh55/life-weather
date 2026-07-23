@@ -333,8 +333,13 @@ primary/previous selection policy(PR #22)·hourly-only `WeatherOverview` assembl
 fallback facade/composition(PR #21)·PR #20 grid fallback wiring·이들을 `LOCATION` narrow와 함께 엮는
 application service(PR #24)는 모두 구현 완료 상태입니다. 남은 책임:
 
-1. selected source provenance resolver의 production 구현.
-2. PR #24 application service의 production composition wiring.
+1. ~~selected source provenance resolver의 production 구현~~ — PR #26
+   `createKmaLiveSelectedHourlySourceMetadataResolver`
+   ([kma-selected-hourly-source-metadata.md](./kma-selected-hourly-source-metadata.md)).
+2. ~~PR #24 application service의 production composition wiring~~ — PR #27
+   `createKmaLocationHourlyOverviewCompositionFromEnv`가 이 location fallback composition을 재사용해
+   조립합니다([kma-location-hourly-overview-composition.md](./kma-location-hourly-overview-composition.md)).
+   이 facade/composition의 공개 API·runtime은 PR #27로도 불변입니다.
 3. `/weather` route와 HTTP status mapping.
 4. cache / stale-data 정책.
 5. authenticated KMA E2E verification.

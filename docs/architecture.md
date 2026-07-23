@@ -119,11 +119,15 @@
   `fetchedAt` clock 1회). 따라서 이제 `apps/api` services 계층에는 **application component 12개**가
   존재하며, PR #21 facade·PR #22 selection 정책·PR #23 assembler를 location result narrow와 함께 엮는
   **application service**와 그것이 주입받는 **production metadata resolver(PR #26)** 모두 구현 완료됐으나,
-  이를 실제 graph로 조립하는 **PR #24 production composition**은 여전히 미구현입니다. 네
-  callable composition root(grid/location scheduled·grid/location fallback)와 그 공개 API·runtime은 이
-  PR로 **불변**이며, production composition root 수는 여전히 **4**개입니다. live availability
-  fallback/retry 정책·`/weather` API route·HTTP status mapping은 여전히 **미구현**(후속 PR)이며, 별도
-  general `config` package도 여전히 미구현입니다.
+  이를 실제 graph로 조립하는 **production composition**은 **PR #27**에서 구현됐습니다
+  (`createKmaLocationHourlyOverviewCompositionFromEnv`, 다섯 번째 callable root — PR #21 location fallback
+  composition을 재사용하고 PR #26 resolver + PR #24 service를 조립). 기존 네 callable composition
+  root(grid/location scheduled·grid/location fallback)와 그 공개 API·runtime은 **불변**이며, production
+  composition root 수는 이제 **5**개(+ location hourly overview)이고, services 계층 application component
+  수(**12**)는 변하지 않습니다(composition root는 service component가 아님). 다만 다섯 root 모두 아직
+  `apps/api/src/index.ts`·startup·`/weather` route에 **연결되지 않았습니다.** live availability
+  fallback/retry 정책·`/weather` API route·HTTP status mapping·overview-only mobile serialization
+  mapper는 여전히 **미구현**(후속 PR)이며, 별도 general `config` package도 여전히 미구현입니다.
   자세한 내용은
   [kma-response-boundary.md](./kma-response-boundary.md),
   [kma-http-provider.md](./kma-http-provider.md),
@@ -138,7 +142,8 @@
   [kma-hourly-fallback-selection.md](./kma-hourly-fallback-selection.md),
   [kma-hourly-weather-overview.md](./kma-hourly-weather-overview.md),
   [kma-location-hourly-overview.md](./kma-location-hourly-overview.md),
-  [kma-selected-hourly-source-metadata.md](./kma-selected-hourly-source-metadata.md) 참고.
+  [kma-selected-hourly-source-metadata.md](./kma-selected-hourly-source-metadata.md),
+  [kma-location-hourly-overview-composition.md](./kma-location-hourly-overview-composition.md) 참고.
 - `packages/contracts` — 모바일과 API가 공유할 정규화 요청/응답 계약의 위치입니다. **현재
   상태**: PR #2에서 Zod 4 기반 공유 기상 데이터 계약을 정의했습니다. 자세한 내용은
   [contracts.md](./contracts.md) 참고.
@@ -464,6 +469,20 @@ runtime/타입을 import합니다 — `kma-hourly-fallback-selection`(`selectKma
 clock/env/network를 소유하지 않으며, 네 composition root와 그 공개 API·runtime은 **불변**입니다. production
 metadata resolver와 이 service를 조립하는 production composition은 후속 PR입니다.
 
+PR #27의 KMA location hourly overview composition
+(`apps/api/src/composition/kma-location-hourly-overview.ts`)은 **신규 dependency도, 신규 package-level
+의존도 추가하지 않습니다.** 이 composition root는 `apps/api` 내부 `providers/kma` 공개 surface(type-only
+`KmaProviderConfigError`)와 `services` 공개 surface(`createKmaLiveSelectedHourlySourceMetadataResolver`·
+`createKmaLocationHourlyOverviewService`·`KmaLocationHourlyOverviewService`), sibling
+`createKmaLocationHourlyFallbackCompositionFromEnv`(PR #21 location fallback root), 그리고 concrete
+`./system-clock`(`createKmaSystemClock`)만 소비합니다(자기 barrel `./index` import 없음,
+`@life-weather/weather-core`·contracts runtime import 없음). 따라서 강화되는 방향은
+`composition → providers/kma`·`composition → services`·`composition → composition`(sibling)뿐이며 모두
+기존에 허용된 방향이고, `providers/kma → composition`·`services → composition`·`weather-core → apps/api`·
+`contracts → apps/api`·`mobile → apps/api` 같은 역방향은 계속 금지합니다(순환 없음 — services는 composition을
+import하지 않습니다). 이 다섯 번째 root는 기존 네 root를 **교체하지 않고 병렬로** 추가한 것이며, 재사용하는
+PR #21 location fallback root·PR #26 resolver·PR #24 service의 runtime과 공개 API를 변경하지 않았습니다.
+
 향후 허용 방향:
 
 ```text
@@ -472,7 +491,7 @@ apps/mobile       → contracts
 lifestyle-engine  → contracts
 ```
 
-## 현재 구현 상태 요약 (PR #24 시점)
+## 현재 구현 상태 요약 (PR #27 시점)
 
 - `contracts`: PR #2에서 Zod 4 기반 공유 기상 계약을 정의했습니다.
 - `weather-core`: `classifyFreshness`(PR #2)와 KMA 단기·초단기예보 정규화 primitive(PR #3)에 더해,
@@ -660,4 +679,21 @@ lifestyle-engine  → contracts
   완료**됐으나, 이를 실제 graph로 조립하는 **PR #24 production composition·`/weather` route·cache는 여전히
   미구현**입니다(production composition root 수 여전히 4개; PR #27 예정)
   ([kma-selected-hourly-source-metadata.md](./kma-selected-hourly-source-metadata.md)).
+- PR #27에서는 위 세 요소를 실제 graph로 잇는 **다섯 번째 callable production composition root**
+  (`createKmaLocationHourlyOverviewCompositionFromEnv`, `src/composition`)를 기존 네 root 옆에 **병렬로**
+  추가했습니다 — PR #21 location fallback composition을 재사용하고, PR #26 live selected-source metadata
+  resolver를 붙여, PR #24 application service를 하나의 live `KmaLocationHourlyOverviewService`로
+  조립합니다. dependencies는 PR #21 dependencies의 직접 alias이고, PR #22 selector·PR #23 assembler는
+  PR #24 service의 고정 default입니다. injected clock을 주입하면 하위 fallback root와 **같은 reference**가
+  request plan과 metadata resolver 양쪽에 쓰이고(supported selected 호출당 clock 2회), 생략하면 하위 root의
+  캡슐화를 깨지 않고 resolver에 **fresh system clock adapter**를 새로 만듭니다. `issuedAt`은 두 번째 clock
+  read가 아니라 PR #25 trace가 보존한 issuance identity에서 파생되고, `fetchedAt`만 두 번째 read에서
+  나옵니다. 성공 시 `{ ok, service }`만 공개하고 config 실패는 Provider의 `KmaProviderConfigError` 동일
+  reference를 전달하며, construction은 network-free(clock/converter/fetch/selector/resolver/assembler
+  0회)입니다. 결과는 PR #24 **internal application result**(`{ ok, selection, overview }` 또는 `LOCATION`
+  verbatim)이며, future mobile-facing route는 이를 그대로 serialize하지 않고 `overview`만 매핑해야 합니다(이
+  PR은 그 mapper 미구현). 이로써 callable production composition root 수는 **4 → 5**가 되고, services 계층
+  application component 수(**12**)는 변하지 않습니다(composition root는 service component가 아님). 다섯 root
+  모두 아직 `apps/api/src/index.ts`·startup·`/weather` route에 **연결되지 않았습니다**
+  ([kma-location-hourly-overview-composition.md](./kma-location-hourly-overview-composition.md)).
 - 이 문서의 나머지 "예정" 구조는 앞으로의 합의이며, 위 요약이 현재 코드베이스의 상태입니다.
