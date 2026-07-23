@@ -448,8 +448,9 @@ resolver·PR #23 assembler를 하나로 잇는 **application service**
   selected일 때만 주입된 resolver로 provenance를 결정해 PR #23 assembler로 `{ ok, selection, overview }`를
   조립합니다. clock·network·환경·Provider·composition을 소유하지 않고 provenance를 추정하지 않습니다.
 - **PR #24 application service는 구현 완료**됐지만, **어느 production composition root에도 아직 조립되지
-  않았습니다** — 이 service를 실제 graph로 조립하는 **production metadata resolver**도 아직 production
-  구현이 없습니다. service는 composition·`/weather` route·startup에 연결되지 않습니다.
+  않았습니다**. PR #26이 이 service가 주입받는 **production metadata resolver**
+  (`createKmaLiveSelectedHourlySourceMetadataResolver`)를 구현했으나, 둘을 실제 graph로 조립하는 production
+  composition은 아직 없습니다. service·resolver는 composition·`/weather` route·startup에 연결되지 않습니다.
 
 ## PR #25: execution trace의 sanitized issuance identity (composition root 추가 없음)
 
@@ -464,20 +465,25 @@ type을 services 계층에 추가합니다([kma-hourly-fallback.md](./kma-hourly
   `previousIssuance`는 previous가 실제 실행된 branch에만 존재합니다.
 - identity는 이미 만들어진 plan에서 fresh object로 파생하므로 composition의 clock 호출 수는 변하지 않고(호출당
   1회 그대로), full request/plan/grid·ServiceKey·URL·query·raw body는 노출하지 않습니다.
-- **production metadata resolver는 여전히 없습니다** — issuedAt/fetchedAt/sourceId/retrievalMode와 이
-  identity를 읽는 production resolver는 PR #26 범위입니다.
+- **production metadata resolver는 PR #26에서 구현됐습니다** — issuedAt/fetchedAt/sourceId/retrievalMode를
+  만드는 `createKmaLiveSelectedHourlySourceMetadataResolver`가 이 identity를 소비합니다
+  ([kma-selected-hourly-source-metadata.md](./kma-selected-hourly-source-metadata.md)). 다만 아직 어떤
+  composition root에도 조립되지 않았습니다.
 
 ## 후속 범위
 
 primary/previous selection policy(PR #22)·hourly-only `WeatherOverview` assembler(PR #23)·이 셋을
-`LOCATION` narrow와 함께 엮는 application service(PR #24)는 모두 구현 완료됐고, 네 callable composition
-root(grid/location × scheduled/fallback)는 그대로 4개로 유지됩니다 — 이 문서 수정에서 새 composition root를
-제안하거나 구현하지 않습니다. 남은 후속 범위와 dependency 순서:
+`LOCATION` narrow와 함께 엮는 application service(PR #24)·selected-source provenance를 만드는 production
+metadata resolver(PR #26)는 모두 구현 완료됐고, 네 callable composition root(grid/location ×
+scheduled/fallback)는 그대로 4개로 유지됩니다 — 이 문서 수정에서 새 composition root를 제안하거나 구현하지
+않습니다. 남은 후속 범위와 dependency 순서:
 
-1. selected-source **production provenance strategy** 확정(발표시각 복원 정책 포함).
-2. 그 strategy를 구현하는 **production metadata resolver**.
-3. 기존 PR #21 location fallback root와 PR #24 application service·production resolver를 조립하는 별도의
-   application-facing **production composition**.
+1. ~~selected-source **production provenance strategy** 확정~~ — PR #26에서 확정(발표시각은 PR #25 trace의
+   보존된 issuance identity에서 파생; 별도 clock 복원 없음).
+2. ~~그 strategy를 구현하는 **production metadata resolver**~~ — PR #26에서 구현
+   (`createKmaLiveSelectedHourlySourceMetadataResolver`).
+3. **(PR #27)** 기존 PR #21 location fallback root와 PR #24 application service·PR #26 production resolver를
+   조립하는 별도의 application-facing **production composition**(다섯 번째 callable root).
 4. `apps/api/src/index.ts` startup wiring.
 5. `/weather` route, query validation과 HTTP status/envelope mapping.
 6. cache/stale-data 정책.
@@ -573,6 +579,15 @@ v13 / PR #25 / 2026-07 (execution trace가 sanitized issuance identity 보존; c
 - PR #19 execution trace가 실제 plan에서 파생한 KmaForecastIssuanceIdentity를 보존(primaryIssuance,
   fallback 시 previousIssuance — product/baseDate/baseTime만; nx/ny·full request/plan 미포함)
 - 네 callable root 모두 불변(공개 API·result·composition runtime 변경 없음); clock 호출 수 불변
-- production metadata resolver·issuedAt/fetchedAt/sourceId/retrievalMode는 여전히 미구현(PR #26)
+- production metadata resolver·issuedAt/fetchedAt/sourceId/retrievalMode는 이 시점까지 미구현(PR #26)
+- startup/route·cache는 여전히 미구현
+
+v14 / PR #26 / 2026-07 (live selected-source metadata resolver; composition root 추가 없음)
+- PR #26 createKmaLiveSelectedHourlySourceMetadataResolver + convertKmaForecastIssuanceToIssuedAt가 services 계층에 구현됨
+- PR #25 trace가 보존한 issuance identity를 소비: PRIMARY→primaryIssuance, PREVIOUS→previousIssuance
+- KST +09:00 issuedAt, product별 고정 sourceId, retrievalMode LIVE, resolver-time fetchedAt(유효 입력당 clock 1회)
+- 네 callable production root 모두 불변(공개 API·result·runtime 변경 없음); production composition root 수 여전히 4
+- application service + production resolver 모두 구현 완료됐으나 아직 어느 composition root에도 조립되지 않음
+- 다음 단계(PR #27)는 location fallback root + PR #24 service + PR #26 resolver를 조립하는 다섯 번째 callable root
 - startup/route·cache는 여전히 미구현
 ```

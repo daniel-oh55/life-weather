@@ -50,17 +50,23 @@
  *
  * ### Provenance boundary — a caller-injected resolver, no inference
  *
- * The execution trace carries no selected request, base issuance, `issuedAt`, `fetchedAt`, retrieval
- * mode, or app-internal `sourceId`, so this service infers **none** of it. It defines only the
- * selected-source resolver *seam*: on a selected trace it calls the **injected**
+ * Since PR #25 the execution trace preserves, from the actual request plan, the sanitized
+ * `KmaForecastIssuanceIdentity` (`product`/`baseDate`/`baseTime` only) of each attempted issuance;
+ * it still carries no selected request, `issuedAt`, `fetchedAt`, retrieval mode, or app-internal
+ * `sourceId`, so this service infers **none** of the latter. It defines only the selected-source
+ * resolver *seam*: on a selected trace it calls the **injected**
  * {@link KmaSelectedHourlySourceMetadataResolver} exactly once with the `product`, the parsed
  * `location`, and the selected `selection`, and passes the resolver's output straight to the assembler.
- * It never rebuilds a request plan, re-reads a clock, or reconstructs a KMA base time to recover the
- * issuance — a request plan built during the fallback run and a resolver reading a clock afterwards can
- * disagree at an availability-delay boundary, so the actual executed request and any inferred
- * `SourceMetadata` could drift apart. `issuedAt: null` is already allowed by the PR #23 assembler, so an
- * unknown issuance is passed through explicitly. The production resolver and the exact provenance policy
- * are a later PR; this service ships only the seam.
+ * It never rebuilds a request plan, reads a clock, or reconstructs a KMA base time itself — a request
+ * plan built during the fallback run and a resolver reading a clock afterwards can disagree at an
+ * availability-delay boundary, so this service deliberately consumes the *preserved* issuance identity
+ * rather than re-deriving one. The PR #26 live resolver
+ * (`createKmaLiveSelectedHourlySourceMetadataResolver`) is that production resolver: it reads
+ * `selection.execution.primaryIssuance` / `previousIssuance` to build the KST `issuedAt`, a fixed
+ * per-product `sourceId`, a `LIVE` retrieval mode, and a resolver-time `fetchedAt`. This service owns
+ * none of that clock/base-time/`sourceId` policy — it only injects the resolver. `issuedAt: null` also
+ * remains allowed by the PR #23 assembler, so a resolver with an unknown issuance can still pass it
+ * through explicitly. This service's factory signature and runtime are unchanged by PR #26.
  *
  * ### Errors, Promise, and purity
  *
@@ -82,10 +88,12 @@
  *
  * ### What it is not
  *
- * It does not implement the production resolver, reconstruct provenance from a KMA `baseDate`/`baseTime`,
- * build a production composition root, wire `apps/api/src/index.ts`, register the `/weather` route, map
- * HTTP status/envelopes, add cache/stale-data, or assemble current/daily/air-quality/alerts. Those are
- * later PRs. See `docs/kma-location-hourly-overview.md`.
+ * It does not implement the production resolver itself (that is PR #26's separate
+ * `createKmaLiveSelectedHourlySourceMetadataResolver`, injected here), reconstruct provenance from a KMA
+ * `baseDate`/`baseTime`, build a production composition root, wire `apps/api/src/index.ts`, register the
+ * `/weather` route, map HTTP status/envelopes, add cache/stale-data, or assemble
+ * current/daily/air-quality/alerts. Those remaining items are later PRs. See
+ * `docs/kma-location-hourly-overview.md`.
  */
 
 import {

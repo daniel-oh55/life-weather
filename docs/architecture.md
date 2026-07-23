@@ -111,13 +111,19 @@
   새 top-level error로 승격하지 않습니다. method는 `async`가 아니어서 location/facade 동기 throw는 동기로,
   facade rejection과 selector/resolver/assembler throw는 Promise rejection으로 전파되며(동일 error
   reference), broad catch·wrapping·logging이 없고 clock/env/network를 소유하지 않습니다(provenance는
-  주입된 resolver가 결정, 별도 clock으로 issuedAt을 재계산하지 않음). 따라서 이제 `apps/api` services
-  계층에는 **application component 11개**가 존재하며, PR #21 facade·PR #22 selection 정책·PR #23
-  assembler를 location result narrow와 함께 엮는 **application service는 구현 완료**됐으나, 이를 실제로
-  조립하는 **production metadata resolver와 PR #24 production composition**은 여전히 미구현입니다. 네
+  주입된 resolver가 결정, 별도 clock으로 issuedAt을 재계산하지 않음). PR #26은 그 주입 대상인
+  **live selected-source metadata resolver**(`createKmaLiveSelectedHourlySourceMetadataResolver`)와 공개
+  issuedAt converter(`convertKmaForecastIssuanceToIssuedAt`)를 추가해, PR #25 trace가 보존한 실제 issuance
+  identity를 소비합니다(PRIMARY→primaryIssuance·PREVIOUS→previousIssuance, KST `+09:00` issuedAt, product별
+  고정 sourceId `kma-short-forecast-hourly`/`kma-ultra-short-forecast-hourly`, `LIVE`, resolver-time
+  `fetchedAt` clock 1회). 따라서 이제 `apps/api` services 계층에는 **application component 12개**가
+  존재하며, PR #21 facade·PR #22 selection 정책·PR #23 assembler를 location result narrow와 함께 엮는
+  **application service**와 그것이 주입받는 **production metadata resolver(PR #26)** 모두 구현 완료됐으나,
+  이를 실제 graph로 조립하는 **PR #24 production composition**은 여전히 미구현입니다. 네
   callable composition root(grid/location scheduled·grid/location fallback)와 그 공개 API·runtime은 이
-  PR로 **불변**입니다. live availability fallback/retry 정책·`/weather` API route·HTTP status mapping은
-  여전히 **미구현**(후속 PR)이며, 별도 general `config` package도 여전히 미구현입니다.
+  PR로 **불변**이며, production composition root 수는 여전히 **4**개입니다. live availability
+  fallback/retry 정책·`/weather` API route·HTTP status mapping은 여전히 **미구현**(후속 PR)이며, 별도
+  general `config` package도 여전히 미구현입니다.
   자세한 내용은
   [kma-response-boundary.md](./kma-response-boundary.md),
   [kma-http-provider.md](./kma-http-provider.md),
@@ -131,7 +137,8 @@
   [kma-location-hourly-fallback.md](./kma-location-hourly-fallback.md),
   [kma-hourly-fallback-selection.md](./kma-hourly-fallback-selection.md),
   [kma-hourly-weather-overview.md](./kma-hourly-weather-overview.md),
-  [kma-location-hourly-overview.md](./kma-location-hourly-overview.md) 참고.
+  [kma-location-hourly-overview.md](./kma-location-hourly-overview.md),
+  [kma-selected-hourly-source-metadata.md](./kma-selected-hourly-source-metadata.md) 참고.
 - `packages/contracts` — 모바일과 API가 공유할 정규화 요청/응답 계약의 위치입니다. **현재
   상태**: PR #2에서 Zod 4 기반 공유 기상 데이터 계약을 정의했습니다. 자세한 내용은
   [contracts.md](./contracts.md) 참고.
@@ -635,6 +642,22 @@ lifestyle-engine  → contracts
   execution reference만 보존하고, PR #24 resolver seam은 `selection.execution.primaryIssuance`(그리고
   `fallbackAttempted` narrow 후 `previousIssuance`)로 실제 발표시각 identity에 접근할 수 있습니다. 이 새 type은
   application component가 아니라 model이므로 services 계층 application component 수는 **여전히 11개**이고,
-  production metadata resolver·issuedAt/fetchedAt/sourceId/retrievalMode는 여전히 미구현입니다(PR #26 범위;
-  네 composition root·PR #22/#23/#24 runtime 불변) ([kma-hourly-fallback.md](./kma-hourly-fallback.md)).
+  production metadata resolver·issuedAt/fetchedAt/sourceId/retrievalMode는 이 시점까지는 미구현입니다(PR #26
+  범위; 네 composition root·PR #22/#23/#24 runtime 불변) ([kma-hourly-fallback.md](./kma-hourly-fallback.md)).
+- PR #26에서는 `apps/api` services 계층에 **live selected-source metadata resolver**
+  (`createKmaLiveSelectedHourlySourceMetadataResolver`)와 공개 issuedAt converter
+  (`convertKmaForecastIssuanceToIssuedAt`)를 추가했습니다 — PR #24 service가 주입받는 production resolver로,
+  PR #25 trace가 보존한 실제 issuance identity를 소비합니다. `PRIMARY`→`primaryIssuance`,
+  `PREVIOUS`→`previousIssuance`(fallback-attempted에만 존재), `issuedAt`은 `baseDate`/`baseTime`을 KST
+  `+09:00` seconds instant로(`Date` 미사용, `isoDateTime`로 calendar 검증), `sourceId`는 product별 고정
+  (`kma-short-forecast-hourly`/`kma-ultra-short-forecast-hourly`, PRIMARY/PREVIOUS·fallbackUsed·location
+  미반영), `retrievalMode`는 `LIVE` 고정, `fetchedAt`은 resolver materialization 시각으로 주입 clock을 유효
+  입력당 정확히 1회 읽어 UTC `Z` ms로 생성합니다(정확한 transport timestamp 아님; future cache는 upstream
+  `fetchedAt` 보존). clock 읽기 전에 `input.product === issuance.product`를 확인하고, malformed
+  issuance/selection·PREVIOUS+no-fallback·product mismatch·invalid clock은 static `RangeError`로 실패하며
+  (invalid 입력은 clock 0회), throwing clock은 동일 reference로 전파됩니다. 이로써 services 계층 application
+  component는 **12개**가 됐고, application service와 그것이 주입받는 **production metadata resolver 모두 구현
+  완료**됐으나, 이를 실제 graph로 조립하는 **PR #24 production composition·`/weather` route·cache는 여전히
+  미구현**입니다(production composition root 수 여전히 4개; PR #27 예정)
+  ([kma-selected-hourly-source-metadata.md](./kma-selected-hourly-source-metadata.md)).
 - 이 문서의 나머지 "예정" 구조는 앞으로의 합의이며, 위 요약이 현재 코드베이스의 상태입니다.

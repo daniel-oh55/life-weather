@@ -350,4 +350,10 @@ v3 / PR #24 / 2026-07 (application-service consumer 추가; selector 불변)
 - LOCATION narrow 이후 지원 trace에 selector를 정확히 1회 적용
 - selection은 success result에 exact reference로 보존(clone/spread/mutate 없음)
 - 여전히 production composition에는 미조립(production resolver/composition은 후속)
+
+v4 / PR #26 / 2026-07 (selected-source provenance resolver 추가; selector 불변)
+- PR #26 createKmaLiveSelectedHourlySourceMetadataResolver가 이 selection의 source(PRIMARY/PREVIOUS)와
+  execution.primaryIssuance/previousIssuance를 읽어 SourceMetadata provenance를 생성
+- selector 자체의 공개 API·순수성·selection reference 계약은 불변(source/fallbackUsed·execution reference 그대로)
+- production composition은 여전히 후속(PR #27)
 ```

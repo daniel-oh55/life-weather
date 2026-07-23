@@ -258,8 +258,11 @@ execution trace에는 **full** primary/previous request(및 `nx`/`ny`·request p
 이 service는 selected source를 알고 있는 **resolver seam만** 정의하고, provenance 결정은 주입된 resolver에
 위임합니다. injected resolver는 PR #25 이후 `input.selection.execution.primaryIssuance`(그리고
 `fallbackAttempted` narrow 후 `previousIssuance`)로 **실제 실행된 발표시각 identity**에 접근할 수 있습니다.
-production resolver와 정확한 provenance 정책(issuedAt/fetchedAt/sourceId/retrievalMode)은 후속 PR #26입니다.
-issuance identity는 resolver input top-level에 복제하지 않습니다 — resolver input own key는 여전히
+그 production resolver와 정확한 provenance 정책(issuedAt/fetchedAt/sourceId/retrievalMode)은 PR #26의
+`createKmaLiveSelectedHourlySourceMetadataResolver`가 구현합니다
+([kma-selected-hourly-source-metadata.md](./kma-selected-hourly-source-metadata.md)) — 이 service는 여전히
+그 resolver를 injected dependency로만 받고 clock/base-time/sourceId 정책을 소유하지 않습니다. issuance
+identity는 resolver input top-level에 복제하지 않습니다 — resolver input own key는 여전히
 `product`/`location`/`selection` 세 개입니다.
 
 ### 별도 clock으로 issuedAt을 재계산하지 않는 이유
@@ -396,19 +399,21 @@ custom selection policy가 structurally valid한 selected-empty result(selected 
 
 ## 후속 production resolver 계획
 
-이 service는 orchestration seam만 구현합니다. 후속 PR이 다음을 담당합니다.
+이 service는 orchestration seam만 구현합니다. 진행 상황:
 
-1. selected-source production provenance strategy 확정.
-2. production resolver 구현.
-3. PR #24 service를 production composition에 조립.
+1. ~~selected-source production provenance strategy 확정~~ — PR #26에서 확정.
+2. ~~production resolver 구현~~ — PR #26 `createKmaLiveSelectedHourlySourceMetadataResolver`
+   ([kma-selected-hourly-source-metadata.md](./kma-selected-hourly-source-metadata.md)).
+3. PR #24 service + PR #26 resolver를 production composition에 조립 (PR #27).
 4. `/weather` route.
 5. cache/stale-data.
 6. authenticated KMA E2E.
 
-## 범위 밖
+## 범위 밖 (이 PR #24 service 자체 기준)
 
-- production resolver / default resolver / sourceId naming policy
-- issuedAt 계산 / baseDate·baseTime parsing / fetchedAt clock / retrievalMode 자동 선택
+- production resolver 자체의 로직 / default resolver / sourceId naming policy — resolver는 이 service가
+  주입받는 별도 컴포넌트이며 PR #26이 구현합니다. 이 service는 여전히 resolver 로직을 소유하지 않습니다.
+- issuedAt 계산 / baseDate·baseTime parsing / fetchedAt clock / retrievalMode 자동 선택 (이 service 내부에서)
 - request-plan 재생성 / execution trace를 이 service에서 확장 / **full** primary·previous request·nx·ny 노출
   (sanitized issuance identity는 PR #25 fallback service가 이미 trace에 보존하며 이 service는 그것을 소비만
   하고 확장하지 않습니다)
@@ -431,5 +436,11 @@ v1 / PR #24 / 2026-07
 v2 / PR #25 / 2026-07 (execution trace가 sanitized issuance identity 보존; 이 service runtime은 불변)
 - injected resolver가 selection.execution.primaryIssuance / previousIssuance로 actual 발표시각 identity에 접근 가능
 - resolver input own key는 여전히 product/location/selection 세 개(issuance 복제 없음)
-- 이 service의 runtime/public types/resolver input은 불변; production resolver는 여전히 PR #26
+- 이 service의 runtime/public types/resolver input은 불변; production resolver는 PR #26 범위
+
+v3 / PR #26 / 2026-07 (live production resolver 구현; 이 service runtime은 불변)
+- createKmaLiveSelectedHourlySourceMetadataResolver가 이 service가 주입받는 production resolver로 구현됨
+- resolver가 selection.execution의 실제 issuance로 issuedAt(KST)/sourceId/fetchedAt/retrievalMode(LIVE)를 생성
+- 이 service의 factory signature·runtime·public types·resolver input(product/location/selection)은 불변
+- production composition·/weather route·cache는 여전히 후속(PR #27)
 ```

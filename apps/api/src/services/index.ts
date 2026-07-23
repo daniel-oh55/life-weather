@@ -2,7 +2,7 @@
  * Public surface of `apps/api`'s **application services** — the orchestration layer that sequences
  * the KMA provider boundary and the domain normalizers, and assembles the requests they consume.
  *
- * Eleven application components live here so far:
+ * Twelve application components live here so far:
  *
  * 1. The PR #7 KMA **hourly-forecast orchestration** (`createKmaHourlyForecastService`): it calls
  *    the PR #5 HTTP provider and the PR #6 hourly normalizer in order and reports a `PROVIDER`- or
@@ -64,8 +64,8 @@
  *    selector/plan-factory call. The `PRIMARY`/`PREVIOUS` distinction stays with the later selection
  *    step. The orchestration itself owns **no** composition responsibility: the PR #20 grid fallback
  *    composition (`../composition`) **consumes** it as the live production fallback service. No HTTP
- *    route or cache consumes it yet, and the production selected-source metadata resolver that will
- *    read these identities is a later PR.
+ *    route or cache consumes it yet; the PR #26 live selected-source metadata resolver (component 12)
+ *    consumes these preserved identities to materialize the selected source's `SourceMetadata`.
  * 8. The PR #21 KMA **location hourly-forecast fallback facade**
  *    (`createKmaLocationHourlyFallbackFacade`): a thin adapter that puts an injected
  *    latitude/longitude → grid converter in front of the PR #19 fallback service (input → grid →
@@ -127,8 +127,34 @@
  *    error reference), with **no** broad `try`/`catch`, wrapping, logging, or partial result. Provenance
  *    is **not** inferred: the service owns **no** clock/env/network, defines only the selected-source
  *    resolver *seam*, and never rebuilds a request plan or reconstructs a KMA base time. The **production
- *    resolver** and **production composition** (and the `/weather` route) are a later PR — this service
- *    is wired into **no** composition root or route yet.
+ *    resolver** is now the PR #26 component 12 below; the **production composition** (and the `/weather`
+ *    route) remain a later PR — this service is wired into **no** composition root or route yet.
+ * 12. The PR #26 KMA **live selected-source metadata resolver**
+ *    (`createKmaLiveSelectedHourlySourceMetadataResolver`): the production
+ *    `KmaSelectedHourlySourceMetadataResolver` the component 11 service injects. It **consumes** the
+ *    sanitized PR #25 issuance identity the execution trace preserved and materializes the four PR #23
+ *    `KmaHourlySourceMetadataInput` provenance facts. A `PRIMARY` selection uses the actual
+ *    `execution.primaryIssuance`; a `PREVIOUS` selection uses the actual `execution.previousIssuance`
+ *    (present only on a fallback-attempted trace). `issuedAt` is that issuance's provider-native
+ *    `baseDate`/`baseTime` expressed as a KST (`+09:00`) ISO instant with seconds — built by explicit
+ *    string composition, never through a `Date`, and never recomputed from a clock, request plan, or
+ *    base-time selector (schedule canonicality stays with the weather-core selector, so a structurally
+ *    valid non-canonical `0615` still converts; the contracts `isoDateTime` schema rejects impossible
+ *    calendar/clock values). `sourceId` is a fixed per-product app-internal id
+ *    (`kma-short-forecast-hourly` / `kma-ultra-short-forecast-hourly`) that encodes **neither** the
+ *    individual issuance, the `PRIMARY`/`PREVIOUS` distinction, `fallbackUsed`, nor the location — the
+ *    logical source is `sourceId`, the individual issuance is `issuedAt`. `retrievalMode` is fixed
+ *    `'LIVE'` (no cache exists yet). It asserts `input.product === issuance.product` **before** reading
+ *    the clock, reads the injected clock **exactly once** per valid call to stamp `fetchedAt` (a UTC
+ *    `Z` millisecond instant meaning "resolver materialization time", **not** an exact transport
+ *    timestamp), and returns a **fresh** object with exactly the four sorted own keys
+ *    `fetchedAt`/`issuedAt`/`retrievalMode`/`sourceId`. Every invalid input (non-object/unsupported
+ *    issuance, non-selected/unknown-source selection, `PREVIOUS` without fallback, product mismatch,
+ *    invalid clock value) fails synchronously with a **static** `RangeError` **before** the clock is
+ *    read; inside component 11's `.then` handler that synchronous throw becomes the returned Promise's
+ *    rejection with the same reference. It reads no env/network, opens no `fetch`/`AbortController`,
+ *    adds no dependency, and is wired into **no** composition root or route yet — the production
+ *    composition remains PR #27.
  *
  * The grid-based single-request **production composition root** (system clock adapter,
  * provider-from-env wiring, a live facade instance) is built in PR #11 and lives in `../composition`;
@@ -145,7 +171,8 @@
  * `docs/kma-scheduled-hourly-facade.md`, `docs/kma-location-scheduled-hourly.md`,
  * `docs/kma-fallback-request-plan.md`, `docs/kma-hourly-fallback.md`,
  * `docs/kma-location-hourly-fallback.md`, `docs/kma-hourly-fallback-selection.md`,
- * `docs/kma-hourly-weather-overview.md`, and `docs/kma-location-hourly-overview.md`.
+ * `docs/kma-hourly-weather-overview.md`, `docs/kma-location-hourly-overview.md`, and
+ * `docs/kma-selected-hourly-source-metadata.md`.
  */
 
 export {
@@ -235,3 +262,9 @@ export {
   type KmaLocationHourlyOverviewResult,
   type KmaLocationHourlyOverviewService,
 } from './kma-location-hourly-overview';
+
+export {
+  convertKmaForecastIssuanceToIssuedAt,
+  createKmaLiveSelectedHourlySourceMetadataResolver,
+  type KmaSelectedHourlySourceMetadataClock,
+} from './kma-selected-hourly-source-metadata';

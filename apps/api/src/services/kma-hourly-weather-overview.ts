@@ -45,8 +45,11 @@
  * assembler never *infers* provenance. The caller supplies `sourceId`, `issuedAt`, `fetchedAt`, and
  * `retrievalMode` on a selected source; the assembler fixes only the three facts that are structurally
  * true here — `provider: 'KMA'`, `sections: ['HOURLY']`, `observedAt: null` (forecast data has no
- * observation instant). When the current pipeline cannot yet know the issuance, the caller passes
- * `issuedAt: null` explicitly; the assembler never reads a clock or reconstructs a KMA base time.
+ * observation instant). A caller that knows the issuance — since PR #26 the live
+ * `createKmaLiveSelectedHourlySourceMetadataResolver`, which reads the preserved PR #25 issuance
+ * identity — supplies a concrete `issuedAt`; a caller that cannot determine it passes `issuedAt: null`
+ * explicitly. Either way the assembler itself never reads a clock or reconstructs a KMA base time — its
+ * provenance-agnostic, clock-free, pure policy is unchanged.
  *
  * ### Boundary — not the selector, not the location branch, not composition
  *
