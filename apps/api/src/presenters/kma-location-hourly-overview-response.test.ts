@@ -780,3 +780,51 @@ describe('presentKmaLocationHourlyOverviewResponseV1 — type contracts', () => 
     expectTypeOf<ApiErrorV1>().not.toHaveProperty('details');
   });
 });
+
+// ---------------------------------------------------------------------------
+// §14b — exhaustive-guard regression (compile-time). The presenter's `satisfies` guard is fixed on
+// BOTH `stage` and `error.kind`, so a future same-stage arm with a different kind cannot be silently
+// published as UNSUPPORTED_LOCATION. These are type-level assertions; `expectTypeOf(...)` erases at
+// runtime, so this block adds no runtime behavior beyond the single `it` wrapper.
+// ---------------------------------------------------------------------------
+
+describe('presentKmaLocationHourlyOverviewResponseV1 — exhaustive guard', () => {
+  it('pins every current LOCATION failure to exactly the supported UNSUPPORTED_LOCATION arm', () => {
+    // Every LOCATION-stage failure the result union carries today (extracted on `stage` alone)...
+    type CurrentLocationFailure = Extract<
+      KmaLocationHourlyOverviewResult,
+      { readonly stage: 'LOCATION' }
+    >;
+    // ...and the single arm the presenter actually supports (stage LOCATION + kind UNSUPPORTED_LOCATION),
+    // which is exactly what the production `UnsupportedLocationFailure` guard type resolves to.
+    type SupportedUnsupportedLocationFailure = Extract<
+      KmaLocationHourlyOverviewResult,
+      {
+        readonly stage: 'LOCATION';
+        readonly error: { readonly kind: 'UNSUPPORTED_LOCATION' };
+      }
+    >;
+
+    // (A) Exact equality: today every LOCATION failure IS the supported arm. If a future LOCATION arm
+    // with a different `error.kind` is added, the stage-only extraction gains that arm, the two types
+    // diverge, and typecheck fails here — the same signal that breaks the presenter's `satisfies` guard.
+    expectTypeOf<CurrentLocationFailure>().toEqualTypeOf<SupportedUnsupportedLocationFailure>();
+
+    // (B) A hypothetical future same-stage / different-kind arm...
+    type SimulatedAmbiguousLocationFailure = {
+      readonly ok: false;
+      readonly stage: 'LOCATION';
+      readonly error: { readonly kind: 'AMBIGUOUS_LOCATION' };
+    };
+    // ...added alongside the supported arm is NOT assignable to the supported arm. This is the precise
+    // property the presenter's `result satisfies UnsupportedLocationFailure` guard relies on: were the
+    // union to become the non-success arm, that `satisfies` line would stop compiling — proving a new
+    // error kind can never be silently accepted as, and downgraded to, UNSUPPORTED_LOCATION.
+    type SimulatedFutureLocationFailures =
+      | SupportedUnsupportedLocationFailure
+      | SimulatedAmbiguousLocationFailure;
+    expectTypeOf<
+      SimulatedFutureLocationFailures
+    >().not.toExtend<SupportedUnsupportedLocationFailure>();
+  });
+});

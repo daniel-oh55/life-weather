@@ -153,11 +153,28 @@ nested `overview`/`meta` is not part of the public contract.)
 
 ## Compile-time exhaustiveness
 
-`KmaLocationHourlyOverviewResult` currently has two arms (success and the `LOCATION` failure). Because a
-single remaining arm never narrows to `never`, the classic `assertNever(result)` pattern cannot compile
-here; instead the presenter uses a `satisfies` guard on the non-success arm. If a future arm is added to
-the union without being handled, the guard stops compiling — forcing the new arm to be mapped explicitly
-rather than silently mis-serialized. No field is read off the guarded value, so it introduces no leak.
+`KmaLocationHourlyOverviewResult` currently has two arms: the success arm and a single failure arm —
+`{ ok: false, stage: 'LOCATION', error: { kind: 'UNSUPPORTED_LOCATION' } }`. The presenter supports
+**only** that one failure arm. Because a single remaining arm never narrows to `never`, the classic
+`assertNever(result)` pattern cannot compile here; instead the presenter uses a `satisfies` guard on the
+non-success arm.
+
+The guard is pinned on **both** the top-level `stage` **and** the nested `error.kind` (type
+`UnsupportedLocationFailure = Extract<KmaLocationHourlyOverviewResult, { stage: 'LOCATION'; error: { kind:
+'UNSUPPORTED_LOCATION' } }>`), not on `stage` alone. This matters:
+
+- If a **different `error.kind` is added on the same `LOCATION` stage** (e.g. an `AMBIGUOUS_LOCATION`
+  failure), the non-success union no longer satisfies `UnsupportedLocationFailure`, so typecheck fails.
+  A stage-only guard would instead have admitted the new kind and silently published it as
+  `UNSUPPORTED_LOCATION`; the `error.kind` pin prevents that automatic downgrade.
+- If a **new failure stage** or any other new union arm is added, it likewise fails the guard.
+
+In every case the presenter stops compiling until the new arm is handled explicitly — a new error kind is
+never auto-mapped to `UNSUPPORTED_LOCATION`, and its public error `code`/`message`/`retryable` policy must
+be reviewed and chosen deliberately. No field is read off the guarded value, so the guard introduces no
+leak. The presenter test file encodes this as two compile-time regression checks: an exact-equality
+assertion that every current `LOCATION` failure equals the supported `UNSUPPORTED_LOCATION` arm, and a
+simulated future same-stage/different-kind arm that is asserted **not** assignable to the supported arm.
 
 ## Out of scope (later PRs)
 

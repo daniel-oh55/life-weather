@@ -87,6 +87,23 @@ export type WeatherResponsePresenterMetaV1 = Pick<
 const UNSUPPORTED_LOCATION_MESSAGE = 'The requested location is not supported.';
 
 /**
+ * The single non-success arm the presenter maps today, pinned on **both** the top-level `stage` and the
+ * nested `error.kind`. Extracting on `stage: 'LOCATION'` alone would also admit any future `LOCATION`-stage
+ * arm with a *different* `error.kind` (e.g. an `AMBIGUOUS_LOCATION`), which the presenter would then
+ * silently publish as `UNSUPPORTED_LOCATION`; fixing `error.kind` too keeps this type to exactly the one
+ * supported failure. See the guard below and `docs/weather-response-presenter.md`.
+ */
+type UnsupportedLocationFailure = Extract<
+  KmaLocationHourlyOverviewResult,
+  {
+    readonly stage: 'LOCATION';
+    readonly error: {
+      readonly kind: 'UNSUPPORTED_LOCATION';
+    };
+  }
+>;
+
+/**
  * Map the PR #24 internal application result to the mobile-facing {@link WeatherResponseV1} body.
  *
  * A success maps to `{ ok: true, meta, data: result.overview }` (the `overview` only — never the
@@ -114,16 +131,15 @@ export function presentKmaLocationHourlyOverviewResponseV1(
     });
   }
 
-  // Exhaustiveness guard. The only non-success arm today is the LOCATION/UNSUPPORTED_LOCATION failure.
-  // The classic `assertNever(result)` pattern cannot compile here because a single remaining arm never
-  // narrows to `never`; this `satisfies` check achieves the same protection differently — if a future
-  // error arm is ever added to KmaLocationHourlyOverviewResult, `result` (the non-success union) will no
-  // longer satisfy the single LOCATION arm type and this line stops compiling, forcing the new arm to be
-  // mapped explicitly. NO field is read off `result`, so no internal detail can leak into the response.
-  result satisfies Extract<
-    KmaLocationHourlyOverviewResult,
-    { readonly stage: 'LOCATION' }
-  >;
+  // Exhaustiveness guard, fixed on BOTH `stage` and `error.kind`. The only non-success arm today is the
+  // LOCATION/UNSUPPORTED_LOCATION failure. The classic `assertNever(result)` pattern cannot compile here
+  // because a single remaining arm never narrows to `never`; this `satisfies` check achieves the same
+  // protection differently. Pinning only `stage: 'LOCATION'` would let a future same-stage arm with a
+  // different `error.kind` slip through and be silently published as UNSUPPORTED_LOCATION; pinning
+  // `error.kind` too means such an arm — or any new failure stage or other union arm — no longer satisfies
+  // `UnsupportedLocationFailure` and this line stops compiling, forcing the new arm to be mapped
+  // explicitly. NO field is read off `result`, so no internal detail can leak into the response.
+  result satisfies UnsupportedLocationFailure;
 
   // A stable public error built from constants — the internal `stage`/`kind`/coordinate/grid is never
   // copied out of `result`.
