@@ -488,7 +488,10 @@ a project on first run; that step is intentionally deferred to a later PR.
   - **Provenance boundary** — the service infers **no** provenance: it owns no clock/env/network, defines
     only the selected-source resolver *seam*, and never rebuilds a request plan or reconstructs a KMA base
     time (a plan built during the run and a resolver reading a clock afterwards can disagree at an
-    availability-delay boundary). `issuedAt: null` is passed through.
+    availability-delay boundary). `issuedAt: null` is passed through. Since PR #25 the injected resolver
+    can read the **actual** executed issuance from `input.selection.execution.primaryIssuance` (and, after
+    narrowing `fallbackAttempted`, `previousIssuance`) instead of recomputing it — the sanitized identity
+    is preserved on the trace, but the production resolver that consumes it is still a later PR.
   - **Errors** — the method is **not** `async`: an invalid location and a facade synchronous throw
     propagate synchronously (same reference); a facade rejection and a selector/resolver/assembler throw
     reject the returned Promise (same reference). No broad `try`/`catch`, wrapping, logging, or partial
@@ -504,6 +507,30 @@ a project on first run; that step is intentionally deferred to a later PR.
     into **no** composition root or route; the production metadata resolver and PR #24 production
     composition (and the `/weather` route) are later PRs. It changes no existing runtime and adds **no**
     new dependency.
+- **KMA forecast sanitized issuance identity in the execution trace** — PR #25 adds the public type
+  `KmaForecastIssuanceIdentity` (`src/services/kma-forecast-issuance-identity.ts`,
+  `product`/`baseDate`/`baseTime` only) and preserves it inside the PR #19 execution trace, derived from
+  the **actual** request plan. See [docs/kma-hourly-fallback.md](../../docs/kma-hourly-fallback.md).
+  Highlights:
+  - The trace no longer carries only results: a no-fallback trace adds `primaryIssuance`, and a
+    fallback-attempted trace adds both `primaryIssuance` and `previousIssuance`. `previousIssuance`
+    exists **only** on the branch where the previous request was actually sent — a planned-but-unsent
+    previous request never contributes an identity.
+  - Each identity is a **fresh** object derived by explicit field assignment from `plan.primary`/
+    `plan.previous`; it carries **no** `nx`/`ny`, request object, plan, ServiceKey, URL, query, raw
+    body, or `issuedAt`/`fetchedAt`/`sourceId`/`retrievalMode`. The fallback service reads **no** clock
+    and makes **no** extra candidate-selector/request-plan-factory call — the plan already built is the
+    sole provenance source, so the identity can never drift from the executed request at an
+    availability-delay boundary.
+  - The `PRIMARY`/`PREVIOUS` distinction stays with the PR #22 selection; the selector preserves the
+    `execution` reference (issuance siblings included) and **never** copies issuance onto the selection
+    top level. The PR #24 injected resolver reaches the actual issuance via
+    `input.selection.execution.primaryIssuance` (and, after narrowing `fallbackAttempted`,
+    `previousIssuance`) — its resolver input own keys stay exactly `product`/`location`/`selection`.
+  - No `issuedAt`/`fetchedAt`/`sourceId`/`retrievalMode` converter, **no production metadata resolver**,
+    no production composition, and no route mapper are added — those are PR #26/#27. `error`/`Promise`/
+    abort contracts are unchanged; providers, contracts, weather-core, and all composition runtime are
+    unchanged; and it adds **no** new dependency.
 - **Still not implemented.** The **production metadata resolver** and the **PR #24 production
   composition** that would assemble this application service into a callable root; `current`/`daily`/
   air-quality/alerts `WeatherOverview` sections and their `SourceMetadata`; a `fallbackUsed` API field;

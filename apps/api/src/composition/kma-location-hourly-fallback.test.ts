@@ -494,7 +494,7 @@ describe('createKmaLocationHourlyFallbackCompositionFromEnv — supported Seoul,
       throw new Error(`expected a fallback execution trace, got ${JSON.stringify(result)}`);
     }
     expect(result.fallbackAttempted).toBe(false);
-    expectExactKeys(result, ['fallbackAttempted', 'primary']);
+    expectExactKeys(result, ['fallbackAttempted', 'primary', 'primaryIssuance']);
     if (result.fallbackAttempted) {
       throw new Error('expected no fallback');
     }
@@ -547,7 +547,9 @@ describe('createKmaLocationHourlyFallbackCompositionFromEnv — supported Seoul,
       'fallbackAttempted',
       'fallbackReason',
       'primary',
+      'primaryIssuance',
       'previous',
+      'previousIssuance',
     ]);
     expect(result.fallbackReason).toBe('EMPTY_HOURLY');
     expect(result.primary).toEqual({ ok: true, hourly: [] });
@@ -722,6 +724,7 @@ describe('createKmaLocationHourlyFallbackCompositionFromEnv — pre-aborted supp
 
     expect(result).toEqual({
       fallbackAttempted: false,
+      primaryIssuance: { product: SHORT, baseDate: '20260722', baseTime: '0500' },
       primary: { ok: false, stage: 'PROVIDER', error: { kind: 'ABORTED' } },
     });
     // The converter ran and the request plan was built (one clock read), but the provider

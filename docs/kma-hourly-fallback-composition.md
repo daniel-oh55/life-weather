@@ -159,10 +159,14 @@ previous service 실행·classifier 호출·network fetch·`AbortController` 생
 ([kma-hourly-fallback.md](./kma-hourly-fallback.md)).
 
 - **Primary ineligible**: clock 1회·plan factory 1회·primary service 1회·classifier 1회·Provider/fetch
-  최대 1회·previous service 0회 → `{ fallbackAttempted: false, primary }`.
+  최대 1회·previous service 0회 → `{ fallbackAttempted: false, primaryIssuance, primary }`.
 - **Primary eligible**: clock 1회·plan factory 1회·primary service 1회·classifier primary에 1회·previous
   service 1회·Provider/fetch 최대 2회·previous 재분류 없음·third attempt 없음 →
-  `{ fallbackAttempted: true, fallbackReason, primary, previous }`.
+  `{ fallbackAttempted: true, fallbackReason, primaryIssuance, primary, previousIssuance, previous }`.
+- PR #25부터 execution trace는 각 attempt와 연관된 issuance의 sanitized identity
+  (`primaryIssuance`, fallback 시 `previousIssuance` — `product`/`baseDate`/`baseTime`만)를 함께 보존합니다.
+  이 identity는 이미 만들어진 plan에서 파생하므로 clock을 다시 읽지 않으며, full request/plan/grid는
+  노출하지 않습니다.
 - fallback service method 1회당 request-plan factory가 clock을 정확히 1회 읽습니다. primary와 previous는
   동일 clock reference에서 생성된 한 candidate pair를 사용합니다.
 - `fallbackAttempted: true`는 previous service invocation이 **일어났다**는 의미이며, 실제 fetch 횟수나

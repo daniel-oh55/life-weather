@@ -6,6 +6,7 @@ import {
   type HourlyForecast,
   type WeatherLocation,
 } from '@life-weather/contracts';
+import { KmaForecastProduct } from '@life-weather/weather-core';
 
 import type { KmaHourlyFallbackReason } from './kma-hourly-fallback-eligibility';
 import type { KmaHourlyFallbackSelection } from './kma-hourly-fallback-selection';
@@ -93,6 +94,9 @@ const FORBIDDEN_TOP_LEVEL_KEYS = [
   'plan',
 ] as const;
 
+/** The forecast product every fixture trace uses. */
+const SHORT = KmaForecastProduct.SHORT_FORECAST;
+
 // ---------------------------------------------------------------------------
 // Fixture builders — every mutable fixture is built fresh per call, so no test
 // shares a mutable input/selection/hourly/source object.
@@ -167,6 +171,7 @@ function makePrimarySelection(
   const result = makeSuccessResult(hourly);
   const execution: KmaHourlyFallbackServiceResult = {
     fallbackAttempted: false,
+    primaryIssuance: { product: SHORT, baseDate: '20260722', baseTime: '0500' },
     primary: result,
   };
   return {
@@ -191,7 +196,9 @@ function makePreviousSelection(
   const execution: KmaHourlyFallbackServiceResult = {
     fallbackAttempted: true,
     fallbackReason,
+    primaryIssuance: { product: SHORT, baseDate: '20260722', baseTime: '0500' },
     primary,
+    previousIssuance: { product: SHORT, baseDate: '20260722', baseTime: '0200' },
     previous,
   };
   return {
@@ -210,7 +217,9 @@ function makeNoSelection(): NoSelection {
   const execution: KmaHourlyFallbackServiceResult = {
     fallbackAttempted: true,
     fallbackReason: 'EMPTY_HOURLY',
+    primaryIssuance: { product: SHORT, baseDate: '20260722', baseTime: '0500' },
     primary,
+    previousIssuance: { product: SHORT, baseDate: '20260722', baseTime: '0200' },
     previous,
   };
   return {

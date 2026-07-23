@@ -245,16 +245,22 @@ resolver input은 **fresh** object이며 exact keys입니다.
 
 ## caller/injected provenance boundary
 
-현재 execution trace에는 실제 primary/previous request가 포함되지 않습니다. 따라서 이 service는 다음을
-계산하거나 추정하지 **않습니다.**
+execution trace에는 **full** primary/previous request(및 `nx`/`ny`·request plan)가 포함되지 않습니다.
+다만 PR #25부터는 실제 request plan에서 파생한 **sanitized issuance identity**
+(`primaryIssuance`, fallback 시 `previousIssuance` — `product`/`baseDate`/`baseTime`만)가 execution trace
+안에 보존됩니다. 그럼에도 이 service 자체는 여전히 다음을 계산하거나 추정하지 **않습니다.**
 
-- selected baseDate / baseTime / issuedAt
+- issuedAt (ISO `+09:00` 조립)
 - fetchedAt
 - retrievalMode
 - sourceId
 
 이 service는 selected source를 알고 있는 **resolver seam만** 정의하고, provenance 결정은 주입된 resolver에
-위임합니다. production resolver와 정확한 provenance 정책은 후속 PR입니다.
+위임합니다. injected resolver는 PR #25 이후 `input.selection.execution.primaryIssuance`(그리고
+`fallbackAttempted` narrow 후 `previousIssuance`)로 **실제 실행된 발표시각 identity**에 접근할 수 있습니다.
+production resolver와 정확한 provenance 정책(issuedAt/fetchedAt/sourceId/retrievalMode)은 후속 PR #26입니다.
+issuance identity는 resolver input top-level에 복제하지 않습니다 — resolver input own key는 여전히
+`product`/`location`/`selection` 세 개입니다.
 
 ### 별도 clock으로 issuedAt을 재계산하지 않는 이유
 
@@ -403,7 +409,9 @@ custom selection policy가 structurally valid한 selected-empty result(selected 
 
 - production resolver / default resolver / sourceId naming policy
 - issuedAt 계산 / baseDate·baseTime parsing / fetchedAt clock / retrievalMode 자동 선택
-- request-plan 재생성 / execution trace 확장 / primary·previous request 노출
+- request-plan 재생성 / execution trace를 이 service에서 확장 / **full** primary·previous request·nx·ny 노출
+  (sanitized issuance identity는 PR #25 fallback service가 이미 trace에 보존하며 이 service는 그것을 소비만
+  하고 확장하지 않습니다)
 - composition root / startup / `/weather` route / HTTP mapping / API envelope
 - current / daily / air-quality / alerts
 - cache / stale-data
@@ -419,4 +427,9 @@ v1 / PR #24 / 2026-07
 - selected-only provenance resolution (injected resolver seam)
 - 별도 clock/base-time으로 issuedAt 재계산 금지
 - production wiring 제외 (resolver/composition/route)
+
+v2 / PR #25 / 2026-07 (execution trace가 sanitized issuance identity 보존; 이 service runtime은 불변)
+- injected resolver가 selection.execution.primaryIssuance / previousIssuance로 actual 발표시각 identity에 접근 가능
+- resolver input own key는 여전히 product/location/selection 세 개(issuance 복제 없음)
+- 이 service의 runtime/public types/resolver input은 불변; production resolver는 여전히 PR #26
 ```

@@ -102,12 +102,15 @@ source
 
 다음 field는 **어느 branch에도 추가하지 않습니다**(중복 top-level field 금지).
 
-`fallbackAttempted`, `fallbackReason`, `primary`, `previous`, `selectedResult`, `selectedSource`,
-`final`, `finalResult`, `usable`, `reason`, `error`, `stage`, `status`, `stale`, `provider`, `request`,
-`metadata`, `sourceMetadata`, `attemptCount`.
+`fallbackAttempted`, `fallbackReason`, `primary`, `previous`, `primaryIssuance`, `previousIssuance`,
+`issuance`, `selectedResult`, `selectedSource`, `final`, `finalResult`, `usable`, `reason`, `error`,
+`stage`, `status`, `stale`, `provider`, `request`, `metadata`, `sourceMetadata`, `attemptCount`.
 
-`fallbackAttempted`·`fallbackReason`·`primary`·`previous`는 이미 `execution` 안에 존재하므로 wrapper
-top-level에 중복하지 않습니다.
+`fallbackAttempted`·`fallbackReason`·`primary`·`previous`, 그리고 PR #25에서 추가된
+`primaryIssuance`·`previousIssuance`는 이미 `execution` 안에 존재하므로 wrapper top-level에 중복하지
+않습니다. selector는 이 sanitized issuance identity를 **선택하거나 복제하지 않고**, `execution` reference를
+그대로 보존할 뿐입니다 — 소비자는 `selection.execution.primaryIssuance`(그리고 `fallbackAttempted`가 true인
+trace에서는 `selection.execution.previousIssuance`)로 접근합니다.
 
 ## usable result 정의
 

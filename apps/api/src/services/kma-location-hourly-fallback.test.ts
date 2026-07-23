@@ -62,9 +62,25 @@ function makeHourly(): HourlyForecast {
   };
 }
 
+/** The sanitized primary/previous issuance identities a fresh trace carries (no grid). */
+const PRIMARY_ISSUANCE = {
+  product: SHORT,
+  baseDate: '20260722',
+  baseTime: '0500',
+} as const;
+const PREVIOUS_ISSUANCE = {
+  product: SHORT,
+  baseDate: '20260722',
+  baseTime: '0200',
+} as const;
+
 /** A fresh no-fallback execution trace (primary non-empty success, previous never run). */
 function makeNoFallbackResult(): KmaHourlyFallbackServiceResult {
-  return { fallbackAttempted: false, primary: { ok: true, hourly: [makeHourly()] } };
+  return {
+    fallbackAttempted: false,
+    primaryIssuance: { ...PRIMARY_ISSUANCE },
+    primary: { ok: true, hourly: [makeHourly()] },
+  };
 }
 
 /** A fresh fallback execution trace (primary empty success → previous complete success). */
@@ -72,7 +88,9 @@ function makeFallbackResult(): KmaHourlyFallbackServiceResult {
   return {
     fallbackAttempted: true,
     fallbackReason: 'EMPTY_HOURLY',
+    primaryIssuance: { ...PRIMARY_ISSUANCE },
     primary: { ok: true, hourly: [] },
+    previousIssuance: { ...PREVIOUS_ISSUANCE },
     previous: { ok: true, hourly: [makeHourly()] },
   };
 }
