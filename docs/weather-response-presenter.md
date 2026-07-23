@@ -153,28 +153,52 @@ nested `overview`/`meta` is not part of the public contract.)
 
 ## Compile-time exhaustiveness
 
-`KmaLocationHourlyOverviewResult` currently has two arms: the success arm and a single failure arm —
-`{ ok: false, stage: 'LOCATION', error: { kind: 'UNSUPPORTED_LOCATION' } }`. The presenter supports
-**only** that one failure arm. Because a single remaining arm never narrows to `never`, the classic
-`assertNever(result)` pattern cannot compile here; instead the presenter uses a `satisfies` guard on the
-non-success arm.
+`KmaLocationHourlyOverviewResult` currently has two arms: the success arm (`ok: true`) and a single failure
+arm — `{ ok: false, stage: 'LOCATION', error: { kind: 'UNSUPPORTED_LOCATION' } }`. The presenter handles
+the success arm in its `if (result.ok)` branch and maps the one supported failure arm afterwards. Because a
+single remaining arm never narrows to `never`, the classic `assertNever(result)` pattern cannot compile
+here; instead the presenter constrains the **non-success** union with a `satisfies` guard.
 
-The guard is pinned on **both** the top-level `stage` **and** the nested `error.kind` (type
+### Success arms
+
+A result with `result.ok === true` is handled by the success branch, which reads `result.overview`:
+
+- A new success arm that keeps the `overview: WeatherOverview` contract is handled by the existing success
+  mapping — it does **not** necessarily require a new presenter branch.
+- A new success arm that does **not** provide `overview` fails typecheck at the `result.overview` access,
+  not at the failure guard below.
+
+### Failure / non-success arms
+
+After the success branch, the `satisfies` guard exhaustively constrains the remaining non-success union.
+The only non-success arm supported today is `LOCATION` / `UNSUPPORTED_LOCATION`. The guard is pinned on
+**both** the top-level `stage` **and** the nested `error.kind` (type
 `UnsupportedLocationFailure = Extract<KmaLocationHourlyOverviewResult, { stage: 'LOCATION'; error: { kind:
 'UNSUPPORTED_LOCATION' } }>`), not on `stage` alone. This matters:
 
 - If a **different `error.kind` is added on the same `LOCATION` stage** (e.g. an `AMBIGUOUS_LOCATION`
-  failure), the non-success union no longer satisfies `UnsupportedLocationFailure`, so typecheck fails.
-  A stage-only guard would instead have admitted the new kind and silently published it as
+  failure), the remaining non-success union no longer satisfies `UnsupportedLocationFailure`, so typecheck
+  fails. A stage-only guard would instead have admitted the new kind and silently published it as
   `UNSUPPORTED_LOCATION`; the `error.kind` pin prevents that automatic downgrade.
-- If a **new failure stage** or any other new union arm is added, it likewise fails the guard.
+- If a **new failure stage** is added, it likewise fails the guard.
 
-In every case the presenter stops compiling until the new arm is handled explicitly — a new error kind is
-never auto-mapped to `UNSUPPORTED_LOCATION`, and its public error `code`/`message`/`retryable` policy must
-be reviewed and chosen deliberately. No field is read off the guarded value, so the guard introduces no
-leak. The presenter test file encodes this as two compile-time regression checks: an exact-equality
-assertion that every current `LOCATION` failure equals the supported `UNSUPPORTED_LOCATION` arm, and a
-simulated future same-stage/different-kind arm that is asserted **not** assignable to the supported arm.
+In both cases the presenter stops compiling until the new failure arm is handled explicitly — a new failure
+is never auto-mapped to `UNSUPPORTED_LOCATION`. Supporting it means deliberately deciding its public error
+`code`, `message`, and `retryable` value (and, in a later route PR, its HTTP status policy). No field is
+read off the guarded value, so the guard introduces no leak.
+
+### Compile-time regression test
+
+The presenter test file encodes this as compile-time checks:
+
+- an exact-equality assertion that every current `LOCATION` failure equals the supported
+  `UNSUPPORTED_LOCATION` arm, and
+- a simulated future same-stage/different-kind (`AMBIGUOUS_LOCATION`) arm that is asserted **not**
+  assignable to (does not extend) the supported arm.
+
+The simulated types and generic type arguments are erased by TypeScript at compile time; the
+`expectTypeOf(...)` calls themselves remain as test-only runtime assertions in the Vitest suite and are
+never part of the production bundle.
 
 ## Out of scope (later PRs)
 

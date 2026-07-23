@@ -131,14 +131,17 @@ export function presentKmaLocationHourlyOverviewResponseV1(
     });
   }
 
-  // Exhaustiveness guard, fixed on BOTH `stage` and `error.kind`. The only non-success arm today is the
-  // LOCATION/UNSUPPORTED_LOCATION failure. The classic `assertNever(result)` pattern cannot compile here
-  // because a single remaining arm never narrows to `never`; this `satisfies` check achieves the same
-  // protection differently. Pinning only `stage: 'LOCATION'` would let a future same-stage arm with a
-  // different `error.kind` slip through and be silently published as UNSUPPORTED_LOCATION; pinning
-  // `error.kind` too means such an arm — or any new failure stage or other union arm — no longer satisfies
-  // `UnsupportedLocationFailure` and this line stops compiling, forcing the new arm to be mapped
-  // explicitly. NO field is read off `result`, so no internal detail can leak into the response.
+  // Exhaustiveness guard, fixed on BOTH `stage` and `error.kind`. The `result.ok` branch above already
+  // handles any success variant that keeps the WeatherOverview contract (a new success arm that dropped
+  // `overview` would instead fail typecheck at the `result.overview` read above, not here); this
+  // `satisfies` check exhaustively constrains the REMAINING non-success union. The classic
+  // `assertNever(result)` pattern cannot compile here because a single remaining arm never narrows to
+  // `never`; this check achieves the same protection differently. The only non-success arm today is the
+  // LOCATION/UNSUPPORTED_LOCATION failure. If a different `error.kind` on the same `LOCATION` stage, or any
+  // new failure stage, is added, the remaining union no longer satisfies `UnsupportedLocationFailure` and
+  // this line stops compiling — the new failure is never silently downgraded to UNSUPPORTED_LOCATION and
+  // must be given an explicit public error policy. NO field is read off `result`, so no internal detail can
+  // leak into the response.
   result satisfies UnsupportedLocationFailure;
 
   // A stable public error built from constants — the internal `stage`/`kind`/coordinate/grid is never

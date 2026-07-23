@@ -784,8 +784,9 @@ describe('presentKmaLocationHourlyOverviewResponseV1 — type contracts', () => 
 // ---------------------------------------------------------------------------
 // §14b — exhaustive-guard regression (compile-time). The presenter's `satisfies` guard is fixed on
 // BOTH `stage` and `error.kind`, so a future same-stage arm with a different kind cannot be silently
-// published as UNSUPPORTED_LOCATION. These are type-level assertions; `expectTypeOf(...)` erases at
-// runtime, so this block adds no runtime behavior beyond the single `it` wrapper.
+// published as UNSUPPORTED_LOCATION. The simulated types and generic type arguments below are erased by
+// TypeScript; the `expectTypeOf(...)` calls themselves remain as test-only runtime assertions in the
+// Vitest suite and are not part of the production bundle.
 // ---------------------------------------------------------------------------
 
 describe('presentKmaLocationHourlyOverviewResponseV1 — exhaustive guard', () => {
