@@ -38,6 +38,60 @@ export const CONTRACT_VERSION = 1 as const;
 - 이번 PR에서는 모바일 업데이트 UI나 API version route를 구현하지 않습니다. 위 정책은 향후
   구현이 따라야 할 합의입니다.
 
+## Weather API V1 요청 계약
+
+```ts
+export const weatherRequestV1 = ...;          // Zod 스키마
+export type WeatherRequestV1 = z.infer<typeof weatherRequestV1>;
+```
+
+- **향후 transport**: `POST /weather`의 JSON 요청 body. 실제 HTTP route·핸들러·body 파싱은 이
+  PR의 범위가 **아니며**, 이번 PR은 공유 스키마·타입·테스트·문서만 추가합니다.
+- **요청 shape은 정확히 `{ location }` 하나입니다.** body에는 공유 `WeatherLocation`만 담고 그
+  밖의 필드는 넣지 않습니다.
+
+  ```jsonc
+  {
+    "location": {
+      "id": "seoul-jongno",
+      "displayName": "서울 종로구",
+      "countryCode": "KR",
+      "adminArea1": "서울특별시",
+      "adminArea2": "종로구",
+      "adminArea3": null,
+      "latitude": 37.5729,
+      "longitude": 126.9794,
+      "timezone": "Asia/Seoul"
+    }
+  }
+  ```
+
+- **`WeatherLocation` 전체 필드를 보내는 이유**: `id`는 앱이 발급한 opaque 식별자일 뿐 KMA 격자나
+  에어코리아 측정소 ID가 아니므로, 서버가 요청만으로 지역을 특정하려면 좌표·timezone·표시명 등
+  공유 필드가 모두 필요합니다. 요청은 이미 정규화된 `WeatherLocation`을 그대로 전달합니다.
+- **provider-neutral 경계**: 요청에는 KMA 종속 정보를 **넣지 않습니다** — `product`, `nx`/`ny`,
+  격자(grid), base date/time, issuance, fallback, service key, provider id 등. KMA `product`
+  선택은 KMA 공급자에 종속된 **서버 측 정책**이므로 모바일이 보내지 않고, 향후 route 또는
+  application adapter가 서버에서 선택합니다. 이렇게 하면 모바일과 생활지수 엔진이 특정 Provider
+  세부사항에 결합되지 않습니다.
+- **top-level과 nested location 모두 strict**: 알 수 없는 키가 하나라도 있으면 조용히 제거하지
+  않고 **검증을 실패**시킵니다. 모바일 로컬 저장 object에는 `isCurrent`, `sortOrder`, `kmaGrid`,
+  `nx`/`ny` 같은 앱 내부·Provider 종속 필드가 있을 수 있으므로, 모바일 client는 로컬 object를
+  그대로 보내지 말고 공유 `WeatherLocation` 필드만 **명시적으로 매핑**해 전송해야 합니다. 실수로
+  섞여 들어온 필드는 즉시 거부됩니다. 이 strict 정책은 `weatherRequestV1` 네트워크 입력 경계에만
+  적용하며, 공유 `weatherLocation` 스키마의 기본 strip 동작은 **바꾸지 않습니다**(strict 스키마는
+  기존 `weatherLocation`에서 `.strict()`로 파생하고 원본은 그대로 둡니다).
+- **adminArea `null` vs 필드 누락**: `adminArea1`/`2`/`3`은 required + nullable입니다. 값이 없으면
+  **명시적 `null`**을 보내야 하며, 필드 자체를 누락하면 거부됩니다([null과 optional의
+  차이](#null과-optional의-차이) 참고).
+- **요청 body에는 `contractVersion`을 넣지 않습니다.** 요청 측 버전 필드는 이번 계약의 범위가
+  아니며, 응답은 기존 `WeatherResponseV1` envelope와 `CONTRACT_VERSION` 정책을 그대로 유지합니다.
+  이번 변경은 새 요청 스키마를 더하는 **additive** 변경이므로 contract version을 올리지 않습니다.
+  요청 계약의 버전 및 API versioning 정책은 **breaking 변경이 생길 때만** 재검토합니다.
+- **후속 PR 범위**: route 등록, 요청 body validation 연결, body 크기 제한, `Content-Type` 검사,
+  HTTP status mapping, error/success presenter는 이 PR에 포함하지 않으며 후속 route PR에서
+  다룹니다.
+
 ## strict enum과 compatible enum
 
 각 enum은 `createForwardCompatibleEnum` 헬퍼로 **두 개의 스키마**를 제공합니다.

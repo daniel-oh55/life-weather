@@ -47,9 +47,49 @@ valid zone identifier there. They are different concepts.
 - **Air quality** (`air-quality.ts`): `currentAirQuality`, `dailyAirQualityForecast`.
 - **Alerts** (`alerts.ts`): `weatherAlert`.
 - **API envelope** (`api.ts`): `CONTRACT_VERSION`, the minimal `apiEnvelopeHeader`,
-  `apiMetaV1`, and the `weatherResponseV1` discriminated union.
+  `apiMetaV1`, the `weatherResponseV1` discriminated union, and the provider-neutral
+  `weatherRequestV1` request schema.
 
 All exports are re-exported from `src/index.ts`.
+
+## Public schemas
+
+| Schema | Inferred type | Purpose |
+| --- | --- | --- |
+| `weatherLocation` | `WeatherLocation` | A location the weather describes (app-issued opaque `id`). |
+| `weatherOverview` | `WeatherOverview` | The aggregate normalized payload with cross-field invariants. |
+| `weatherRequestV1` | `WeatherRequestV1` | The V1 `POST /weather` request body: `{ location }`, strict. |
+| `weatherResponseV1` | `WeatherResponseV1` | The V1 response: a discriminated union on `ok`. |
+| `apiEnvelopeHeader` | `ApiEnvelopeHeader` | Minimal header to read `meta.contractVersion` before a full parse. |
+
+## Usage
+
+The V1 request body is provider-neutral: it carries only a `WeatherLocation` and nothing
+KMA-specific (no `product`, `nx`/`ny`, grid, base time, or service key — the server selects
+the KMA product itself). Both the top-level object and the nested location are **strict**, so
+an unknown key (a provider-native id or a local-only storage field such as `isCurrent`) is
+rejected rather than stripped. There is no `contractVersion` in the request body.
+
+```ts
+import { weatherRequestV1 } from '@life-weather/contracts';
+
+const request = weatherRequestV1.parse({
+  location: {
+    id: 'seoul-jongno',
+    displayName: '서울 종로구',
+    countryCode: 'KR',
+    adminArea1: '서울특별시',
+    adminArea2: '종로구',
+    adminArea3: null, // required + nullable: send explicit `null`, never omit the field
+    latitude: 37.5729,
+    longitude: 126.9794,
+    timezone: 'Asia/Seoul',
+  },
+});
+```
+
+The transport (`POST /weather` route, body-size limit, and HTTP status mapping) is a later
+PR; this package ships only the shared schema, type, tests, and docs.
 
 ## Scope in this PR
 
