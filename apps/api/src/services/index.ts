@@ -49,11 +49,23 @@
  *    `previous` request through the hourly service **once** (a **maximum of two** service calls; no
  *    third attempt and no re-classification of the `previous` result). The same `options`/`AbortSignal`
  *    reference is forwarded to both service calls. It returns an execution trace — a
- *    `{ fallbackAttempted: false, primary }` or `{ fallbackAttempted: true, fallbackReason, primary,
- *    previous }` union — and never merges the results, selects a final source, or builds a
- *    `WeatherOverview`/`SourceMetadata`. The orchestration itself owns **no** composition
- *    responsibility: the PR #20 grid fallback composition (`../composition`) **consumes** it as the
- *    live production fallback service. No HTTP route or cache consumes it yet.
+ *    `{ fallbackAttempted: false, primaryIssuance, primary }` or `{ fallbackAttempted: true,
+ *    fallbackReason, primaryIssuance, primary, previousIssuance, previous }` union — and never merges
+ *    the results, selects a final source, or builds a `WeatherOverview`/`SourceMetadata`. Since PR #25
+ *    the trace also preserves, from the **actual** request plan, the sanitized
+ *    `KmaForecastIssuanceIdentity` (`product`/`baseDate`/`baseTime` only) of each issuance an attempt
+ *    was associated with: `primaryIssuance` on every branch, and `previousIssuance` only on the branch
+ *    where the previous hourly-service invocation occurred and resolved to a service result — the
+ *    no-fallback branch has no previous invocation and therefore no previous identity. Identity
+ *    existence does not prove an HTTP dispatch (a pre-aborted invocation can return `ABORTED` without
+ *    network I/O). The identities carry no `nx`/`ny`, request object, plan, ServiceKey, URL, query, or
+ *    raw body, and are
+ *    derived once from the existing plan — the service reads no clock and makes no extra
+ *    selector/plan-factory call. The `PRIMARY`/`PREVIOUS` distinction stays with the later selection
+ *    step. The orchestration itself owns **no** composition responsibility: the PR #20 grid fallback
+ *    composition (`../composition`) **consumes** it as the live production fallback service. No HTTP
+ *    route or cache consumes it yet, and the production selected-source metadata resolver that will
+ *    read these identities is a later PR.
  * 8. The PR #21 KMA **location hourly-forecast fallback facade**
  *    (`createKmaLocationHourlyFallbackFacade`): a thin adapter that puts an injected
  *    latitude/longitude → grid converter in front of the PR #19 fallback service (input → grid →
@@ -182,6 +194,8 @@ export {
   type KmaFallbackRequestPlanFactoryInput,
   type KmaForecastBaseTimeCandidatesSelector,
 } from './kma-fallback-request-plan';
+
+export type { KmaForecastIssuanceIdentity } from './kma-forecast-issuance-identity';
 
 export {
   createKmaHourlyFallbackService,

@@ -14,6 +14,7 @@ import type {
   KmaForecastProviderError,
   KmaHourlyNormalizationIssue,
 } from '../providers/kma';
+import type { KmaForecastIssuanceIdentity } from './kma-forecast-issuance-identity';
 import type { KmaHourlyFallbackReason } from './kma-hourly-fallback-eligibility';
 import {
   selectKmaHourlyFallbackResult,
@@ -77,6 +78,9 @@ const FORBIDDEN_TOP_LEVEL_KEYS = [
   'execution',
   'primary',
   'previous',
+  'primaryIssuance',
+  'previousIssuance',
+  'issuance',
   'result',
   'product',
   'latitude',
@@ -113,6 +117,9 @@ const FORBIDDEN_OVERVIEW_KEYS = [
   'execution',
   'primary',
   'previous',
+  'primaryIssuance',
+  'previousIssuance',
+  'issuance',
   'result',
   'stage',
   'ok',
@@ -235,11 +242,29 @@ function makeNormalizationError(
   return { ok: false, stage: 'NORMALIZATION', issues };
 }
 
+/** The sanitized primary issuance identity a fresh trace carries (product/baseDate/baseTime only). */
+function makePrimaryIssuance(): KmaForecastIssuanceIdentity {
+  return { product: SHORT, baseDate: '20260722', baseTime: '0500' };
+}
+
+/** The sanitized previous issuance identity a fallback-attempted trace carries. */
+function makePreviousIssuance(): KmaForecastIssuanceIdentity {
+  return { product: SHORT, baseDate: '20260722', baseTime: '0200' };
+}
+
 /** A fresh no-fallback trace whose primary is a usable (non-empty) success. */
 function makePrimaryExecution(
   hourly: readonly HourlyForecast[] = [makeHourly()],
-): { readonly fallbackAttempted: false; readonly primary: SuccessResult } {
-  return { fallbackAttempted: false, primary: makeSuccessResult(hourly) };
+): {
+  readonly fallbackAttempted: false;
+  readonly primaryIssuance: KmaForecastIssuanceIdentity;
+  readonly primary: SuccessResult;
+} {
+  return {
+    fallbackAttempted: false,
+    primaryIssuance: makePrimaryIssuance(),
+    primary: makeSuccessResult(hourly),
+  };
 }
 
 /** A fresh fallback trace: an unusable (empty) primary and a usable previous success. */
@@ -249,13 +274,17 @@ function makePreviousExecution(
 ): {
   readonly fallbackAttempted: true;
   readonly fallbackReason: KmaHourlyFallbackReason;
+  readonly primaryIssuance: KmaForecastIssuanceIdentity;
   readonly primary: SuccessResult;
+  readonly previousIssuance: KmaForecastIssuanceIdentity;
   readonly previous: SuccessResult;
 } {
   return {
     fallbackAttempted: true,
     fallbackReason,
+    primaryIssuance: makePrimaryIssuance(),
     primary: makeEmptySuccessResult(),
+    previousIssuance: makePreviousIssuance(),
     previous: makeSuccessResult(previousHourly),
   };
 }
@@ -562,6 +591,20 @@ describe('fetchHourlyWeatherOverviewForLocation — PRIMARY selected', () => {
     expect(resolverCalls[0].product).toBe(SHORT);
     expect(resolverCalls[0].selection).toBe(result.selection);
 
+    // PR #25 provenance seam: the resolver reaches the actual primary issuance ONLY through
+    // `selection.execution` — the service never lifts it onto the resolver input top level.
+    expect(resolverCalls[0]).not.toHaveProperty('primaryIssuance');
+    expect(resolverCalls[0]).not.toHaveProperty('previousIssuance');
+    expect(resolverCalls[0]).not.toHaveProperty('issuance');
+    expect(resolverCalls[0].selection.execution.primaryIssuance).toBe(
+      trace.primaryIssuance,
+    );
+    expect(resolverCalls[0].selection.execution.primaryIssuance).toEqual({
+      product: SHORT,
+      baseDate: '20260722',
+      baseTime: '0500',
+    });
+
     // Assembler ran once with the resolver output by reference; overview is that exact return.
     expect(assemble).toHaveBeenCalledTimes(1);
     expect(assemblerCalls[0].source).toBe(source);
@@ -645,6 +688,25 @@ describe('fetchHourlyWeatherOverviewForLocation — PREVIOUS selected', () => {
     expect(resolver).toHaveBeenCalledTimes(1);
     expect(resolverCalls[0].selection.source).toBe('PREVIOUS');
 
+    // PR #25 provenance seam: after narrowing `fallbackAttempted`, the resolver reaches the actual
+    // previous issuance through `selection.execution` — never duplicated onto the resolver input.
+    expect(Object.keys(resolverCalls[0]).sort()).toEqual([
+      'location',
+      'product',
+      'selection',
+    ]);
+    expect(resolverCalls[0]).not.toHaveProperty('previousIssuance');
+    const resolverExecution = resolverCalls[0].selection.execution;
+    expect(resolverExecution.fallbackAttempted).toBe(true);
+    if (resolverExecution.fallbackAttempted) {
+      expect(resolverExecution.previousIssuance).toBe(trace.previousIssuance);
+      expect(resolverExecution.previousIssuance).toEqual({
+        product: SHORT,
+        baseDate: '20260722',
+        baseTime: '0200',
+      });
+    }
+
     // Overview uses the previous hourly and the resolver's provenance values.
     expect(result.overview.hourly).toEqual(previousHourly);
     expect(result.overview.missingSections).not.toContain('HOURLY');
@@ -684,12 +746,17 @@ describe('fetchHourlyWeatherOverviewForLocation — no selection', () => {
   }> = [
     {
       name: 'no fallback + primary empty',
-      make: () => ({ fallbackAttempted: false, primary: makeEmptySuccessResult() }),
+      make: () => ({
+        fallbackAttempted: false,
+        primaryIssuance: makePrimaryIssuance(),
+        primary: makeEmptySuccessResult(),
+      }),
     },
     {
       name: 'no fallback + primary Provider error',
       make: () => ({
         fallbackAttempted: false,
+        primaryIssuance: makePrimaryIssuance(),
         primary: makeProviderError({ kind: 'HTTP_ERROR', status: 500 }),
       }),
     },
@@ -698,7 +765,9 @@ describe('fetchHourlyWeatherOverviewForLocation — no selection', () => {
       make: () => ({
         fallbackAttempted: true,
         fallbackReason: 'EMPTY_HOURLY',
+        primaryIssuance: makePrimaryIssuance(),
         primary: makeEmptySuccessResult(),
+        previousIssuance: makePreviousIssuance(),
         previous: makeEmptySuccessResult(),
       }),
     },
@@ -707,7 +776,9 @@ describe('fetchHourlyWeatherOverviewForLocation — no selection', () => {
       make: () => ({
         fallbackAttempted: true,
         fallbackReason: 'KMA_NO_DATA',
+        primaryIssuance: makePrimaryIssuance(),
         primary: makeProviderError({ kind: 'KMA_UPSTREAM_ERROR', resultCode: '03' }),
+        previousIssuance: makePreviousIssuance(),
         previous: makeProviderError({ kind: 'HTTP_ERROR', status: 503 }),
       }),
     },
@@ -716,7 +787,9 @@ describe('fetchHourlyWeatherOverviewForLocation — no selection', () => {
       make: () => ({
         fallbackAttempted: true,
         fallbackReason: 'EMPTY_HOURLY',
+        primaryIssuance: makePrimaryIssuance(),
         primary: makeEmptySuccessResult(),
+        previousIssuance: makePreviousIssuance(),
         previous: makeNormalizationError(),
       }),
     },
@@ -760,6 +833,7 @@ describe('fetchHourlyWeatherOverviewForLocation — no selection', () => {
   it('never promotes a Provider failure to a top-level error', async () => {
     const trace: ExecutionTrace = {
       fallbackAttempted: false,
+      primaryIssuance: makePrimaryIssuance(),
       primary: makeProviderError({ kind: 'KMA_UPSTREAM_ERROR', resultCode: '07' }),
     };
     const { facade } = resolvingFacade(trace);
@@ -1082,6 +1156,7 @@ describe('fetchHourlyWeatherOverviewForLocation — error propagation', () => {
     });
     const trace: ExecutionTrace = {
       fallbackAttempted: false,
+      primaryIssuance: makePrimaryIssuance(),
       primary: makeEmptySuccessResult(),
     };
     const { facade } = resolvingFacade(trace);
@@ -1181,6 +1256,7 @@ describe('fetchHourlyWeatherOverviewForLocation — exact keys and leakage', () 
   it('no-selection success has exactly ok/overview/selection and a trace-free overview', async () => {
     const trace: ExecutionTrace = {
       fallbackAttempted: false,
+      primaryIssuance: makePrimaryIssuance(),
       primary: makeEmptySuccessResult(),
     };
     const { facade } = resolvingFacade(trace);
@@ -1303,6 +1379,7 @@ describe('fetchHourlyWeatherOverviewForLocation — no logging', () => {
     const none = createKmaLocationHourlyOverviewService(
       resolvingFacade({
         fallbackAttempted: false,
+        primaryIssuance: makePrimaryIssuance(),
         primary: makeEmptySuccessResult(),
       }).facade,
       createResolver().resolver,

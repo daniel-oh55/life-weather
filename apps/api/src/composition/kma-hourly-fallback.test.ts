@@ -556,7 +556,7 @@ describe('createKmaHourlyFallbackCompositionFromEnv — primary non-empty succes
     expect(fetchCalls).toHaveLength(1);
 
     expect(result.fallbackAttempted).toBe(false);
-    expectExactKeys(result, ['fallbackAttempted', 'primary']);
+    expectExactKeys(result, ['fallbackAttempted', 'primary', 'primaryIssuance']);
     if (result.fallbackAttempted) {
       throw new Error('expected no fallback');
     }
@@ -613,7 +613,9 @@ describe('createKmaHourlyFallbackCompositionFromEnv — EMPTY_HOURLY fallback en
       'fallbackAttempted',
       'fallbackReason',
       'primary',
+      'primaryIssuance',
       'previous',
+      'previousIssuance',
     ]);
     expect(result.fallbackReason).toBe('EMPTY_HOURLY');
     expect(result.primary).toEqual({ ok: true, hourly: [] });
@@ -705,6 +707,7 @@ describe('createKmaHourlyFallbackCompositionFromEnv — representative ineligibl
 
     expect(result).toEqual({
       fallbackAttempted: false,
+      primaryIssuance: { product: SHORT, baseDate: '20260722', baseTime: '0500' },
       primary: {
         ok: false,
         stage: 'PROVIDER',
@@ -733,6 +736,7 @@ describe('createKmaHourlyFallbackCompositionFromEnv — representative ineligibl
 
     expect(result).toEqual({
       fallbackAttempted: false,
+      primaryIssuance: { product: SHORT, baseDate: '20260722', baseTime: '0500' },
       primary: {
         ok: false,
         stage: 'PROVIDER',
@@ -1006,6 +1010,7 @@ describe('createKmaHourlyFallbackCompositionFromEnv — pre-aborted AbortSignal'
 
     expect(result).toEqual({
       fallbackAttempted: false,
+      primaryIssuance: { product: SHORT, baseDate: '20260722', baseTime: '0500' },
       primary: { ok: false, stage: 'PROVIDER', error: { kind: 'ABORTED' } },
     });
     // The request plan was still built (one clock read), but the provider short-circuited before fetch.
@@ -1111,7 +1116,7 @@ describe('createKmaHourlyFallbackCompositionFromEnv — exact keys, no secret le
       ny: 127,
     });
     expect(nonEmptyResult.fallbackAttempted).toBe(false);
-    expectExactKeys(nonEmptyResult, ['fallbackAttempted', 'primary']);
+    expectExactKeys(nonEmptyResult, ['fallbackAttempted', 'primary', 'primaryIssuance']);
     expectNoLeakage(nonEmptyResult);
 
     // 3) Fallback execution (primary empty → previous complete) with the secret-shaped key.
@@ -1134,7 +1139,9 @@ describe('createKmaHourlyFallbackCompositionFromEnv — exact keys, no secret le
       'fallbackAttempted',
       'fallbackReason',
       'primary',
+      'primaryIssuance',
       'previous',
+      'previousIssuance',
     ]);
     expectNoLeakage(fallbackResult);
 

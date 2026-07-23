@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { hourlyForecast, type HourlyForecast } from '@life-weather/contracts';
+import { KmaForecastProduct } from '@life-weather/weather-core';
 
 import type {
   KmaForecastProviderError,
   KmaHourlyNormalizationIssue,
 } from '../providers/kma';
+import type { KmaForecastIssuanceIdentity } from './kma-forecast-issuance-identity';
 import type { KmaHourlyFallbackReason } from './kma-hourly-fallback-eligibility';
 import {
   selectKmaHourlyFallbackResult,
@@ -60,6 +62,9 @@ const SOURCE_VALUES: readonly KmaHourlyFallbackSelectionSource[] = [
   'PRIMARY',
   'PREVIOUS',
 ];
+
+/** The forecast product every fixture trace uses. */
+const SHORT = KmaForecastProduct.SHORT_FORECAST;
 
 // ---------------------------------------------------------------------------
 // Fixture builders — every mutable fixture is built fresh per call, so no test
@@ -136,11 +141,21 @@ type FallbackExecution = Extract<
   { readonly fallbackAttempted: true }
 >;
 
+/** The sanitized primary issuance identity every fresh trace carries (product/baseDate/baseTime only). */
+function makePrimaryIssuance(): KmaForecastIssuanceIdentity {
+  return { product: SHORT, baseDate: '20260722', baseTime: '0500' };
+}
+
+/** The sanitized previous issuance identity a fallback-attempted trace carries. */
+function makePreviousIssuance(): KmaForecastIssuanceIdentity {
+  return { product: SHORT, baseDate: '20260722', baseTime: '0200' };
+}
+
 /** A fresh no-fallback execution trace (primary only, previous never invoked). */
 function makeNoFallbackExecution(
   primary: KmaHourlyForecastServiceResult,
 ): NoFallbackExecution {
-  return { fallbackAttempted: false, primary };
+  return { fallbackAttempted: false, primaryIssuance: makePrimaryIssuance(), primary };
 }
 
 /** A fresh fallback-attempted execution trace (primary then a single previous invocation). */
@@ -149,7 +164,14 @@ function makeFallbackExecution(
   previous: KmaHourlyForecastServiceResult,
   fallbackReason: KmaHourlyFallbackReason = 'EMPTY_HOURLY',
 ): FallbackExecution {
-  return { fallbackAttempted: true, fallbackReason, primary, previous };
+  return {
+    fallbackAttempted: true,
+    fallbackReason,
+    primaryIssuance: makePrimaryIssuance(),
+    primary,
+    previousIssuance: makePreviousIssuance(),
+    previous,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -628,5 +650,81 @@ describe('synchronous contract', () => {
     expect(spies.log).not.toHaveBeenCalled();
     expect(spies.warn).not.toHaveBeenCalled();
     expect(spies.error).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §24 — PR #25 issuance identity stays inside the execution reference only.
+// ---------------------------------------------------------------------------
+
+describe('issuance identity is preserved via the execution reference, never copied', () => {
+  it('exposes primaryIssuance through selection.execution on a PRIMARY selection', () => {
+    const execution = makeNoFallbackExecution(makeSuccess());
+
+    const selection = selectKmaHourlyFallbackResult(execution);
+
+    expect(selection.source).toBe('PRIMARY');
+    // The identity is reachable only through the preserved execution reference — same object, not a copy.
+    expect(selection.execution).toBe(execution);
+    expect(selection.execution.primaryIssuance).toBe(execution.primaryIssuance);
+    expect(selection.execution.primaryIssuance).toEqual({
+      product: SHORT,
+      baseDate: '20260722',
+      baseTime: '0500',
+    });
+    // The selector never lifts issuance onto the selection wrapper.
+    expectExactSelectionKeys(selection);
+    expect(selection).not.toHaveProperty('primaryIssuance');
+    expect(selection).not.toHaveProperty('previousIssuance');
+    expect(selection).not.toHaveProperty('issuance');
+  });
+
+  it('exposes previousIssuance through selection.execution on a PREVIOUS selection', () => {
+    const execution = makeFallbackExecution(
+      makeEmptySuccess(),
+      makeSuccess(),
+      'EMPTY_HOURLY',
+    );
+
+    const selection = selectKmaHourlyFallbackResult(execution);
+
+    expect(selection.source).toBe('PREVIOUS');
+    expect(selection.execution).toBe(execution);
+    expect(selection.execution.fallbackAttempted).toBe(true);
+    if (selection.execution.fallbackAttempted) {
+      expect(selection.execution.previousIssuance).toBe(
+        execution.previousIssuance,
+      );
+      expect(selection.execution.primaryIssuance).toBe(execution.primaryIssuance);
+      expect(selection.execution.previousIssuance).toEqual({
+        product: SHORT,
+        baseDate: '20260722',
+        baseTime: '0200',
+      });
+    }
+    expectExactSelectionKeys(selection);
+    expect(selection).not.toHaveProperty('previousIssuance');
+    expect(selection).not.toHaveProperty('issuance');
+  });
+
+  it('does not clone or spread issuance even when fallback was attempted but no source is usable', () => {
+    const execution = makeFallbackExecution(
+      makeEmptySuccess(),
+      makeEmptySuccess(),
+      'EMPTY_HOURLY',
+    );
+
+    const selection = selectKmaHourlyFallbackResult(execution);
+
+    expect(selection.selected).toBe(false);
+    // Even with no selection, the whole trace (issuance siblings included) is preserved by reference.
+    expect(selection.execution).toBe(execution);
+    if (selection.execution.fallbackAttempted) {
+      expect(selection.execution.primaryIssuance).toBe(execution.primaryIssuance);
+      expect(selection.execution.previousIssuance).toBe(
+        execution.previousIssuance,
+      );
+    }
+    expectExactSelectionKeys(selection);
   });
 });

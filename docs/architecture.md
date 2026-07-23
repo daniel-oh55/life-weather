@@ -625,4 +625,16 @@ lifestyle-engine  → contracts
   **production metadata resolver·PR #24 production composition·`/weather` route·cache는 여전히
   미구현**입니다(네 composition root 불변)
   ([kma-location-hourly-overview.md](./kma-location-hourly-overview.md)).
+- PR #25에서는 `apps/api` services 계층에 **sanitized issuance identity** public type
+  (`KmaForecastIssuanceIdentity`, `product`/`baseDate`/`baseTime`만)을 추가하고, PR #19 execution trace가
+  **실제 request plan**에서 파생한 이 identity를 보존하도록 확장했습니다 — no-fallback trace는
+  `primaryIssuance`, fallback-attempted trace는 `primaryIssuance` + `previousIssuance`를 담고,
+  `previousIssuance`는 previous가 실제 실행된 branch에만 존재합니다. identity는 이미 만들어진 plan에서 fresh
+  object로 파생하므로 clock을 다시 읽거나 selector/plan factory를 재호출하지 않으며, `nx`/`ny`·full
+  request·plan·ServiceKey·URL·query·raw body는 노출하지 않습니다. PR #22 selector는 이 identity를 복제하지 않고
+  execution reference만 보존하고, PR #24 resolver seam은 `selection.execution.primaryIssuance`(그리고
+  `fallbackAttempted` narrow 후 `previousIssuance`)로 실제 발표시각 identity에 접근할 수 있습니다. 이 새 type은
+  application component가 아니라 model이므로 services 계층 application component 수는 **여전히 11개**이고,
+  production metadata resolver·issuedAt/fetchedAt/sourceId/retrievalMode는 여전히 미구현입니다(PR #26 범위;
+  네 composition root·PR #22/#23/#24 runtime 불변) ([kma-hourly-fallback.md](./kma-hourly-fallback.md)).
 - 이 문서의 나머지 "예정" 구조는 앞으로의 합의이며, 위 요약이 현재 코드베이스의 상태입니다.

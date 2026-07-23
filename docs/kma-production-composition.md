@@ -451,6 +451,22 @@ resolver·PR #23 assembler를 하나로 잇는 **application service**
   않았습니다** — 이 service를 실제 graph로 조립하는 **production metadata resolver**도 아직 production
   구현이 없습니다. service는 composition·`/weather` route·startup에 연결되지 않습니다.
 
+## PR #25: execution trace의 sanitized issuance identity (composition root 추가 없음)
+
+PR #25도 새 composition root를 추가하지 않습니다. 대신 PR #19 execution trace가 **실제 request plan**에서
+파생한 sanitized `KmaForecastIssuanceIdentity`(`product`/`baseDate`/`baseTime`만)를 보존하도록 하고, 그 public
+type을 services 계층에 추가합니다([kma-hourly-fallback.md](./kma-hourly-fallback.md)).
+
+- **네 callable production root(grid scheduled·location scheduled·grid fallback·location fallback)는
+  모두 불변**입니다 — 공개 API·result·runtime 변경 없음. composition runtime 파일은 전혀 수정하지 않습니다.
+- 두 fallback root는 계속 PR #19 execution trace를 반환하며, 그 trace가 이제 no-fallback branch에
+  `primaryIssuance`를, fallback-attempted branch에 `primaryIssuance` + `previousIssuance`를 함께 담습니다.
+  `previousIssuance`는 previous가 실제 실행된 branch에만 존재합니다.
+- identity는 이미 만들어진 plan에서 fresh object로 파생하므로 composition의 clock 호출 수는 변하지 않고(호출당
+  1회 그대로), full request/plan/grid·ServiceKey·URL·query·raw body는 노출하지 않습니다.
+- **production metadata resolver는 여전히 없습니다** — issuedAt/fetchedAt/sourceId/retrievalMode와 이
+  identity를 읽는 production resolver는 PR #26 범위입니다.
+
 ## 후속 범위
 
 primary/previous selection policy(PR #22)·hourly-only `WeatherOverview` assembler(PR #23)·이 셋을
@@ -551,5 +567,12 @@ v12 / PR #24 / 2026-07 (location hourly overview application service; compositio
 - selected-source provenance를 결정하는 production metadata resolver도 아직 production 구현 없음
 - 다음 단계는 provenance strategy 확정 → production resolver → PR #24 application service의 production
   composition
+- startup/route·cache는 여전히 미구현
+
+v13 / PR #25 / 2026-07 (execution trace가 sanitized issuance identity 보존; composition root 추가 없음)
+- PR #19 execution trace가 실제 plan에서 파생한 KmaForecastIssuanceIdentity를 보존(primaryIssuance,
+  fallback 시 previousIssuance — product/baseDate/baseTime만; nx/ny·full request/plan 미포함)
+- 네 callable root 모두 불변(공개 API·result·composition runtime 변경 없음); clock 호출 수 불변
+- production metadata resolver·issuedAt/fetchedAt/sourceId/retrievalMode는 여전히 미구현(PR #26)
 - startup/route·cache는 여전히 미구현
 ```

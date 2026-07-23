@@ -30,13 +30,15 @@ base-time 탐색·primary/previous 결과 병합·최종 성공 결과 선택/AP
 - Provider boundary 자체가 아니며, `weather-core` 순수 domain 계산도 아닙니다.
 - route/composition보다 아래 계층으로, 후속 production composition에서 주입 가능합니다.
 
-허용 import는 세 building block의 factory/type 뿐입니다.
+허용 import는 세 building block의 factory/type과, issuance identity 파생을 위한 두 type-only import 뿐입니다.
 
 - `./kma-fallback-request-plan` — `KmaFallbackRequestPlanFactory`, `KmaFallbackRequestPlanFactoryInput`
 - `./kma-hourly-forecast` — `KmaHourlyForecastService`, `KmaHourlyForecastServiceOptions`,
   `KmaHourlyForecastServiceResult`
 - `./kma-hourly-fallback-eligibility` — `classifyKmaHourlyFallbackEligibility`,
   `KmaHourlyFallbackEligibility`, `KmaHourlyFallbackReason`
+- `../providers/kma` — `KmaForecastRequest` (type-only, sanitized issuance identity 파생용)
+- `./kma-forecast-issuance-identity` — `KmaForecastIssuanceIdentity` (type-only)
 
 Provider 구현·composition·scheduled facade·location facade·Hono·zod·contracts runtime·weather-core
 runtime·`process`/env·network/date library는 import하지 않습니다.
@@ -52,15 +54,24 @@ export type KmaHourlyFallbackServiceInput = KmaFallbackRequestPlanFactoryInput;
 
 export type KmaHourlyFallbackServiceOptions = KmaHourlyForecastServiceOptions;
 
+export interface KmaForecastIssuanceIdentity {
+  readonly product: KmaForecastProduct;
+  readonly baseDate: string;
+  readonly baseTime: string;
+}
+
 export type KmaHourlyFallbackServiceResult =
   | {
       readonly fallbackAttempted: false;
+      readonly primaryIssuance: KmaForecastIssuanceIdentity;
       readonly primary: KmaHourlyForecastServiceResult;
     }
   | {
       readonly fallbackAttempted: true;
       readonly fallbackReason: KmaHourlyFallbackReason;
+      readonly primaryIssuance: KmaForecastIssuanceIdentity;
       readonly primary: KmaHourlyForecastServiceResult;
+      readonly previousIssuance: KmaForecastIssuanceIdentity;
       readonly previous: KmaHourlyForecastServiceResult;
     };
 
@@ -90,6 +101,33 @@ orchestrator 자체는 `result.ok`/`resultCode`/`hourly.length`/provider error k
 - `KmaHourlyFallbackServiceOptions`는 PR #7 `KmaHourlyForecastServiceOptions`의 alias입니다
   (`{ signal? }`). 새 options shape를 만들지 않습니다.
 
+### sanitized issuance identity (PR #25)
+
+execution trace는 더 이상 result만 담지 않습니다. **실제** request plan에서 파생한 sanitized
+`KmaForecastIssuanceIdentity`를 함께 보존합니다. 이 identity는 정확히 세 필드만 가집니다.
+
+- `product`
+- `baseDate`
+- `baseTime`
+
+포함하지 **않습니다**: `nx`/`ny`, request object, request plan, ServiceKey, URL, query, raw response
+body, `resultMsg`, 그리고 `issuedAt`/`fetchedAt`/`sourceId`/`retrievalMode` 같은 provenance 필드
+(그것들은 PR #26의 몫입니다).
+
+- `primaryIssuance`는 **모든** branch에 존재하며 `plan.primary`에서 파생합니다.
+- `previousIssuance`는 **fallback-attempted branch에만** 존재하며 `plan.previous`에서 파생합니다. previous
+  hourly-service 호출이 발생하고 결과 union으로 정상 resolve된 branch에서만 노출하므로, 호출되지 않은
+  previous attempt(planned-but-not-invoked previous request)의 identity는 trace에 절대 새어 나가지
+  않습니다. 이는 HTTP 요청 전송 여부와는 별개의 application execution 정보입니다.
+  - no-fallback branch에는 previous 호출 자체가 없으므로 identity도 없습니다.
+  - pre-aborted signal은 네트워크 요청 없이 `ABORTED` result와 identity를 함께 만들 수 있습니다.
+  - previous 호출이 throw하거나 Promise가 reject되면 result union으로 resolve되지 않아 execution trace
+    자체가 반환되지 않고, 따라서 `previousIssuance`를 담은 결과도 없습니다.
+- `PRIMARY`/`PREVIOUS` 구분은 이 identity가 아니라 이후 selection 단계(PR #22)가 표현합니다.
+
+identity는 이미 만들어진 plan에서 한 번만 파생하므로, 이 service는 clock을 다시 읽거나 candidate
+selector·request-plan factory를 추가로 호출하지 않습니다.
+
 ### result discriminated union
 
 실행 trace이며 최종 API 선택 결과가 아닙니다. 두 branch 중 정확히 하나입니다.
@@ -99,18 +137,20 @@ orchestrator 자체는 `result.ok`/`resultCode`/`hourly.length`/provider error k
 ```ts
 {
   fallbackAttempted: false,
+  primaryIssuance,
   primary,
 }
 ```
 
-own key는 정확히 `fallbackAttempted`, `primary`입니다. 의미:
+own key는 정확히 `fallbackAttempted`, `primary`, `primaryIssuance`입니다. 의미:
 
 - plan은 생성됨
 - primary service는 실행됨
 - classifier는 ineligible을 반환함
 - previous service는 호출되지 않음
 
-`previous`·`fallbackReason` key는 없습니다.
+`previous`·`previousIssuance`·`fallbackReason` key는 없습니다. previous hourly-service 호출 자체가
+발생하지 않았으므로 `previousIssuance`도 반드시 부재합니다.
 
 #### fallback-attempted branch
 
@@ -118,16 +158,21 @@ own key는 정확히 `fallbackAttempted`, `primary`입니다. 의미:
 {
   fallbackAttempted: true,
   fallbackReason,
+  primaryIssuance,
   primary,
+  previousIssuance,
   previous,
 }
 ```
 
-own key는 정확히 `fallbackAttempted`, `fallbackReason`, `primary`, `previous`입니다. 의미:
+own key는 정확히 `fallbackAttempted`, `fallbackReason`, `primary`, `primaryIssuance`, `previous`,
+`previousIssuance`입니다. 의미:
 
 - primary service 실행 완료
 - classifier가 eligible을 반환
 - previous service가 정확히 한 번 호출되어 result를 반환
+- `previousIssuance`는 previous attempt가 실제로 실행됐기 때문에 존재하며, previous 결과가 success·empty·
+  Provider·Normalization·`ABORTED` 무엇이든 항상 존재합니다.
 
 ### `fallbackAttempted`의 정확한 의미
 
@@ -147,8 +192,11 @@ previous 결과로 이 값을 변경하지 않습니다.
 result union에는 다음 key를 노출하지 않습니다.
 
 `fallbackUsed`, `fallbackSucceeded`, `selected`, `final`, `result`, `source`, `stale`, `attemptCount`,
-`maxAttempts`, `retryable`, `delayMilliseconds`, `primaryRequest`, `previousRequest`, `plan`,
-`eligibility`, `classifierResult`.
+`maxAttempts`, `retryable`, `delayMilliseconds`, `primaryRequest`, `previousRequest`, `plan`, `nx`,
+`ny`, `grid`, `coordinates`, `eligibility`, `classifierResult`.
+
+`primaryIssuance`/`previousIssuance`는 위 금지 목록에서 제외됩니다 — full request/plan/grid는 아니고
+sanitized identity(`product`/`baseDate`/`baseTime`)만 담기 때문입니다.
 
 ## execution order
 
@@ -156,9 +204,11 @@ Eligible 경로의 정확한 순서:
 
 ```text
 1. PLAN              requestPlanFactory.createFallbackRequestPlan(input)
+   → primaryIssuance = plan.primary의 product/baseDate/baseTime (fresh object)
 2. PRIMARY_SERVICE   hourlyService.fetchHourlyForecast(plan.primary, options)
 3. CLASSIFY_PRIMARY  eligibilityClassifier(primary)
 4. PREVIOUS_SERVICE  hourlyService.fetchHourlyForecast(plan.previous, options)
+   → previousIssuance = plan.previous의 product/baseDate/baseTime (previous attempt 후에만)
 ```
 
 Ineligible 경로는 3단계에서 종료합니다.
@@ -195,6 +245,11 @@ previous는 primary 결과가 eligible임이 확인된 뒤에만 호출합니다
 - previous 결과는 nonempty success·empty success·upstream `03`·`ABORTED`·`TIMEOUT`·HTTP error·network
   error·normalization failure 등 **무엇이든 그대로 보존**합니다. 재분류·변환·병합·success 여부 판단을 하지
   않습니다. previous가 다시 no-data여도 한 단계 fallback으로 종료합니다.
+- `primaryIssuance`/`previousIssuance`는 매 호출마다 **fresh object**로 파생하며, plan request의 exact
+  reference가 아닙니다(`primaryIssuance !== plan.primary`, `previousIssuance !== plan.previous`, 그리고
+  둘은 서로 다른 객체). 값은 해당 request의 `product`/`baseDate`/`baseTime`과 정확히 같고 `nx`/`ny`는 복사하지
+  않습니다. explicit field assignment만 사용하므로(spread 없음) frozen plan/request에서도 안전하게 동작하며
+  입력을 mutate하지 않습니다.
 
 ## caller input / request / options reference pass-through
 
@@ -227,9 +282,9 @@ previous 호출은 없습니다. 이번 PR은 Provider의 existing abort ownersh
 
 primary가 eligible인 뒤 previous 전에 signal이 aborted이면, previous hourly service는 동일한
 already-aborted signal을 받고 production Provider는 네트워크 요청 없이 `ABORTED`를 반환합니다. execution
-result는 `fallbackAttempted: true`이고 `previous`는 PROVIDER/`ABORTED` service result입니다. 다시 강조하면
-`fallbackAttempted: true`는 previous service invocation을 의미하며, 실제 HTTP transport 시작을 의미하지
-않습니다.
+result는 `fallbackAttempted: true`이고 `previous`는 PROVIDER/`ABORTED` service result이며, previous
+invocation이 실제로 발생했으므로 `previousIssuance`도 존재합니다. 다시 강조하면 `fallbackAttempted: true`는
+previous service invocation을 의미하며, 실제 HTTP transport 시작을 의미하지 않습니다.
 
 ## async rejection / error propagation
 
@@ -248,6 +303,9 @@ returned Promise rejection으로 **같은 error reference를 전파**합니다.
 
 - broad `try/catch`가 없고, `{ ok: false }` 새 wrapper·error wrapping·re-message·logging·partial
   execution result 반환을 하지 않습니다. collaborator programmer error를 domain result로 숨기지 않습니다.
+- sanitized issuance identity 파생은 **새로운 failure path를 만들지 않습니다.** plan factory·primary/previous
+  service·classifier가 throw/reject하면 기존과 동일하게 같은 error reference로 전파하며, issuance가 포함된
+  partial trace를 반환하지 않습니다.
 - primary/previous 결과를 병합하지 않고, 최종 source를 선택하지 않으며, `WeatherOverview`/`SourceMetadata`를
   조립하지 않습니다.
 - `createKmaHourlyFallbackService(...)` 호출 자체는 side-effect-free입니다. construction 시 collaborator
@@ -342,6 +400,26 @@ PR #20 grid fallback composition·PR #21 location fallback facade/composition·P
 5. cache/stale-data.
 6. authenticated KMA end-to-end verification.
 
+## PR #25: sanitized issuance identity 보존
+
+PR #25는 execution trace에 실제 request plan에서 파생한 sanitized `KmaForecastIssuanceIdentity`
+(`primaryIssuance`, fallback 시 `previousIssuance`)를 additive sibling으로 추가했습니다. 위
+"sanitized issuance identity (PR #25)" 참조.
+
+- **정확한 현재 상태**: fallback service가 actual plan에서 sanitized primary/previous issuance identity를
+  보존합니다(full request/plan/grid는 노출하지 않음). no-fallback은 `primaryIssuance`만, fallback-attempted는
+  `primaryIssuance` + `previousIssuance`를 담습니다. **production metadata resolver는 아직 없습니다.**
+- **아직 구현하지 않음 (PR #26 범위)**: KST `issuedAt` converter, fixed product `sourceId`, `retrievalMode`
+  `LIVE`, `fetchedAt` resolver clock, 그리고 이 identity를 읽는 production selected-source metadata resolver.
+- **selector 계약 불변**: PR #22 selector는 identity를 선택·복제하지 않고 execution reference만 보존합니다.
+- **resolver seam(PR #24)**: injected resolver는 `selection.execution.primaryIssuance`(그리고
+  `fallbackAttempted` narrow 후 `previousIssuance`)로 actual issuance에 접근할 수 있습니다. 실제 resolver
+  로직은 이 PR에서 구현하지 않습니다.
+- **future `/weather` route 보안 원칙**: `{ ok, selection, overview }` 전체를 그대로 mobile에 serialize하지
+  않습니다. `selection.execution`은 internal application/observability 값이며, mobile-facing response는 별도
+  mapper를 통해 `overview`만 반환해야 합니다. raw `baseDate`/`baseTime`은 execution trace 내부에만 존재하고,
+  mobile에는 후속 resolver가 만든 ISO `issuedAt`만 노출합니다. 이 PR은 route mapper를 구현하지 않습니다.
+
 ## 변경 이력
 
 ```text
@@ -369,4 +447,12 @@ v4 / PR #22 / 2026-07 (execution trace consumer selector 추가; 이 service는 
 - fallbackAttempted(previous 호출)와 fallbackUsed(previous usable data 선택) 구분 확정
 - 이 service는 여전히 selection을 수행하지 않고 execution trace만 반환(공개 API·실행 계약 불변)
 - selector는 별도 후처리 단계이며 route/assembler/cache는 여전히 제외
+
+v5 / PR #25 / 2026-07 (sanitized issuance identity를 execution trace에 보존)
+- KmaForecastIssuanceIdentity(product/baseDate/baseTime) public type 추가
+- no-fallback trace에 primaryIssuance, fallback-attempted trace에 primaryIssuance + previousIssuance
+- previousIssuance는 previous hourly-service 호출이 발생하고 결과 union으로 resolve된 branch에만 존재(호출되지 않은 previous attempt는 노출 안 함)
+- actual plan request에서 fresh object로 파생; clock 재읽기·plan/selector 재호출 없음; nx/ny 미포함
+- primary/previous result reference·error/Promise/Abort 계약 불변; selector/assembler/PR #24 runtime 불변
+- production metadata resolver·issuedAt/fetchedAt/sourceId/retrievalMode는 PR #26 범위
 ```

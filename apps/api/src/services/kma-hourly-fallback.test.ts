@@ -8,7 +8,9 @@ import type {
   KmaForecastRequest,
   KmaHourlyNormalizationIssue,
 } from '../providers/kma';
+import { createKmaFallbackRequestPlanFactory } from './kma-fallback-request-plan';
 import type { KmaFallbackRequestPlan } from './kma-fallback-request-plan';
+import type { KmaForecastIssuanceIdentity } from './kma-forecast-issuance-identity';
 import {
   createKmaHourlyFallbackService,
   type KmaHourlyFallbackEligibilityClassifier,
@@ -16,6 +18,7 @@ import {
   type KmaHourlyFallbackServiceOptions,
   type KmaHourlyFallbackServiceResult,
 } from './kma-hourly-fallback';
+import type { KmaForecastRequestClock } from './kma-forecast-request';
 import {
   classifyKmaHourlyFallbackEligibility,
   type KmaHourlyFallbackEligibility,
@@ -26,17 +29,24 @@ import type { KmaHourlyForecastServiceResult } from './kma-hourly-forecast';
 const SHORT = KmaForecastProduct.SHORT_FORECAST;
 
 /** The exact own keys of the two result branches, sorted for stable comparison. */
-const NO_FALLBACK_KEYS = ['fallbackAttempted', 'primary'] as const;
+const NO_FALLBACK_KEYS = ['fallbackAttempted', 'primary', 'primaryIssuance'] as const;
 const FALLBACK_KEYS = [
   'fallbackAttempted',
   'fallbackReason',
   'previous',
+  'previousIssuance',
   'primary',
+  'primaryIssuance',
 ] as const;
+
+/** The exact own keys of a sanitized issuance identity, sorted (product/baseDate/baseTime only). */
+const ISSUANCE_KEYS = ['baseDate', 'baseTime', 'product'] as const;
 
 /**
  * Keys that must never appear on either result branch — this service returns an execution trace, not
- * a final API selection, so no transport/selection/plan metadata may leak onto the wrapper.
+ * a final API selection, so no transport/selection/plan/grid metadata may leak onto the wrapper. The
+ * two sanitized issuance identities (`primaryIssuance`/`previousIssuance`) are the *only* new fields;
+ * the full request, plan, grid, and every provenance field a later PR will add stay forbidden here.
  */
 const FORBIDDEN_KEYS = [
   'fallbackUsed',
@@ -47,14 +57,47 @@ const FORBIDDEN_KEYS = [
   'source',
   'stale',
   'plan',
+  'request',
   'primaryRequest',
   'previousRequest',
+  'nx',
+  'ny',
+  'grid',
+  'coordinates',
   'eligibility',
   'classifierResult',
   'attemptCount',
   'maxAttempts',
   'retryable',
   'delayMilliseconds',
+  'metadata',
+  'provenance',
+  'sourceId',
+  'issuedAt',
+  'fetchedAt',
+  'retrievalMode',
+  'serviceKey',
+  'url',
+  'query',
+] as const;
+
+/** Keys that must never appear on a sanitized issuance identity — grid, request, transport, provenance. */
+const FORBIDDEN_ISSUANCE_KEYS = [
+  'nx',
+  'ny',
+  'grid',
+  'coordinates',
+  'request',
+  'plan',
+  'serviceKey',
+  'url',
+  'query',
+  'body',
+  'resultMsg',
+  'sourceId',
+  'issuedAt',
+  'fetchedAt',
+  'retrievalMode',
 ] as const;
 
 /**
@@ -139,6 +182,24 @@ function makeRequestPlan(): KmaFallbackRequestPlan {
     previous: { product: SHORT, baseDate: '20260722', baseTime: '0200', nx: 60, ny: 127 },
   };
 }
+
+/**
+ * The sanitized issuance identity the service must derive from `makeRequestPlan().primary` — the
+ * `product`/`baseDate`/`baseTime` of the plan's primary request, with `nx`/`ny` dropped. Used only as
+ * an expected value in structural assertions (never fed into the service), so it is safe to share.
+ */
+const PRIMARY_ISSUANCE: KmaForecastIssuanceIdentity = {
+  product: SHORT,
+  baseDate: '20260722',
+  baseTime: '0500',
+};
+
+/** The sanitized issuance identity the service must derive from `makeRequestPlan().previous`. */
+const PREVIOUS_ISSUANCE: KmaForecastIssuanceIdentity = {
+  product: SHORT,
+  baseDate: '20260722',
+  baseTime: '0200',
+};
 
 /** A fresh caller input. */
 function makeInput(): KmaHourlyFallbackServiceInput {
@@ -432,12 +493,18 @@ describe('createKmaHourlyFallbackService — non-empty primary success (no fallb
     expect(factory.calls).toHaveLength(1);
     expect(service.calls).toHaveLength(1);
     expect(classifierCalls).toHaveLength(1);
-    expect(result).toEqual({ fallbackAttempted: false, primary: primaryResult });
+    expect(result).toEqual({
+      fallbackAttempted: false,
+      primaryIssuance: PRIMARY_ISSUANCE,
+      primary: primaryResult,
+    });
     if (!result.fallbackAttempted) {
       expect(result.primary).toBe(primaryResult);
+      expect(result.primaryIssuance).toEqual(PRIMARY_ISSUANCE);
     }
     expect(Object.keys(result).sort()).toEqual([...NO_FALLBACK_KEYS].sort());
     expect(result).not.toHaveProperty('previous');
+    expect(result).not.toHaveProperty('previousIssuance');
     expect(result).not.toHaveProperty('fallbackReason');
   });
 });
@@ -471,6 +538,9 @@ describe('createKmaHourlyFallbackService — primary EMPTY_HOURLY (fallback)', (
       expect(result.fallbackReason).toBe('EMPTY_HOURLY');
       expect(result.primary).toBe(primaryResult);
       expect(result.previous).toBe(previousResult);
+      // Both issuance identities are derived from the actual plan requests, values only.
+      expect(result.primaryIssuance).toEqual(PRIMARY_ISSUANCE);
+      expect(result.previousIssuance).toEqual(PREVIOUS_ISSUANCE);
     }
     expect(Object.keys(result).sort()).toEqual([...FALLBACK_KEYS].sort());
   });
@@ -500,6 +570,8 @@ describe('createKmaHourlyFallbackService — primary KMA_NO_DATA (fallback)', ()
       expect(result.fallbackReason).toBe('KMA_NO_DATA');
       expect(result.primary).toBe(primaryResult);
       expect(result.previous).toBe(previousResult);
+      expect(result.primaryIssuance).toEqual(PRIMARY_ISSUANCE);
+      expect(result.previousIssuance).toEqual(PREVIOUS_ISSUANCE);
     }
     expect(service.calls[0].request).toBe(plan.primary);
     expect(service.calls[1].request).toBe(plan.previous);
@@ -547,8 +619,12 @@ describe('createKmaHourlyFallbackService — ineligible primary results (no fall
     expect(result.fallbackAttempted).toBe(false);
     if (!result.fallbackAttempted) {
       expect(result.primary).toBe(primaryResult);
+      // primaryIssuance is present on every no-fallback branch, even an ineligible Provider error…
+      expect(result.primaryIssuance).toEqual(PRIMARY_ISSUANCE);
     }
+    // …but the never-sent previous request contributes no issuance identity.
     expect(result).not.toHaveProperty('previous');
+    expect(result).not.toHaveProperty('previousIssuance');
   });
 });
 
@@ -614,7 +690,12 @@ describe('createKmaHourlyFallbackService — custom classifier injection', () =>
     expect(service.calls).toHaveLength(1);
     expect(classifierCalls).toHaveLength(1);
     expect(classifierCalls[0]).toBe(primaryResult);
-    expect(result).toEqual({ fallbackAttempted: false, primary: primaryResult });
+    expect(result).toEqual({
+      fallbackAttempted: false,
+      primaryIssuance: PRIMARY_ISSUANCE,
+      primary: primaryResult,
+    });
+    expect(result).not.toHaveProperty('previousIssuance');
   });
 
   it('forces eligible even on a non-empty success, using the custom reason', async () => {
@@ -897,6 +978,9 @@ describe('createKmaHourlyFallbackService — AbortSignal pass-through', () => {
     expect(result.fallbackAttempted).toBe(true);
     if (result.fallbackAttempted) {
       expect(result.previous).toBe(abortedResult);
+      // The previous attempt actually ran (returning ABORTED), so its issuance identity is present.
+      expect(result.previousIssuance).toEqual(PREVIOUS_ISSUANCE);
+      expect(result.primaryIssuance).toEqual(PRIMARY_ISSUANCE);
     }
   });
 });
@@ -1142,6 +1226,242 @@ describe('createKmaHourlyFallbackService — result freshness', () => {
     expect(second.fallbackAttempted).toBe(true);
     if (second.fallbackAttempted) {
       expect(second.fallbackReason).toBe('EMPTY_HOURLY');
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §37 — sanitized issuance identity (derived from the actual plan)
+// ---------------------------------------------------------------------------
+
+describe('createKmaHourlyFallbackService — sanitized issuance identity', () => {
+  it('preserves previousIssuance when the previous attempt is a Provider error', async () => {
+    const plan = makeRequestPlan();
+    const primaryResult = emptySuccess();
+    const previousResult = providerFailure({ kind: 'HTTP_ERROR', status: 503 });
+    const service = queuedHourlyService([resolves(primaryResult), resolves(previousResult)]);
+    const { classifier } = recordingClassifier({ eligible: true, reason: 'EMPTY_HOURLY' });
+    const fallback = createKmaHourlyFallbackService(recordingPlanFactory(plan), service, classifier);
+
+    const result = await fallback.fetchHourlyForecastWithFallback(makeInput());
+
+    expect(result.fallbackAttempted).toBe(true);
+    if (result.fallbackAttempted) {
+      // The previous attempt ran (its result is an error), so previousIssuance is present…
+      expect(result.previousIssuance).toEqual(PREVIOUS_ISSUANCE);
+      // …and the error result itself is the collaborator's exact reference.
+      expect(result.previous).toBe(previousResult);
+    }
+    expect(Object.keys(result).sort()).toEqual([...FALLBACK_KEYS].sort());
+  });
+
+  it('preserves previousIssuance when the previous attempt is a Normalization error', async () => {
+    const plan = makeRequestPlan();
+    const previousResult = normalizationFailure(NORMALIZATION_ISSUES);
+    const service = queuedHourlyService([resolves(emptySuccess()), resolves(previousResult)]);
+    const { classifier } = recordingClassifier({ eligible: true, reason: 'EMPTY_HOURLY' });
+    const fallback = createKmaHourlyFallbackService(recordingPlanFactory(plan), service, classifier);
+
+    const result = await fallback.fetchHourlyForecastWithFallback(makeInput());
+
+    expect(result.fallbackAttempted).toBe(true);
+    if (result.fallbackAttempted) {
+      expect(result.previousIssuance).toEqual(PREVIOUS_ISSUANCE);
+      expect(result.previous).toBe(previousResult);
+    }
+  });
+
+  it('correlates each issuance with its own plan request (never swapped or clock-recomputed)', async () => {
+    // A plan whose base times are deliberately different from the module defaults: the issuance must
+    // echo THESE values, proving it reads the actual plan requests rather than a fixed constant.
+    const plan: KmaFallbackRequestPlan = {
+      primary: { product: SHORT, baseDate: '20260130', baseTime: '2300', nx: 55, ny: 127 },
+      previous: { product: SHORT, baseDate: '20260130', baseTime: '2000', nx: 55, ny: 127 },
+    };
+    const service = queuedHourlyService([resolves(emptySuccess()), resolves(nonEmptySuccess())]);
+    const { classifier } = recordingClassifier({ eligible: true, reason: 'EMPTY_HOURLY' });
+    const fallback = createKmaHourlyFallbackService(recordingPlanFactory(plan), service, classifier);
+
+    const result = await fallback.fetchHourlyForecastWithFallback(makeInput());
+
+    expect(result.fallbackAttempted).toBe(true);
+    if (result.fallbackAttempted) {
+      expect(result.primaryIssuance).toEqual({
+        product: SHORT,
+        baseDate: '20260130',
+        baseTime: '2300',
+      });
+      expect(result.previousIssuance).toEqual({
+        product: SHORT,
+        baseDate: '20260130',
+        baseTime: '2000',
+      });
+      // The primary issuance never carries the previous base time, and vice versa.
+      expect(result.primaryIssuance.baseTime).not.toBe(plan.previous.baseTime);
+      expect(result.previousIssuance.baseTime).not.toBe(plan.primary.baseTime);
+    }
+  });
+
+  it('returns fresh issuance objects distinct from the plan requests and from each other', async () => {
+    const plan = makeRequestPlan();
+    const service = queuedHourlyService([resolves(emptySuccess()), resolves(nonEmptySuccess())]);
+    const { classifier } = recordingClassifier({ eligible: true, reason: 'EMPTY_HOURLY' });
+    const fallback = createKmaHourlyFallbackService(recordingPlanFactory(plan), service, classifier);
+
+    const result = await fallback.fetchHourlyForecastWithFallback(makeInput());
+
+    expect(result.fallbackAttempted).toBe(true);
+    if (result.fallbackAttempted) {
+      // Distinct references: identity is a fresh object, not the plan request it was derived from.
+      expect(result.primaryIssuance).not.toBe(plan.primary);
+      expect(result.previousIssuance).not.toBe(plan.previous);
+      expect(result.primaryIssuance).not.toBe(result.previousIssuance);
+    }
+  });
+
+  it('exposes exactly product/baseDate/baseTime on each issuance — no grid, request, or transport leak', async () => {
+    const plan = makeRequestPlan();
+    const service = queuedHourlyService([resolves(emptySuccess()), resolves(nonEmptySuccess())]);
+    const { classifier } = recordingClassifier({ eligible: true, reason: 'EMPTY_HOURLY' });
+    const fallback = createKmaHourlyFallbackService(recordingPlanFactory(plan), service, classifier);
+
+    const result = await fallback.fetchHourlyForecastWithFallback(makeInput());
+
+    expect(result.fallbackAttempted).toBe(true);
+    if (result.fallbackAttempted) {
+      for (const issuance of [result.primaryIssuance, result.previousIssuance]) {
+        expect(Object.keys(issuance).sort()).toEqual([...ISSUANCE_KEYS]);
+        for (const forbidden of FORBIDDEN_ISSUANCE_KEYS) {
+          expect(issuance).not.toHaveProperty(forbidden);
+        }
+      }
+    }
+    // The wrapper itself never carries a full request/plan/grid either.
+    for (const forbidden of FORBIDDEN_KEYS) {
+      expect(result).not.toHaveProperty(forbidden);
+    }
+    // The serialized trace contains neither grid coordinate value from the plan requests.
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain('"nx"');
+    expect(serialized).not.toContain('"ny"');
+  });
+
+  it('derives correct issuance from a deep-frozen plan/request without mutating it', async () => {
+    const plan = deepFreeze(makeRequestPlan());
+    const planSnapshot = JSON.stringify(plan);
+    const service = queuedHourlyService([resolves(emptySuccess()), resolves(nonEmptySuccess())]);
+    const { classifier } = recordingClassifier({ eligible: true, reason: 'EMPTY_HOURLY' });
+    const fallback = createKmaHourlyFallbackService(recordingPlanFactory(plan), service, classifier);
+
+    const result = await fallback.fetchHourlyForecastWithFallback(makeInput());
+
+    expect(result.fallbackAttempted).toBe(true);
+    if (result.fallbackAttempted) {
+      expect(result.primaryIssuance).toEqual(PRIMARY_ISSUANCE);
+      expect(result.previousIssuance).toEqual(PREVIOUS_ISSUANCE);
+    }
+    // The frozen plan (and its nested requests) are untouched — deriving identity never mutates them.
+    expect(JSON.stringify(plan)).toBe(planSnapshot);
+  });
+
+  it('builds fresh issuance objects per call, unaffected by a mutation of an earlier wrapper', async () => {
+    const plan = makeRequestPlan();
+    const service = queuedHourlyService([
+      resolves(emptySuccess()),
+      resolves(nonEmptySuccess()),
+      resolves(emptySuccess()),
+      resolves(nonEmptySuccess()),
+    ]);
+    const { classifier } = recordingClassifier({ eligible: true, reason: 'EMPTY_HOURLY' });
+    const fallback = createKmaHourlyFallbackService(recordingPlanFactory(plan), service, classifier);
+
+    const first = await fallback.fetchHourlyForecastWithFallback(makeInput());
+    const second = await fallback.fetchHourlyForecastWithFallback(makeInput());
+
+    expect(first.fallbackAttempted && second.fallbackAttempted).toBe(true);
+    if (first.fallbackAttempted && second.fallbackAttempted) {
+      // Each call allocates its own issuance objects.
+      expect(first.primaryIssuance).not.toBe(second.primaryIssuance);
+      expect(first.previousIssuance).not.toBe(second.previousIssuance);
+      // Mutating the first call's issuance never leaks into the second call's fresh identity.
+      (first.primaryIssuance as { baseTime: string }).baseTime = 'MUTATED';
+      expect(second.primaryIssuance.baseTime).toBe('0500');
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §38 — availability-boundary integration (real factory + selector + injected clock)
+// ---------------------------------------------------------------------------
+
+describe('createKmaHourlyFallbackService — availability-boundary integration', () => {
+  // The exact 0500-issuance availability boundary the PR #18 factory / PR #16 selector already pin: at
+  // 05:10 KST the 0500 issuance's 10-minute delay is just met (primary 0500 / previous 0200); one ms
+  // earlier the pair shifts back one issuance (primary 0200 / previous 2300 the prior day). These epoch
+  // values are the established fixtures from the composition tests, not new guesses.
+  const CLOCK_AT_0510_KST_20260722 = Date.UTC(2026, 6, 21, 20, 10, 0, 0);
+  const CLOCK_AT_050959999_KST_20260722 = Date.UTC(2026, 6, 21, 20, 9, 59, 999);
+
+  /** A single-read clock that returns `epoch` and counts its reads. */
+  function fixedClock(epoch: number): {
+    readonly clock: KmaForecastRequestClock;
+    readonly nowEpochMilliseconds: ReturnType<typeof vi.fn>;
+  } {
+    const nowEpochMilliseconds = vi.fn(() => epoch);
+    return { clock: { nowEpochMilliseconds }, nowEpochMilliseconds };
+  }
+
+  it('preserves exactly the base times the real plan selects at the availability threshold', async () => {
+    const { clock, nowEpochMilliseconds } = fixedClock(CLOCK_AT_0510_KST_20260722);
+    // The REAL request-plan factory (real default candidate selector) is the sole provenance source.
+    const factory = createKmaFallbackRequestPlanFactory(clock);
+    // Primary empty → eligible; previous non-empty. The fake records the exact requests it received.
+    const service = queuedHourlyService([resolves(emptySuccess()), resolves(nonEmptySuccess())]);
+    const fallback = createKmaHourlyFallbackService(factory, service);
+
+    const result = await fallback.fetchHourlyForecastWithFallback(makeInput());
+
+    // Exactly one clock read: the fallback service reads no clock and builds no second plan.
+    expect(nowEpochMilliseconds).toHaveBeenCalledTimes(1);
+    expect(result.fallbackAttempted).toBe(true);
+    if (result.fallbackAttempted) {
+      // Issuance echoes the actual selected requests, not an independent recomputation.
+      const [primaryRequest, previousRequest] = [
+        service.calls[0].request,
+        service.calls[1].request,
+      ];
+      expect(result.primaryIssuance).toEqual({
+        product: primaryRequest.product,
+        baseDate: primaryRequest.baseDate,
+        baseTime: primaryRequest.baseTime,
+      });
+      expect(result.previousIssuance).toEqual({
+        product: previousRequest.product,
+        baseDate: previousRequest.baseDate,
+        baseTime: previousRequest.baseTime,
+      });
+      // Concretely, the availability-aware pair at 05:10 KST.
+      expect(result.primaryIssuance.baseTime).toBe('0500');
+      expect(result.previousIssuance.baseTime).toBe('0200');
+    }
+  });
+
+  it('shifts the preserved issuance one step back just before the availability threshold', async () => {
+    const { clock, nowEpochMilliseconds } = fixedClock(CLOCK_AT_050959999_KST_20260722);
+    const factory = createKmaFallbackRequestPlanFactory(clock);
+    const service = queuedHourlyService([resolves(emptySuccess()), resolves(nonEmptySuccess())]);
+    const fallback = createKmaHourlyFallbackService(factory, service);
+
+    const result = await fallback.fetchHourlyForecastWithFallback(makeInput());
+
+    expect(nowEpochMilliseconds).toHaveBeenCalledTimes(1);
+    expect(result.fallbackAttempted).toBe(true);
+    if (result.fallbackAttempted) {
+      // One ms before the 0500 threshold, the selected pair is primary 0200 / previous 2300 (prior day).
+      expect(result.primaryIssuance.baseDate).toBe('20260722');
+      expect(result.primaryIssuance.baseTime).toBe('0200');
+      expect(result.previousIssuance.baseDate).toBe('20260721');
+      expect(result.previousIssuance.baseTime).toBe('2300');
     }
   });
 });
