@@ -514,8 +514,11 @@ a project on first run; that step is intentionally deferred to a later PR.
   Highlights:
   - The trace no longer carries only results: a no-fallback trace adds `primaryIssuance`, and a
     fallback-attempted trace adds both `primaryIssuance` and `previousIssuance`. `previousIssuance`
-    exists **only** on the branch where the previous request was actually sent — a planned-but-unsent
-    previous request never contributes an identity.
+    exists **only** when the previous hourly-service invocation resolves to a service-result union; the
+    no-fallback branch has no such invocation and therefore no previous identity. Identity existence is
+    an application-execution correlation, **not** HTTP-dispatch evidence — a pre-aborted invocation
+    resolves to `ABORTED` without any network request yet still carries `previousIssuance`, whereas a
+    previous throw/rejection produces no partial trace and so no identity at all.
   - Each identity is a **fresh** object derived by explicit field assignment from `plan.primary`/
     `plan.previous`; it carries **no** `nx`/`ny`, request object, plan, ServiceKey, URL, query, raw
     body, or `issuedAt`/`fetchedAt`/`sourceId`/`retrievalMode`. The fallback service reads **no** clock

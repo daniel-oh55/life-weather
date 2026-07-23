@@ -25,11 +25,11 @@
  *                           previousIssuance, previous }
  * ```
  *
- * This is the first PR that actually **executes** the `previous` request. The "fallback" here is not a
- * generic transport retry: it means the newest availability-aware issuance reported a no-data signal
- * (`EMPTY_HOURLY` or upstream `'03'`), so the immediately-previous scheduled issuance is queried
- * **once**. It never walks further back, never retries the same request, and never re-classifies the
- * `previous` result — a single step of fallback and no more.
+ * This is the first PR that actually **invokes** the previous hourly-service attempt. The "fallback"
+ * here is not a generic transport retry: it means the newest availability-aware issuance reported a
+ * no-data signal (`EMPTY_HOURLY` or upstream `'03'`), so the immediately-previous scheduled issuance
+ * is queried **once**. It never walks further back, never retries the same request, and never
+ * re-classifies the `previous` result — a single step of fallback and no more.
  *
  * `fallbackAttempted: true` means the previous hourly-service invocation **happened**; it does not
  * mean an HTTP request was sent, that the network succeeded, or that the previous result carries data.
@@ -39,12 +39,16 @@
  * Sanitized issuance identity: the trace also preserves, from the **actual** request plan, the
  * sanitized {@link KmaForecastIssuanceIdentity} of each issuance that an execution attempt was
  * associated with — `primaryIssuance` on every branch, and `previousIssuance` only on the
- * fallback-attempted branch (because the previous request is planned but *sent* only when the
- * classifier reports eligible; a planned-but-unsent previous request never appears in the trace).
- * Each identity carries only `product`/`baseDate`/`baseTime` — never `nx`/`ny`, the request object,
- * the plan, a ServiceKey, URL, query, raw body, or any transport/selection metadata. It is derived
- * once from the plan the factory already produced, so this service reads **no** clock and calls the
- * candidate selector or request-plan factory **no** extra times.
+ * fallback-attempted branch. `previousIssuance` appears only when the previous hourly-service
+ * invocation occurred and resolved to a {@link KmaHourlyForecastServiceResult}; a planned previous
+ * request whose hourly-service invocation never occurred does not appear in the trace. This records an
+ * application-service execution attempt, **not** proof that the Provider dispatched an HTTP request —
+ * a pre-aborted signal, for example, may resolve as `ABORTED` without any network I/O while still
+ * carrying `previousIssuance`. Each identity carries only `product`/`baseDate`/`baseTime` — never
+ * `nx`/`ny`, the request object, the plan, a ServiceKey, URL, query, raw body, or any
+ * transport/selection metadata. It is derived once from the plan the factory already produced, so this
+ * service reads **no** clock and calls the candidate selector or request-plan factory **no** extra
+ * times.
  *
  * Deliberately narrow — everything below stays with other layers or later PRs: production composition
  * wiring, the scheduled/location facades, an HTTP route, `WeatherOverview`/`SourceMetadata` assembly,
@@ -126,7 +130,7 @@ export type KmaHourlyFallbackServiceOptions = KmaHourlyForecastServiceOptions;
  * - **No fallback** (`fallbackAttempted: false`): the plan was built, the primary service ran, and the
  *   classifier returned ineligible, so the previous service was never invoked. Carries the primary
  *   service result plus the sanitized `primaryIssuance` identity — and **no** `previousIssuance`,
- *   because the planned previous request was never sent.
+ *   because the previous hourly-service invocation never occurred.
  * - **Fallback attempted** (`fallbackAttempted: true`): the primary result was eligible, so the
  *   previous service was invoked **exactly once**. Carries the primary eligibility `reason`
  *   (unchanged by the previous result), the primary result, the previous result, and both sanitized
@@ -134,9 +138,10 @@ export type KmaHourlyFallbackServiceOptions = KmaHourlyForecastServiceOptions;
  *
  * The `primaryIssuance`/`previousIssuance` siblings are the sanitized {@link KmaForecastIssuanceIdentity}
  * of the plan's `primary`/`previous` request — `product`/`baseDate`/`baseTime` only. `previousIssuance`
- * appears **only** on the fallback-attempted branch, so a planned-but-unsent previous request never
- * leaks into the trace; the `PRIMARY`/`PREVIOUS` distinction itself stays with the later selection
- * step, not these fields.
+ * appears **only** on the fallback-attempted branch (the previous hourly-service invocation occurred
+ * and resolved to a service result), so a planned previous request whose invocation never occurred
+ * never leaks into the trace; the `PRIMARY`/`PREVIOUS` distinction itself stays with the later
+ * selection step, not these fields.
  *
  * Each nested result is the collaborator's own result by reference. The union carries **no** final
  * selection or transport metadata — no `fallbackUsed`, `fallbackSucceeded`, `selected`, `final`,
@@ -228,8 +233,8 @@ export function createKmaHourlyFallbackService(
       const eligibility = eligibilityClassifier(primary);
 
       if (!eligibility.eligible) {
-        // Ineligible: stop after the primary attempt. The previous request is never sent, so its
-        // issuance identity is deliberately absent from the trace.
+        // Ineligible: stop after the primary attempt. The previous hourly-service invocation never
+        // occurs, so its issuance identity is deliberately absent from the trace.
         return {
           fallbackAttempted: false,
           primaryIssuance,

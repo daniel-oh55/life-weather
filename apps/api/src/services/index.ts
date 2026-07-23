@@ -54,9 +54,12 @@
  *    the results, selects a final source, or builds a `WeatherOverview`/`SourceMetadata`. Since PR #25
  *    the trace also preserves, from the **actual** request plan, the sanitized
  *    `KmaForecastIssuanceIdentity` (`product`/`baseDate`/`baseTime` only) of each issuance an attempt
- *    was associated with: `primaryIssuance` on every branch, and `previousIssuance` only when the
- *    previous request was actually sent (never for a planned-but-unsent previous request). The
- *    identities carry no `nx`/`ny`, request object, plan, ServiceKey, URL, query, or raw body, and are
+ *    was associated with: `primaryIssuance` on every branch, and `previousIssuance` only on the branch
+ *    where the previous hourly-service invocation occurred and resolved to a service result — the
+ *    no-fallback branch has no previous invocation and therefore no previous identity. Identity
+ *    existence does not prove an HTTP dispatch (a pre-aborted invocation can return `ABORTED` without
+ *    network I/O). The identities carry no `nx`/`ny`, request object, plan, ServiceKey, URL, query, or
+ *    raw body, and are
  *    derived once from the existing plan — the service reads no clock and makes no extra
  *    selector/plan-factory call. The `PRIMARY`/`PREVIOUS` distinction stays with the later selection
  *    step. The orchestration itself owns **no** composition responsibility: the PR #20 grid fallback
