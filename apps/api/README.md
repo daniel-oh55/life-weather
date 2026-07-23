@@ -562,14 +562,20 @@ a project on first run; that step is intentionally deferred to a later PR.
   - **`fetchedAt`** — the resolver-materialization server time, read from the injected clock **exactly
     once** per valid call, as a UTC `Z` millisecond instant. It is **not** an exact transport timestamp; a
     future cache layer will preserve the upstream `fetchedAt` and report `retrievalMode: 'CACHE'`.
-  - **Errors** — `input.product === issuance.product` is asserted **before** the clock is read; a
-    non-object/unsupported issuance, non-selected/unknown-source selection, `PREVIOUS` without fallback,
-    product mismatch, or invalid clock value each throw a **static** `RangeError` (raw values never
-    included) **before** the clock is read (clock read zero times on invalid input). A throwing clock
-    propagates the same reference. Direct calls are synchronous; inside the PR #24 `.then` handler the
-    throw becomes the returned Promise's rejection. Output has exactly the four sorted own keys
-    `fetchedAt`/`issuedAt`/`retrievalMode`/`sourceId`, is fresh per call, and leaks no
-    transport/selection/location field.
+  - **Errors** — `input.product === issuance.product` is asserted **before** the clock is read.
+    **Invalid resolver data is rejected before the clock is read. An invalid value returned by the clock
+    is rejected after exactly one clock invocation.** Concretely, a null/non-object resolver input, a
+    null/non-object/non-selected/unknown-source selection, a null/non-object execution, a `PREVIOUS`
+    source without a fallback execution, a null/non-object or otherwise-malformed selected issuance
+    (missing/non-object, unsupported product, malformed `baseDate`/`baseTime`), and a product mismatch
+    each throw a **static** `RangeError` (raw values never included, **never** a native property-access
+    `TypeError`) with the clock read **zero** times. An invalid clock **value**
+    (`NaN`/`±Infinity`/fractional/unsafe-integer/out-of-`Date`-range) is different: it is rejected with a
+    static `RangeError` **after** that single clock read, because the value has to be read before it can
+    be judged. A throwing clock propagates the same reference, also after one read. Direct calls are
+    synchronous; inside the PR #24 `.then` handler the throw becomes the returned Promise's rejection.
+    Output has exactly the four sorted own keys `fetchedAt`/`issuedAt`/`retrievalMode`/`sourceId`, is
+    fresh per call, and leaks no transport/selection/location field.
   - **Not implemented.** It is wired into **no** composition root or route; production composition and
     cache are PR #27. It reads no env/network, opens no `fetch`/`AbortController`, and adds **no** new
     dependency.

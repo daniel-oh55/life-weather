@@ -45,11 +45,14 @@
  * ### Defensive identity validation, static errors
  *
  * The public {@link convertKmaForecastIssuanceToIssuedAt} converter and the resolver both defend
- * against a runtime value that bypassed the TypeScript types. A non-object issuance, an unsupported
- * product, a structurally-invalid `baseDate`/`baseTime`, a non-selected/unknown-source selection, a
- * `PREVIOUS` source on a no-fallback execution, a product mismatch, or an invalid clock value all fail
- * with a **static** {@link RangeError} — the original malformed value is never serialized into the
- * message. Validity of a structurally-parseable candidate instant is delegated to the contracts public
+ * against a runtime value that bypassed the TypeScript types, guarding each nesting boundary as a
+ * non-null object **before** any property is dereferenced. A null/non-object resolver input, a
+ * null/non-object/non-selected/unknown-source selection, a null/non-object execution, a `PREVIOUS`
+ * source on a no-fallback execution, a null/non-object or structurally-invalid selected issuance
+ * (missing/non-object, unsupported product, malformed `baseDate`/`baseTime`), a product mismatch, or an
+ * invalid clock value all fail with a **static** {@link RangeError} — never a native property-access
+ * `TypeError`, and the original malformed value is never serialized into the message. Validity of a
+ * structurally-parseable candidate instant is delegated to the contracts public
  * `isoDateTime` schema (which itself rejects impossible calendar/clock values such as a non-leap
  * `20260229`, month `13`, day `00`, hour `24`, or minute `60`); the resolver never re-validates the
  * official KMA base-time schedule (a structurally valid non-canonical `0615` still converts) — schedule
@@ -62,8 +65,10 @@
  * failure and a throwing injected clock propagate synchronously as the **same** error reference (no
  * broad `try`/`catch`, wrapping, result union, logging, fallback metadata, or partial metadata). When
  * PR #24 invokes the resolver inside its facade-Promise `.then` handler, that synchronous throw becomes
- * the returned Promise's rejection with the same error reference. Every invalid input fails **before**
- * the clock is read (clock read exactly zero times).
+ * the returned Promise's rejection with the same error reference. Every invalid **input** fails
+ * **before** the clock is read (clock read exactly zero times). An invalid **value returned by the
+ * clock** is different: it is rejected **after** exactly one clock read, because the value has to be read
+ * before it can be judged; a clock that itself throws likewise propagates its error after one read.
  *
  * ### Purity, immutability, freshness
  *
@@ -87,10 +92,7 @@ import { isoDateTime, type SourceMetadata } from '@life-weather/contracts';
 import { KmaForecastProduct } from '@life-weather/weather-core';
 
 import type { KmaForecastIssuanceIdentity } from './kma-forecast-issuance-identity';
-import type {
-  KmaSelectedHourlySourceMetadataResolver,
-  KmaSelectedHourlySourceMetadataResolverInput,
-} from './kma-location-hourly-overview';
+import type { KmaSelectedHourlySourceMetadataResolver } from './kma-location-hourly-overview';
 
 /**
  * The injected clock the resolver reads to stamp `fetchedAt`. Structurally identical to the
@@ -134,6 +136,18 @@ const UNSUPPORTED_PRODUCT_MESSAGE = 'Unsupported KMA forecast product';
 
 /** Static message for a clock value that cannot become a valid ISO `fetchedAt`. */
 const INVALID_CLOCK_MESSAGE = 'Invalid KMA source metadata clock value';
+
+/**
+ * A non-null, non-array object guard. Accepts an `unknown` so a runtime value that bypassed the
+ * TypeScript types can be structurally validated at every nesting boundary **before** any property is
+ * dereferenced — a malformed nested value therefore fails with a **static** {@link RangeError}, never a
+ * native property-access `TypeError`. It accepts a plain, frozen, or `Object.create(null)` record and
+ * rejects `null`/`undefined`, a primitive (`string`/`number`/`boolean`/`bigint`/`symbol`), a
+ * `function`, and an array. Module-local; never exported.
+ */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 /**
  * A runtime type guard for the two supported {@link KmaForecastProduct} members. Accepts an `unknown`
@@ -211,59 +225,63 @@ export function convertKmaForecastIssuanceToIssuedAt(
 }
 
 /**
- * The minimal structural view of the selected execution trace this resolver reads — only the
- * `fallbackAttempted` discriminant and the two sanitized issuance identities. `previousIssuance` is
- * present only when `fallbackAttempted` is `true`.
- */
-type KmaHourlyFallbackExecutionView =
-  | {
-      readonly fallbackAttempted: false;
-      readonly primaryIssuance: KmaForecastIssuanceIdentity;
-    }
-  | {
-      readonly fallbackAttempted: true;
-      readonly primaryIssuance: KmaForecastIssuanceIdentity;
-      readonly previousIssuance: KmaForecastIssuanceIdentity;
-    };
-
-/**
- * Resolve the {@link KmaForecastIssuanceIdentity} the selection points at, defending only the
- * structural correlation between the selected `source` and the execution arm — it never re-runs the
- * PR #22 selection policy, re-checks hourly-data usability, inspects `resultCode`/error kind, or
- * re-checks fallback eligibility.
+ * Resolve the {@link KmaForecastIssuanceIdentity} the selection points at, defending both the structural
+ * shape of a runtime value that bypassed the TypeScript types and the correlation between the selected
+ * `source` and the execution arm — it never re-runs the PR #22 selection policy, re-checks hourly-data
+ * usability, inspects `resultCode`/error kind, or re-checks fallback eligibility.
  *
- * The discriminants are read through an `unknown` view so a runtime value that bypassed the types is
- * still validated: a non-`true` `selected`, a `source` that is neither `'PRIMARY'` nor `'PREVIOUS'`,
- * and a `'PREVIOUS'` source whose execution did not attempt fallback each throw a **static**
- * {@link RangeError}. On `'PRIMARY'` it returns the exact `execution.primaryIssuance` reference; on a
- * fallback-attempted `'PREVIOUS'` it returns the exact `execution.previousIssuance` reference. Module-
- * local; never exported.
+ * The input is read as `unknown` and each nesting boundary is guarded with {@link isRecord} **before**
+ * any property is dereferenced, so a malformed nested value throws a **static** {@link RangeError}
+ * instead of a native property-access `TypeError`: a non-record selection, a non-`true` `selected`, a
+ * `source` that is neither `'PRIMARY'` nor `'PREVIOUS'`, and a non-record `execution` each throw the
+ * static malformed-selection message; a `'PREVIOUS'` source whose execution did not attempt fallback
+ * throws the static no-fallback message; and a missing or non-record selected issuance throws the static
+ * malformed-issuance message. On `'PRIMARY'` it returns the exact `execution.primaryIssuance` reference;
+ * on a fallback-attempted `'PREVIOUS'` it returns the exact `execution.previousIssuance` reference —
+ * never a clone, and the object is not mutated. Module-local; never exported.
  */
 function getSelectedKmaForecastIssuance(
-  selection: KmaSelectedHourlySourceMetadataResolverInput['selection'],
+  selection: unknown,
 ): KmaForecastIssuanceIdentity {
-  const view = selection as unknown as {
-    readonly selected: unknown;
-    readonly source: unknown;
-    readonly execution: KmaHourlyFallbackExecutionView;
-  };
-
-  if (view.selected !== true) {
+  // 1. The selection must be a non-null, non-array object before any discriminant is read.
+  if (!isRecord(selection)) {
     throw new RangeError(INVALID_SELECTION_MESSAGE);
   }
 
-  if (view.source === 'PRIMARY') {
-    return view.execution.primaryIssuance;
+  // 2. Only a selected arm carries a usable source.
+  if (selection.selected !== true) {
+    throw new RangeError(INVALID_SELECTION_MESSAGE);
   }
 
-  if (view.source === 'PREVIOUS') {
-    if (view.execution.fallbackAttempted !== true) {
-      throw new RangeError(PREVIOUS_REQUIRES_FALLBACK_MESSAGE);
+  // 3. The source discriminant must be one of the two known arms.
+  const { source, execution } = selection;
+  if (source !== 'PRIMARY' && source !== 'PREVIOUS') {
+    throw new RangeError(INVALID_SELECTION_MESSAGE);
+  }
+
+  // 4. The execution trace must be a non-null, non-array object before its issuance is read.
+  if (!isRecord(execution)) {
+    throw new RangeError(INVALID_SELECTION_MESSAGE);
+  }
+
+  if (source === 'PRIMARY') {
+    // 5–7. PRIMARY reads the primary issuance; a missing/non-record value is a malformed issuance.
+    const { primaryIssuance } = execution;
+    if (!isRecord(primaryIssuance)) {
+      throw new RangeError(INVALID_ISSUANCE_MESSAGE);
     }
-    return view.execution.previousIssuance;
+    return primaryIssuance as unknown as KmaForecastIssuanceIdentity;
   }
 
-  throw new RangeError(INVALID_SELECTION_MESSAGE);
+  // PREVIOUS additionally requires a fallback-attempted execution before its previous issuance exists.
+  if (execution.fallbackAttempted !== true) {
+    throw new RangeError(PREVIOUS_REQUIRES_FALLBACK_MESSAGE);
+  }
+  const { previousIssuance } = execution;
+  if (!isRecord(previousIssuance)) {
+    throw new RangeError(INVALID_ISSUANCE_MESSAGE);
+  }
+  return previousIssuance as unknown as KmaForecastIssuanceIdentity;
 }
 
 /**
@@ -318,11 +336,14 @@ function formatKmaFetchedAt(epochMilliseconds: number): SourceMetadata['fetchedA
  * Construction is side-effect-free: it reads the clock zero times, touches no environment/network,
  * builds no `Date`, calls no selector, and holds no state or cache — it merely closes over the clock.
  *
- * Each resolver call runs a fixed sequence: (1) validate the selected input structure, (2) resolve the
- * selected issuance identity, (3) assert `input.product === issuance.product`, (4) map the fixed
- * `sourceId`, (5) convert the issuance to `issuedAt`, (6) read the injected clock **exactly once**, (7)
- * format `fetchedAt`, and (8) return a fresh metadata object. Because the clock is read only at step 6,
- * every invalid input (steps 1–5) fails **before** the clock is read. A throwing clock and every
+ * Each resolver call runs a fixed sequence: (0) guard that the resolver input and its nested
+ * `selection`/`execution`/selected-issuance are non-null objects (a malformed value throws a static
+ * {@link RangeError}, never a native property-access `TypeError`), (1) validate the selected selection
+ * structure, (2) resolve the selected issuance identity, (3) assert `input.product === issuance.product`,
+ * (4) map the fixed `sourceId`, (5) convert the issuance to `issuedAt`, (6) read the injected clock
+ * **exactly once**, (7) format `fetchedAt`, and (8) return a fresh metadata object. Because the clock is
+ * read only at step 6, every invalid input (steps 0–5) fails **before** the clock is read; an invalid
+ * *value returned by* the clock is caught at step 7, after that single read. A throwing clock and every
  * validation failure propagate synchronously as the same error reference. The returned object has
  * exactly the four sorted own keys `fetchedAt`/`issuedAt`/`retrievalMode`/`sourceId`, with
  * `retrievalMode` fixed `'LIVE'`, and embeds no issuance object reference.
@@ -331,12 +352,21 @@ export function createKmaLiveSelectedHourlySourceMetadataResolver(
   clock: KmaSelectedHourlySourceMetadataClock,
 ): KmaSelectedHourlySourceMetadataResolver {
   return (input) => {
+    // Step 0: guard the resolver input itself. Read it through an `unknown` view and confirm it is a
+    // non-null, non-array object before `input.selection`/`input.product` are dereferenced, so a runtime
+    // value that bypassed the type fails with a static RangeError — never a native property-access
+    // TypeError — with the clock still read zero times.
+    const candidate: unknown = input;
+    if (!isRecord(candidate)) {
+      throw new RangeError(INVALID_SELECTION_MESSAGE);
+    }
+
     // Steps 1–2: validate the selected input structure and resolve the actual selected issuance.
-    const issuance = getSelectedKmaForecastIssuance(input.selection);
+    const issuance = getSelectedKmaForecastIssuance(candidate.selection);
 
     // Step 3: product correlation — caller product, request-plan product, and sourceId cannot drift.
     // Checked before the clock is read.
-    if (input.product !== issuance.product) {
+    if (candidate.product !== issuance.product) {
       throw new RangeError(PRODUCT_MISMATCH_MESSAGE);
     }
 

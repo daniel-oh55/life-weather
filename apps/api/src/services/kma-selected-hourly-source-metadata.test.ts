@@ -872,6 +872,214 @@ describe('resolver — invalid correlation (static RangeError, clock zero times)
 });
 
 // ---------------------------------------------------------------------------
+// Resolver — malformed nested input that bypassed the TypeScript types. Each
+// structural boundary (resolver input, selection, execution, selected issuance)
+// must throw a static RangeError — never a native property-access TypeError —
+// with the clock read zero times and no logging or partial output.
+// ---------------------------------------------------------------------------
+
+describe('resolver — malformed nested input (static RangeError, clock zero times, no native TypeError)', () => {
+  interface MalformedCase {
+    readonly name: string;
+    readonly build: () => unknown;
+    readonly message: string;
+  }
+
+  // A plausible selected-PRIMARY selection whose only defect is the field under test, so the resolver
+  // reaches the guarded boundary rather than tripping an earlier check.
+  const primarySelection = (execution: unknown): unknown => ({
+    selected: true,
+    source: 'PRIMARY',
+    fallbackUsed: false,
+    result: makeSuccessResult(),
+    execution,
+  });
+  const previousSelection = (execution: unknown): unknown => ({
+    selected: true,
+    source: 'PREVIOUS',
+    fallbackUsed: true,
+    result: makeSuccessResult(),
+    execution,
+  });
+  const wrap = (selection: unknown): unknown => ({
+    product: SHORT,
+    location: makeLocation(),
+    selection,
+  });
+
+  // Group 1 — resolver input / selection / execution structural defects → malformed-selection message.
+  const selectionMessageCases: readonly MalformedCase[] = [
+    { name: 'null resolver input', build: () => null, message: INVALID_SELECTION_MESSAGE },
+    {
+      name: 'string (non-object) resolver input',
+      build: () => 'not-an-object',
+      message: INVALID_SELECTION_MESSAGE,
+    },
+    {
+      name: 'number (non-object) resolver input',
+      build: () => 42,
+      message: INVALID_SELECTION_MESSAGE,
+    },
+    {
+      name: 'missing selection',
+      build: () => ({ product: SHORT, location: makeLocation() }),
+      message: INVALID_SELECTION_MESSAGE,
+    },
+    { name: 'null selection', build: () => wrap(null), message: INVALID_SELECTION_MESSAGE },
+    {
+      name: 'string (non-object) selection',
+      build: () => wrap('invalid'),
+      message: INVALID_SELECTION_MESSAGE,
+    },
+    { name: 'array selection', build: () => wrap([]), message: INVALID_SELECTION_MESSAGE },
+    {
+      name: 'missing execution (PRIMARY)',
+      build: () => wrap({ selected: true, source: 'PRIMARY', fallbackUsed: false, result: makeSuccessResult() }),
+      message: INVALID_SELECTION_MESSAGE,
+    },
+    {
+      name: 'null execution (PRIMARY)',
+      build: () => wrap(primarySelection(null)),
+      message: INVALID_SELECTION_MESSAGE,
+    },
+    {
+      name: 'number (non-object) execution (PRIMARY)',
+      build: () => wrap(primarySelection(42)),
+      message: INVALID_SELECTION_MESSAGE,
+    },
+  ];
+
+  // Group 2 — a well-formed selected selection/execution but a missing/non-object selected issuance →
+  // malformed-issuance message.
+  const issuanceMessageCases: readonly MalformedCase[] = [
+    {
+      name: 'PRIMARY missing primaryIssuance',
+      build: () =>
+        wrap(primarySelection({ fallbackAttempted: false, primary: makeSuccessResult() })),
+      message: INVALID_ISSUANCE_MESSAGE,
+    },
+    {
+      name: 'PRIMARY null primaryIssuance',
+      build: () =>
+        wrap(
+          primarySelection({
+            fallbackAttempted: false,
+            primaryIssuance: null,
+            primary: makeSuccessResult(),
+          }),
+        ),
+      message: INVALID_ISSUANCE_MESSAGE,
+    },
+    {
+      name: 'PRIMARY string (non-object) primaryIssuance',
+      build: () =>
+        wrap(
+          primarySelection({
+            fallbackAttempted: false,
+            primaryIssuance: 'oops',
+            primary: makeSuccessResult(),
+          }),
+        ),
+      message: INVALID_ISSUANCE_MESSAGE,
+    },
+    {
+      name: 'PRIMARY array primaryIssuance',
+      build: () =>
+        wrap(
+          primarySelection({
+            fallbackAttempted: false,
+            primaryIssuance: [],
+            primary: makeSuccessResult(),
+          }),
+        ),
+      message: INVALID_ISSUANCE_MESSAGE,
+    },
+    {
+      name: 'PREVIOUS missing previousIssuance (fallbackAttempted true)',
+      build: () =>
+        wrap(
+          previousSelection({
+            fallbackAttempted: true,
+            fallbackReason: 'EMPTY_HOURLY',
+            primaryIssuance: makePrimaryIssuance(),
+            primary: makeEmptySuccessResult(),
+            previous: makeSuccessResult(),
+          }),
+        ),
+      message: INVALID_ISSUANCE_MESSAGE,
+    },
+    {
+      name: 'PREVIOUS null previousIssuance (fallbackAttempted true)',
+      build: () =>
+        wrap(
+          previousSelection({
+            fallbackAttempted: true,
+            fallbackReason: 'EMPTY_HOURLY',
+            primaryIssuance: makePrimaryIssuance(),
+            primary: makeEmptySuccessResult(),
+            previousIssuance: null,
+            previous: makeSuccessResult(),
+          }),
+        ),
+      message: INVALID_ISSUANCE_MESSAGE,
+    },
+    {
+      name: 'PREVIOUS number (non-object) previousIssuance (fallbackAttempted true)',
+      build: () =>
+        wrap(
+          previousSelection({
+            fallbackAttempted: true,
+            fallbackReason: 'EMPTY_HOURLY',
+            primaryIssuance: makePrimaryIssuance(),
+            primary: makeEmptySuccessResult(),
+            previousIssuance: 42,
+            previous: makeSuccessResult(),
+          }),
+        ),
+      message: INVALID_ISSUANCE_MESSAGE,
+    },
+  ];
+
+  const allCases: readonly MalformedCase[] = [
+    ...selectionMessageCases,
+    ...issuanceMessageCases,
+  ];
+
+  for (const { name, build, message } of allCases) {
+    it(`throws a static RangeError (never a native TypeError) for ${name}`, () => {
+      const spies = spyOnConsole();
+      const { clock, nowEpochMilliseconds } = makeClock();
+      const resolve = createKmaLiveSelectedHourlySourceMetadataResolver(clock);
+
+      const built = build();
+      const isObject = built !== null && typeof built === 'object';
+      // Frozen object inputs prove the guards only read (any mutation would throw); primitives cannot
+      // be frozen and need no snapshot.
+      const snapshot = isObject ? JSON.stringify(built) : null;
+      const input = (isObject
+        ? deepFreeze(built)
+        : built) as unknown as KmaSelectedHourlySourceMetadataResolverInput;
+
+      let returned: unknown;
+      const error = captureSynchronousError(() => {
+        returned = resolve(input);
+      });
+
+      expect(error).toBeInstanceOf(RangeError);
+      // A native property-access failure would be a TypeError — the static guards prevent that.
+      expect(error).not.toBeInstanceOf(TypeError);
+      expect((error as Error).message).toBe(message);
+      expect(nowEpochMilliseconds).not.toHaveBeenCalled();
+      expect(returned).toBeUndefined();
+      expectSilent(spies);
+      if (snapshot !== null) {
+        expect(JSON.stringify(built)).toBe(snapshot);
+      }
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Resolver — clock handling.
 // ---------------------------------------------------------------------------
 
@@ -1067,6 +1275,69 @@ describe('integration with the PR #24 location hourly-overview service', () => {
     expect(error).toBeInstanceOf(RangeError);
     expect((error as Error).message).toBe(INVALID_ISSUANCE_MESSAGE);
     expect(nowEpochMilliseconds).not.toHaveBeenCalled();
+  });
+
+  it('malformed PRIMARY issuance object — PR #24 rejects with a static RangeError, never a native TypeError, clock zero times', async () => {
+    // A structurally-malformed trace: the primary result is usable (so the REAL selector picks PRIMARY
+    // and hands the trace to the resolver), but `primaryIssuance` is a non-object that bypassed the type.
+    const trace = {
+      fallbackAttempted: false,
+      primaryIssuance: null,
+      primary: makeSuccessResult(),
+    } as unknown as KmaLocationHourlyFallbackResult;
+    const spies = spyOnConsole();
+    const { facade } = resolvingFacade(trace);
+    const { clock, nowEpochMilliseconds } = makeClock();
+    const resolver = createKmaLiveSelectedHourlySourceMetadataResolver(clock);
+    const service = createKmaLocationHourlyOverviewService(facade, resolver);
+
+    const error = await service
+      .fetchHourlyWeatherOverviewForLocation(makeServiceInput())
+      .then(
+        () => {
+          throw new Error('expected a rejection, not a success');
+        },
+        (rejected: unknown) => rejected,
+      );
+
+    expect(error).toBeInstanceOf(RangeError);
+    expect(error).not.toBeInstanceOf(TypeError);
+    expect((error as Error).message).toBe(INVALID_ISSUANCE_MESSAGE);
+    expect(nowEpochMilliseconds).not.toHaveBeenCalled();
+    expectSilent(spies);
+  });
+
+  it('malformed PREVIOUS issuance object — PR #24 rejects with a static RangeError, never a native TypeError, clock zero times', async () => {
+    // Primary unusable (empty) + fallback attempted + usable previous → the REAL selector picks PREVIOUS
+    // and hands the trace to the resolver, whose `previousIssuance` is a non-object that bypassed the type.
+    const trace = {
+      fallbackAttempted: true,
+      fallbackReason: 'EMPTY_HOURLY',
+      primaryIssuance: makePrimaryIssuance(),
+      primary: makeEmptySuccessResult(),
+      previousIssuance: null,
+      previous: makeSuccessResult(),
+    } as unknown as KmaLocationHourlyFallbackResult;
+    const spies = spyOnConsole();
+    const { facade } = resolvingFacade(trace);
+    const { clock, nowEpochMilliseconds } = makeClock();
+    const resolver = createKmaLiveSelectedHourlySourceMetadataResolver(clock);
+    const service = createKmaLocationHourlyOverviewService(facade, resolver);
+
+    const error = await service
+      .fetchHourlyWeatherOverviewForLocation(makeServiceInput())
+      .then(
+        () => {
+          throw new Error('expected a rejection, not a success');
+        },
+        (rejected: unknown) => rejected,
+      );
+
+    expect(error).toBeInstanceOf(RangeError);
+    expect(error).not.toBeInstanceOf(TypeError);
+    expect((error as Error).message).toBe(INVALID_ISSUANCE_MESSAGE);
+    expect(nowEpochMilliseconds).not.toHaveBeenCalled();
+    expectSilent(spies);
   });
 
   it('clock throw — PR #24 returns a rejected Promise with the same reason and no partial overview', async () => {
