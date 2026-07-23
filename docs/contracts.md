@@ -138,6 +138,17 @@ compatible 스키마의 출력 타입은 항상 정의된 리터럴 union이며 
 | WeatherAlertSeverity | `UNKNOWN` |
 | ApiErrorCode | `UNKNOWN` |
 
+### ApiErrorCode에 known value를 additive로 추가 (PR #29)
+
+PR #29에서 `apiErrorCode`의 known value에 `UNSUPPORTED_LOCATION`을 **additive**로 추가했습니다 —
+서버 forecast 격자가 지원하지 않는(물리적으로는 유효한) 좌표에 대한 안정적 공개 오류 코드입니다. known
+value를 더하는 것은 non-breaking 변경이므로 `CONTRACT_VERSION`은 계속 **1**입니다. `apiErrorV1.code`는
+**compatible** enum이라, 이 값을 known으로 추가하지 않으면 producer가 쓴 `'UNSUPPORTED_LOCATION'`이
+검증 단계에서 조용히 `UNKNOWN`으로 강등됩니다. 다른 모든 알 수 없는 문자열은 여전히 `UNKNOWN`으로
+매핑되어 구버전 소비자는 영향을 받지 않으며, 기존 코드(특히 별개 의미의 `LOCATION_NOT_FOUND`)는 변경·
+재정렬하지 않았습니다. 이 코드를 소비하는 response presenter는
+[weather-response-presenter.md](./weather-response-presenter.md) 참고.
+
 ## null과 optional의 차이
 
 이 계약은 **optional(필드 자체의 부재)을 사용하지 않습니다.** 값이 있을 수도 없을 수도 있는

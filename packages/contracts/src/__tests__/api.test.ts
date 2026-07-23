@@ -74,6 +74,16 @@ describe('weatherResponseV1', () => {
     }
   });
 
+  it('preserves the additive UNSUPPORTED_LOCATION code (not mapped to UNKNOWN)', () => {
+    const response = errorResponse();
+    response.error.code = 'UNSUPPORTED_LOCATION';
+    const parsed = weatherResponseV1.parse(response);
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) {
+      expect(parsed.error.code).toBe('UNSUPPORTED_LOCATION');
+    }
+  });
+
   it('rejects an invalid `ok` discriminator value', () => {
     const response = { ...successResponse(), ok: 'true' };
     expect(weatherResponseV1.safeParse(response).success).toBe(false);

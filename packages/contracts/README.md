@@ -50,6 +50,17 @@ valid zone identifier there. They are different concepts.
   `apiMetaV1`, the `weatherResponseV1` discriminated union, and the provider-neutral
   `weatherRequestV1` request schema.
 
+### `ApiErrorCode` — additive `UNSUPPORTED_LOCATION` (PR #29)
+
+`apiErrorCode` gained the known value `UNSUPPORTED_LOCATION` (a physically valid coordinate the
+server's forecast grid does not cover) **additively** in PR #29. Adding a known value is
+non-breaking, so `CONTRACT_VERSION` stays `1`. Because `apiErrorV1.code` uses the `compatible`
+enum, an unknown code is mapped to `UNKNOWN` — so a code must be a *known* value to survive
+validation intact; every other unknown string still maps to `UNKNOWN` for older consumers, and the
+pre-existing, distinct `LOCATION_NOT_FOUND` code is unchanged. See
+[`docs/weather-response-presenter.md`](../../docs/weather-response-presenter.md) for the presenter
+that emits this code.
+
 All exports are re-exported from `src/index.ts`.
 
 ## Public schemas

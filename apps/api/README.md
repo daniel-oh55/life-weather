@@ -613,6 +613,35 @@ a project on first run; that step is intentionally deferred to a later PR.
     The four existing roots and their contracts are **unchanged**; it consumes only the `providers/kma`
     (type), `services`, sibling composition, and `./system-clock` public surfaces and adds **no** new
     dependency. This fifth root is **not** wired into `src/index.ts` or any route either.
+- **Mobile-safe weather response presenter** — PR #29 adds
+  `presentKmaLocationHourlyOverviewResponseV1` (`src/presenters/`), the **pure, synchronous** boundary
+  that maps the PR #24 internal application result to the mobile-facing `WeatherResponseV1` body. See
+  [docs/weather-response-presenter.md](../../docs/weather-response-presenter.md). Highlights:
+  - Public API: `presentKmaLocationHourlyOverviewResponseV1(result, meta): WeatherResponseV1` with
+    `WeatherResponsePresenterMetaV1 = Pick<ApiMetaV1, 'generatedAt' | 'requestId'>`. No class/factory/
+    state. Exported from the new `src/presenters/` barrel; **not** re-exported from `src/index.ts`.
+  - **Success exposes only the overview.** A `{ ok: true, selection, overview }` result maps to
+    `{ ok: true, meta, data: overview }` — `result.overview` is the **only** data source and
+    `result.selection` (the PR #22 selection, PR #19 execution trace, PR #25 issuance identity, and
+    `fallbackUsed`) is **never** read or serialized. Neither `result` nor `meta` is spread. A
+    **no-selection** result (empty `hourly`, `HOURLY` in `missingSections`) stays a **success**, never
+    an error.
+  - **`internal selection` is never serialized.** The internal orchestration trace stops at this
+    boundary; only the normalized public `SourceMetadata` provenance inside `overview.sources[]` is
+    exposed.
+  - **LOCATION failure → a stable public error.** The internal
+    `{ ok: false, stage: 'LOCATION', error: { kind: 'UNSUPPORTED_LOCATION' } }` maps to a
+    `WeatherErrorResponseV1` with code `UNSUPPORTED_LOCATION`, a fixed message, and `retryable: false`,
+    built from constants (no internal `stage`/`kind`/coordinate copied). `UNSUPPORTED_LOCATION` is an
+    **additive** `ApiErrorCode` (see `@life-weather/contracts`); `CONTRACT_VERSION` stays `1`.
+  - `contractVersion` is owned by the presenter (always `CONTRACT_VERSION`); the caller supplies only
+    `generatedAt`/`requestId`, and extra `meta` keys are ignored. The output is validated with the
+    contracts response schema (a synchronous `ZodError` on an invalid `generatedAt`/`requestId`/
+    overview — never caught or wrapped). It is pure (no clock/env/network/random/logging) and returns a
+    fresh wrapper per call.
+  - **Not wired.** The presenter is **not** connected to any `/weather` route and `src/index.ts` is
+    unchanged. It decides no HTTP status/header/body-size and generates no clock/`requestId` — a future
+    route PR will call the presenter and map its body to a status.
 - **Still not implemented.** `current`/`daily`/air-quality/alerts `WeatherOverview` sections and their
   `SourceMetadata`; a `fallbackUsed` API field; current weather, daily forecast (incl. `TMN`/`TMX`),
   feels-like computation; a common provider interface; **running any of the five production composition
