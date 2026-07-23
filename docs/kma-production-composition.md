@@ -470,22 +470,74 @@ type을 services 계층에 추가합니다([kma-hourly-fallback.md](./kma-hourly
   ([kma-selected-hourly-source-metadata.md](./kma-selected-hourly-source-metadata.md)). 다만 아직 어떤
   composition root에도 조립되지 않았습니다.
 
+## PR #27: 다섯 번째 callable root — location hourly overview composition
+
+PR #27은 위 네 root(grid scheduled·location scheduled·grid fallback·location fallback)를 **교체하지
+않고 그 옆에 병렬로** 다섯 번째 callable production root를 추가합니다. 이 root는 PR #21 location fallback
+composition을 재사용하고, PR #26 live selected-source metadata resolver를 붙여, PR #24 application
+service를 하나의 live `KmaLocationHourlyOverviewService`로 조립합니다. 자세한 계약은
+[kma-location-hourly-overview-composition.md](./kma-location-hourly-overview-composition.md)를 참조하십시오.
+
+- **구현 위치**: [kma-location-hourly-overview.ts](../apps/api/src/composition/kma-location-hourly-overview.ts)
+  및 [kma-location-hourly-overview.test.ts](../apps/api/src/composition/kma-location-hourly-overview.test.ts).
+- **공개 API**:
+
+  ```ts
+  export type KmaLocationHourlyOverviewCompositionDependencies =
+    KmaLocationHourlyFallbackCompositionDependencies; // { fetchImpl?, clock? } 직접 alias
+
+  export type CreateKmaLocationHourlyOverviewCompositionResult =
+    | { readonly ok: true; readonly service: KmaLocationHourlyOverviewService }
+    | { readonly ok: false; readonly error: KmaProviderConfigError };
+
+  export function createKmaLocationHourlyOverviewCompositionFromEnv(
+    env?: NodeJS.ProcessEnv,
+    dependencies?: KmaLocationHourlyOverviewCompositionDependencies,
+  ): CreateKmaLocationHourlyOverviewCompositionResult;
+  ```
+
+  성공 result는 정확히 `{ ok, service }`, config 실패는 `{ ok, error }`(기존 `KmaProviderConfigError`
+  exact reference)입니다.
+- **dependency graph**: `createKmaLocationHourlyFallbackCompositionFromEnv (PR #21)` → live location
+  fallback facade, `createKmaLiveSelectedHourlySourceMetadataResolver (PR #26)` → resolver, 그 둘을
+  `createKmaLocationHourlyOverviewService (PR #24)`로 조립. PR #22 selector와 PR #23 assembler는 PR #24
+  service의 고정 default이므로 별도 인자로 전달하지 않습니다.
+- **clock 의미**: injected clock 주입 시 하위 fallback root와 **같은 reference**가 request plan과 metadata
+  resolver 양쪽에 쓰이며(공유), 생략 시 하위 root는 자체 system clock을 유지하고 resolver에는 **fresh
+  system clock adapter**를 새로 만듭니다(하위 root 캡슐화 미파괴, default clock 공유 금지). supported
+  selected 호출당 clock 총 2회(request plan 1 + metadata 1), no-selection·LOCATION·pre-aborted에서는
+  metadata용 두 번째 read가 없습니다. `issuedAt`은 두 번째 read가 아니라 PR #25 trace의 보존된 issuance
+  identity에서 파생됩니다.
+- **config/laziness**: config failure면 PR #21 composition의 `KmaProviderConfigError`를 **동일 reference**로
+  반환하고 service·resolver·resolver clock을 만들지 않습니다. construction은 network-free이며 clock·
+  converter·fetch·selector·resolver·assembler 0회입니다.
+- **결과와 boundary**: 성공 result는 기존 **PR #24 internal application result**(`{ ok, selection,
+  overview }` 또는 `LOCATION` 실패 verbatim)입니다. 향후 mobile-facing route는 이 internal result를 그대로
+  serialize하지 않고 `overview`만 매핑해야 하며, 이 PR은 그 mapper를 만들지 않습니다.
+- **기존 root와의 parallel 관계**: 네 기존 root와 그 공개 API·runtime은 **불변**입니다. 이 root의 성공
+  result key는 `facade`가 아니라 `service`입니다. callable production composition root 수는 **4 → 5**가
+  되고, services 계층 application component 수(12)는 변하지 않습니다(composition root는 service component가
+  아님).
+- **미연결**: 이 root도 `apps/api/src/index.ts`·startup·`/weather` route에 연결되지 않았습니다.
+
 ## 후속 범위
 
 primary/previous selection policy(PR #22)·hourly-only `WeatherOverview` assembler(PR #23)·이 셋을
 `LOCATION` narrow와 함께 엮는 application service(PR #24)·selected-source provenance를 만드는 production
-metadata resolver(PR #26)는 모두 구현 완료됐고, 네 callable composition root(grid/location ×
-scheduled/fallback)는 그대로 4개로 유지됩니다 — 이 문서 수정에서 새 composition root를 제안하거나 구현하지
-않습니다. 남은 후속 범위와 dependency 순서:
+metadata resolver(PR #26)·이를 조립하는 다섯 번째 callable production composition root(PR #27)는 모두 구현
+완료됐고, callable composition root는 이제 **5개**(grid/location × scheduled/fallback + location hourly
+overview)입니다. 남은 후속 범위와 dependency 순서:
 
 1. ~~selected-source **production provenance strategy** 확정~~ — PR #26에서 확정(발표시각은 PR #25 trace의
    보존된 issuance identity에서 파생; 별도 clock 복원 없음).
 2. ~~그 strategy를 구현하는 **production metadata resolver**~~ — PR #26에서 구현
    (`createKmaLiveSelectedHourlySourceMetadataResolver`).
-3. **(PR #27)** 기존 PR #21 location fallback root와 PR #24 application service·PR #26 production resolver를
-   조립하는 별도의 application-facing **production composition**(다섯 번째 callable root).
+3. ~~기존 PR #21 location fallback root와 PR #24 application service·PR #26 production resolver를 조립하는
+   별도의 application-facing **production composition**(다섯 번째 callable root)~~ — PR #27에서 구현
+   (`createKmaLocationHourlyOverviewCompositionFromEnv`).
 4. `apps/api/src/index.ts` startup wiring.
-5. `/weather` route, query validation과 HTTP status/envelope mapping.
+5. `/weather` route, query validation과 HTTP status/envelope mapping, 그리고 internal application result를
+   `overview`만 매핑하는 mobile-facing serialization mapper.
 6. cache/stale-data 정책.
 7. authenticated KMA E2E verification.
 
@@ -590,4 +642,14 @@ v14 / PR #26 / 2026-07 (live selected-source metadata resolver; composition root
 - application service + production resolver 모두 구현 완료됐으나 아직 어느 composition root에도 조립되지 않음
 - 다음 단계(PR #27)는 location fallback root + PR #24 service + PR #26 resolver를 조립하는 다섯 번째 callable root
 - startup/route·cache는 여전히 미구현
+
+v15 / PR #27 / 2026-07 (다섯 번째 callable root — location hourly overview composition 추가)
+- createKmaLocationHourlyOverviewCompositionFromEnv가 PR #21 location fallback composition을 재사용하고
+  PR #26 live resolver + PR #24 application service를 조립해 live KmaLocationHourlyOverviewService를 반환
+- dependencies는 PR #21 dependencies 직접 alias; PR #22 selector·PR #23 assembler는 PR #24 service default
+- injected clock 두 역할(request plan 기준시각·metadata materialization); default 시 resolver용 fresh system clock,
+  하위 fallback root 캡슐화 미파괴; supported selected 호출당 clock 2회, issuedAt은 보존된 issuance identity에서 파생
+- 성공 시 { ok, service }, config 실패는 KmaProviderConfigError exact reference pass-through, construction network-free
+- 기존 네 callable root와 그 공개 API·runtime 불변; callable production composition root 수 4 → 5
+- 결과는 PR #24 internal application result 그대로(future route는 overview-only mapping 필요); startup/route·cache는 여전히 미구현
 ```

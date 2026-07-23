@@ -579,18 +579,50 @@ a project on first run; that step is intentionally deferred to a later PR.
   - **Not implemented.** It is wired into **no** composition root or route; production composition and
     cache are PR #27. It reads no env/network, opens no `fetch`/`AbortController`, and adds **no** new
     dependency.
-- **Still not implemented.** The **PR #24 production composition** that would assemble the application
-  service and the PR #26 live resolver into a callable root; `current`/`daily`/
-  air-quality/alerts `WeatherOverview` sections and their `SourceMetadata`; a `fallbackUsed` API field;
-  current weather, daily forecast (incl. `TMN`/`TMX`), feels-like computation; a common provider
-  interface; **running any of the four production composition roots at API app startup**; the `/weather`
-  route and its query validation; HTTP error/status mapping; API-availability retry beyond the single
+- **KMA location hourly overview production composition** — PR #27 adds
+  `createKmaLocationHourlyOverviewCompositionFromEnv` (`src/composition/`), a **fifth** callable
+  production root that assembles the PR #24 application service over a live graph beside (never
+  replacing) the four existing roots. See
+  [docs/kma-location-hourly-overview-composition.md](../../docs/kma-location-hourly-overview-composition.md).
+  Highlights:
+  - Public API: `createKmaLocationHourlyOverviewCompositionFromEnv(env?, dependencies?)` returns
+    `{ ok: true, service }` (own keys exactly `ok`/`service`; `service` exposes only
+    `fetchHourlyWeatherOverviewForLocation`) or, on a provider config failure, `{ ok: false, error }`
+    with the provider's `KmaProviderConfigError` passed through **by reference**.
+    `KmaLocationHourlyOverviewCompositionDependencies` is a **direct alias** of
+    `KmaLocationHourlyFallbackCompositionDependencies` (`{ fetchImpl?, clock? }`) — no selector /
+    assembler / timeout / retry option is added.
+  - It reuses `createKmaLocationHourlyFallbackCompositionFromEnv` (PR #21) verbatim (config failure
+    passed through by the same reference, no facade/resolver built), selects the metadata resolver's
+    clock, builds the PR #26 `createKmaLiveSelectedHourlySourceMetadataResolver`, and wires both through
+    the PR #24 `createKmaLocationHourlyOverviewService` — the PR #22 selector and PR #23 assembler stay
+    the service's own defaults (never passed in).
+  - **Clock ownership**: when a caller injects `clock`, the **same reference** reaches both the request
+    plan and the metadata resolver (read at most twice per supported *selected* call — once for the plan,
+    once for `fetchedAt`); when omitted, the fallback root keeps its own system clock and the resolver
+    gets a **fresh** `createKmaSystemClock` adapter (no shared default, no broken encapsulation).
+    `issuedAt` comes from the preserved PR #25 issuance identity, **not** the second clock read;
+    no-selection / `LOCATION` / pre-aborted paths never read the metadata clock.
+  - Construction reads the clock **zero** times and issues **zero** `fetch`es (no converter / selector /
+    resolver / assembler run); the first clock read, converter run, and `fetch` happen only when the
+    returned service runs. A supported *selected* location makes **at most two** provider calls; an
+    unsupported/invalid location makes **zero**.
+  - The success result is the existing **PR #24 internal application result** (`{ ok, selection,
+    overview }`, or the `LOCATION` failure verbatim) — a future mobile-facing route must map only the
+    `overview`, never serialize the `selection`/execution trace directly (this PR adds no such mapper).
+    The four existing roots and their contracts are **unchanged**; it consumes only the `providers/kma`
+    (type), `services`, sibling composition, and `./system-clock` public surfaces and adds **no** new
+    dependency. This fifth root is **not** wired into `src/index.ts` or any route either.
+- **Still not implemented.** `current`/`daily`/air-quality/alerts `WeatherOverview` sections and their
+  `SourceMetadata`; a `fallbackUsed` API field; current weather, daily forecast (incl. `TMN`/`TMX`),
+  feels-like computation; a common provider interface; **running any of the five production composition
+  roots at API app startup**; the `/weather` route and its query validation; HTTP error/status mapping;
+  the mobile-facing `overview`-only serialization mapper; API-availability retry beyond the single
   previous-issuance fallback; and cache are **not** here — those are later PRs. The PR #24 **application
-  service** now connects the PR #21 facade, PR #22 selection policy, and PR #23 assembler, and the PR #26
-  **live resolver** materializes the selected source's provenance, but no production composition applies
-  them yet. None of the four composition roots (grid
-  scheduled, location scheduled, grid fallback, location fallback) is wired into `src/index.ts` and none
-  is connected to a route (`/health` unchanged).
+  service**, the PR #26 **live resolver**, and now the PR #27 **production composition** that assembles
+  them are all implemented, but none of the **five** composition roots (grid scheduled, location
+  scheduled, grid fallback, location fallback, location hourly overview) is wired into `src/index.ts`
+  and none is connected to a route (`/health` unchanged).
 
 ### Dependencies
 
@@ -619,5 +651,9 @@ a project on first run; that step is intentionally deferred to a later PR.
   and (type-only) the scheduled composition's dependency shape (its system clock uses Node's native
   `Date.now`). The PR #21 location fallback facade adds only **type-only** imports of its sibling
   location-scheduled and fallback-service types, and the PR #21 location fallback composition reuses the
-  PR #20 grid fallback composition plus the public `convertKmaLatitudeLongitudeToGrid`. No new external
-  dependency is added.
+  PR #20 grid fallback composition plus the public `convertKmaLatitudeLongitudeToGrid`. The PR #27
+  location hourly overview composition consumes only the `providers/kma` (type-only
+  `KmaProviderConfigError`), `services`
+  (`createKmaLiveSelectedHourlySourceMetadataResolver` / `createKmaLocationHourlyOverviewService` /
+  `KmaLocationHourlyOverviewService`), sibling `createKmaLocationHourlyFallbackCompositionFromEnv`, and
+  `./system-clock` public surfaces. No new external dependency is added.

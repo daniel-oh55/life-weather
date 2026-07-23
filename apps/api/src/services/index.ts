@@ -86,8 +86,11 @@
  *    source. Every branch carries the same own keys (`execution`/`fallbackUsed`/`result`/`selected`/
  *    `source`) and preserves the caller's exact `execution` reference and selected-result reference. It
  *    executes nothing, calls no Provider/network/clock/eligibility classifier, ranks no error kind,
- *    handles **no** `LOCATION` branch, and is wired into **no** `WeatherOverview`/`SourceMetadata`,
- *    composition root, or route yet.
+ *    handles **no** `LOCATION` branch, and builds **no** `WeatherOverview`/`SourceMetadata` itself. It
+ *    is the PR #24 application service's fixed production **default** selector, and through the PR #27
+ *    fifth composition root (`createKmaLocationHourlyOverviewCompositionFromEnv`) it is part of the
+ *    live production graph; it is **not yet wired into** `apps/api/src/index.ts` startup or any HTTP
+ *    route.
  * 10. The PR #23 KMA **hourly `WeatherOverview` assembler** (`assembleKmaHourlyWeatherOverview`): a
  *    **pure, synchronous** function that consumes a **precomputed PR #22 selection** and assembles the
  *    hourly-only partial contracts `WeatherOverview`. When a hourly source is selected it maps the
@@ -107,8 +110,11 @@
  *    missing). It then validates the whole payload with `weatherOverview.parse` (a malformed
  *    location/timestamp/`sourceId` or invariant breach also throws a synchronous Zod error), allocates a
  *    fresh output every call, and mutates nothing. It runs the selector for **nobody** (the caller does
- *    that first), handles **no** `LOCATION` branch, builds no `current`/`daily`/air-quality/alerts data,
- *    and is wired into **no** composition root or route yet.
+ *    that first), handles **no** `LOCATION` branch, and builds no `current`/`daily`/air-quality/alerts
+ *    data. It is the PR #24 application service's fixed production **default** assembler, and through
+ *    the PR #27 fifth composition root (`createKmaLocationHourlyOverviewCompositionFromEnv`) it is part
+ *    of the live production graph; it is **not yet wired into** `apps/api/src/index.ts` startup or any
+ *    HTTP route.
  * 11. The PR #24 KMA **location hourly `WeatherOverview` application service**
  *    (`createKmaLocationHourlyOverviewService`): the orchestration layer that connects the previous four
  *    hourly building blocks into a single call. Per call it (a) runs the contracts `weatherLocation`
@@ -127,8 +133,12 @@
  *    error reference), with **no** broad `try`/`catch`, wrapping, logging, or partial result. Provenance
  *    is **not** inferred: the service owns **no** clock/env/network, defines only the selected-source
  *    resolver *seam*, and never rebuilds a request plan or reconstructs a KMA base time. The **production
- *    resolver** is now the PR #26 component 12 below; the **production composition** (and the `/weather`
- *    route) remain a later PR — this service is wired into **no** composition root or route yet.
+ *    resolver** is now the PR #26 component 12 below; together with it this service is assembled by the
+ *    PR #27 `createKmaLocationHourlyOverviewCompositionFromEnv` — the fifth callable production
+ *    composition root — where it is available as a live service. It is **not yet wired into**
+ *    `apps/api/src/index.ts` startup or any HTTP route. Because the internal application result carries
+ *    the `selection`/execution trace alongside the `overview`, a future mobile-facing route must
+ *    serialize the `overview` only.
  * 12. The PR #26 KMA **live selected-source metadata resolver**
  *    (`createKmaLiveSelectedHourlySourceMetadataResolver`): the production
  *    `KmaSelectedHourlySourceMetadataResolver` the component 11 service injects. It **consumes** the
@@ -153,17 +163,21 @@
  *    invalid clock value) fails synchronously with a **static** `RangeError` **before** the clock is
  *    read; inside component 11's `.then` handler that synchronous throw becomes the returned Promise's
  *    rejection with the same reference. It reads no env/network, opens no `fetch`/`AbortController`,
- *    adds no dependency, and is wired into **no** composition root or route yet — the production
- *    composition remains PR #27.
+ *    and adds no dependency. The PR #27 `createKmaLocationHourlyOverviewCompositionFromEnv` — the
+ *    fifth callable production composition root — injects it into the component 11 service; it is
+ *    **not yet wired into** `apps/api/src/index.ts` startup or any HTTP route.
  *
  * The grid-based single-request **production composition root** (system clock adapter,
  * provider-from-env wiring, a live facade instance) is built in PR #11 and lives in `../composition`;
  * PR #12 added the latitude/longitude → grid converter in `@life-weather/weather-core`; PR #13's
- * location facade connects that converter to the scheduled facade; PR #20 added the grid fallback
- * composition root that consumes the PR #18 factory and PR #19 orchestration; and PR #21 added the
- * location fallback composition root that wires the PR #12 converter in front of the PR #20 grid
- * fallback service (all production wiring lives in `../composition`). No HTTP route or startup is
- * wired to any of this yet — that is a later PR.
+ * location scheduled sibling connects that converter to the scheduled facade; PR #20 added the grid
+ * fallback composition root that consumes the PR #18 factory and PR #19 orchestration; PR #21 added
+ * the location fallback composition root that wires the PR #12 converter in front of the PR #20 grid
+ * fallback service; and PR #27 added the location hourly overview composition root
+ * (`createKmaLocationHourlyOverviewCompositionFromEnv`) that assembles the PR #24 service over the
+ * PR #21 location fallback facade and the PR #26 live resolver (all production wiring lives in
+ * `../composition`). That is **five** callable production composition roots in total; none of them is
+ * yet wired into `apps/api/src/index.ts` startup or any HTTP route — that is a later PR.
  *
  * Application services deliberately live **outside** `providers/kma` (they are not part of the
  * provider boundary) and are exported only from here, never from `providers/kma/index.ts`. See
