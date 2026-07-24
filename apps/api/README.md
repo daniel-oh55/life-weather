@@ -21,7 +21,9 @@ a project on first run; that step is intentionally deferred to a later PR.
 
 ## Current state
 
-- `GET /health` returns a deterministic health payload (unchanged).
+- `GET /health` returns a deterministic health payload (unchanged). It remains the **only callable
+  production endpoint** — the PR #30 `POST /weather` route factory below exists as a mountable sub-app
+  and is exercised by tests, but is **not** mounted into `src/index.ts` startup yet.
 - **KMA raw-response boundary** — `src/providers/kma/` validates the raw 기상청 `getVilageFcst` /
   `getUltraSrtFcst` JSON at runtime with **Zod**, classifies it (success / upstream error /
   invalid response), and groups a validated page into per-time forecast slots with an explicit
@@ -642,16 +644,43 @@ a project on first run; that step is intentionally deferred to a later PR.
   - **Not wired.** The presenter is **not** connected to any `/weather` route and `src/index.ts` is
     unchanged. It decides no HTTP status/header/body-size and generates no clock/`requestId` — a future
     route PR will call the presenter and map its body to a status.
+- **Injectable `POST /weather` route factory** — PR #30 adds `createWeatherRoute` (`src/routes/`), the
+  HTTP boundary that connects the request contract, application service, and PR #29 presenter. See
+  [docs/weather-route.md](../../docs/weather-route.md). Highlights:
+  - A **mountable Hono sub-app** that registers exactly `POST /`, so startup will mount it with
+    `app.route('/weather', createWeatherRoute(deps))`. It registers no `GET`, wildcard, health, global
+    `notFound`, or global `onError`.
+  - Pipeline: `Content-Type` must be `application/json` (else `415 UNSUPPORTED_MEDIA_TYPE`, checked
+    **before** the body is read); a **16 KiB byte** body limit enforced on the **actual bytes read** from
+    the request stream by a route-private reader (`413 PAYLOAD_TOO_LARGE`, measured chunk-by-chunk, not
+    `text.length`) — `Content-Length` is only an early-rejection hint, so an under-reported one **cannot
+    bypass** the limit (Hono's `bodyLimit`, which trusts a present `Content-Length`, is deliberately not
+    used, which also keeps the raw `AbortSignal` intact); JSON parse + `WeatherRequestV1` strict validation (both `400
+    INVALID_REQUEST`; every extra top-level/nested key — a client `product`, `nx`/`ny`, `serviceKey`,
+    `baseDate` — is rejected); the **server-owned** KMA product applied from a dependency; the injected
+    service port called with the raw request `AbortSignal` forwarded by exact reference; the PR #29
+    presenter; and HTTP status mapping (`200` success incl. a no-selection overview, `422`
+    `UNSUPPORTED_LOCATION`, `500 INTERNAL_ERROR` for a service/presenter throw or an unexpected presenter
+    error code).
+  - The service, presenter, server product, and `meta` provider (clock + `requestId`) are **injected**;
+    the factory reads no `process.env`, `Date.now`, `randomUUID`, or `Math.random`, and adds no
+    logging — so it is testable independently of startup, and PR #31 supplies the production adapters.
+  - Request-layer errors are producer-validated `WeatherErrorResponseV1` bodies; Zod issues, raw error
+    messages/stacks, and provider traces are never exposed. `UNSUPPORTED_MEDIA_TYPE` and
+    `PAYLOAD_TOO_LARGE` were added **additively** to `ApiErrorCode` (`CONTRACT_VERSION` stays `1`).
+  - **Not mounted.** `src/index.ts` is unchanged and the factory is not wired into startup — that is
+    PR #31. It reads no env/service key and builds no production composition.
 - **Still not implemented.** `current`/`daily`/air-quality/alerts `WeatherOverview` sections and their
   `SourceMetadata`; a `fallbackUsed` API field; current weather, daily forecast (incl. `TMN`/`TMX`),
   feels-like computation; a common provider interface; **running any of the five production composition
-  roots at API app startup**; the `/weather` route and its query validation; HTTP error/status mapping;
-  the mobile-facing `overview`-only serialization mapper; API-availability retry beyond the single
-  previous-issuance fallback; and cache are **not** here — those are later PRs. The PR #24 **application
-  service**, the PR #26 **live resolver**, and now the PR #27 **production composition** that assembles
-  them are all implemented, but none of the **five** composition roots (grid scheduled, location
-  scheduled, grid fallback, location fallback, location hourly overview) is wired into `src/index.ts`
-  and none is connected to a route (`/health` unchanged).
+  roots at API app startup and mounting the `/weather` route factory there**; the production service
+  adapter / server-product policy / real clock / `requestId` generator that PR #31 will inject;
+  API-availability retry beyond the single previous-issuance fallback; and cache are **not** here —
+  those are later PRs. The PR #24 **application service**, the PR #26 **live resolver**, the PR #27
+  **production composition**, the PR #29 **response presenter**, and now the PR #30 **route factory** are
+  all implemented, but none of the **five** composition roots (grid scheduled, location scheduled, grid
+  fallback, location fallback, location hourly overview) is wired into `src/index.ts`, and the route
+  factory is not mounted there either (`/health` remains the only callable endpoint).
 
 ### Dependencies
 

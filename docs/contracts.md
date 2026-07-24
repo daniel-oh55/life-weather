@@ -138,16 +138,20 @@ compatible 스키마의 출력 타입은 항상 정의된 리터럴 union이며 
 | WeatherAlertSeverity | `UNKNOWN` |
 | ApiErrorCode | `UNKNOWN` |
 
-### ApiErrorCode에 known value를 additive로 추가 (PR #29)
+### ApiErrorCode에 known value를 additive로 추가 (PR #29, PR #30)
 
 PR #29에서 `apiErrorCode`의 known value에 `UNSUPPORTED_LOCATION`을 **additive**로 추가했습니다 —
-서버 forecast 격자가 지원하지 않는(물리적으로는 유효한) 좌표에 대한 안정적 공개 오류 코드입니다. known
-value를 더하는 것은 non-breaking 변경이므로 `CONTRACT_VERSION`은 계속 **1**입니다. `apiErrorV1.code`는
-**compatible** enum이라, 이 값을 known으로 추가하지 않으면 producer가 쓴 `'UNSUPPORTED_LOCATION'`이
+서버 forecast 격자가 지원하지 않는(물리적으로는 유효한) 좌표에 대한 안정적 공개 오류 코드입니다. PR
+#30에서 HTTP route factory가 request-layer 실패를 기존 `WeatherErrorResponseV1` 형태로 반환할 수 있도록
+`UNSUPPORTED_MEDIA_TYPE`(`POST /weather`의 `Content-Type`이 `application/json`이 아님)과
+`PAYLOAD_TOO_LARGE`(request body가 route의 byte 한도를 초과)를 같은 방식으로 additive하게 추가했습니다.
+known value를 더하는 것은 non-breaking 변경이므로 `CONTRACT_VERSION`은 계속 **1**입니다. `apiErrorV1.code`는
+**compatible** enum이라, 이 값들을 known으로 추가하지 않으면 producer가 쓴 코드가
 검증 단계에서 조용히 `UNKNOWN`으로 강등됩니다. 다른 모든 알 수 없는 문자열은 여전히 `UNKNOWN`으로
 매핑되어 구버전 소비자는 영향을 받지 않으며, 기존 코드(특히 별개 의미의 `LOCATION_NOT_FOUND`)는 변경·
-재정렬하지 않았습니다. 이 코드를 소비하는 response presenter는
-[weather-response-presenter.md](./weather-response-presenter.md) 참고.
+재정렬하지 않았고 새 코드는 종단 `UNKNOWN` fallback 앞에 append했습니다. 이 코드들을 소비하는 경계는
+[weather-response-presenter.md](./weather-response-presenter.md)와
+[weather-route.md](./weather-route.md) 참고.
 
 ## null과 optional의 차이
 

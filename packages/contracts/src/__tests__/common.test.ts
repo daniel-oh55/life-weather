@@ -61,18 +61,21 @@ describe('forward-compatible enums', () => {
 });
 
 describe('apiErrorCode', () => {
-  // The full set of known codes, sorted, as of PR #29. `UNSUPPORTED_LOCATION` was added
-  // additively; every other code and the `UNKNOWN` fallback are unchanged.
+  // The full set of known codes, sorted, as of PR #30. `UNSUPPORTED_LOCATION` was added
+  // additively in PR #29; `UNSUPPORTED_MEDIA_TYPE` and `PAYLOAD_TOO_LARGE` were added additively
+  // in PR #30 (HTTP route factory). Every other code and the `UNKNOWN` fallback are unchanged.
   const KNOWN_CODES = [
     'DATA_UNAVAILABLE',
     'INTERNAL_ERROR',
     'INVALID_REQUEST',
     'LOCATION_NOT_FOUND',
+    'PAYLOAD_TOO_LARGE',
     'PROVIDER_UNAVAILABLE',
     'RATE_LIMITED',
     'UNKNOWN',
     'UNSUPPORTED_CONTRACT_VERSION',
     'UNSUPPORTED_LOCATION',
+    'UNSUPPORTED_MEDIA_TYPE',
     'UPSTREAM_TIMEOUT',
   ] as const;
 
@@ -88,12 +91,26 @@ describe('apiErrorCode', () => {
     );
   });
 
+  it.each(['UNSUPPORTED_MEDIA_TYPE', 'PAYLOAD_TOO_LARGE'] as const)(
+    'accepts the additive PR #30 code %s in the strict schema',
+    (code) => {
+      expect(apiErrorCode.strict.parse(code)).toBe(code);
+    },
+  );
+
+  it.each(['UNSUPPORTED_MEDIA_TYPE', 'PAYLOAD_TOO_LARGE'] as const)(
+    'preserves the additive PR #30 code %s in the compatible schema (not UNKNOWN)',
+    (code) => {
+      expect(apiErrorCode.compatible.parse(code)).toBe(code);
+    },
+  );
+
   it('keeps every pre-existing known code unchanged', () => {
     for (const code of KNOWN_CODES) {
       expect(apiErrorCode.strict.parse(code)).toBe(code);
       expect(apiErrorCode.compatible.parse(code)).toBe(code);
     }
-    // The known set is exactly these ten codes and no more.
+    // The known set is exactly the codes listed in KNOWN_CODES and no more.
     expect(apiErrorCode.strict.options.length).toBe(KNOWN_CODES.length);
     expect([...apiErrorCode.strict.options].sort()).toEqual([...KNOWN_CODES]);
   });
