@@ -287,6 +287,16 @@ function postWeather(
   return Promise.resolve(app.request('/weather', requestInit));
 }
 
+/**
+ * Build a raw `POST /weather` Request with caller-chosen headers and a string body. Constructing the
+ * Request explicitly lets a test forge a `Content-Length` that disagrees with the real body bytes — the
+ * exact bypass shape the actual-byte limit must defeat (this runtime keeps a client-supplied
+ * `Content-Length` verbatim rather than recomputing it from the body).
+ */
+function rawWeatherRequest(headers: Record<string, string>, body: string): Request {
+  return new Request('http://localhost/weather', { method: 'POST', headers, body });
+}
+
 // ---------------------------------------------------------------------------
 // Assertion helpers.
 // ---------------------------------------------------------------------------
@@ -704,10 +714,144 @@ describe('POST /weather — body-size limit', () => {
     expect(execute.calls).toHaveLength(0);
   });
 
-  // NOTE: this runtime's Request implementation does not let a client forge a Content-Length that
-  // disagrees with the actual body bytes (it is a managed/forbidden header), so a "lying Content-Length"
-  // cannot be constructed here. The streamed-body test above demonstrates that the limit is enforced on
-  // the real byte stream, not on a trusted header.
+  // --- P1 regression: a dishonest / under-reported Content-Length must not bypass the byte limit. ---
+  //
+  // Content-Length is only an early-rejection hint; the limit is enforced on the ACTUAL bytes read from
+  // the stream. This runtime keeps a client-supplied Content-Length verbatim, so a client can forge one
+  // that under-reports the real body — the previous Content-Length-only check (Hono's bodyLimit) trusted
+  // that value and let the oversized body reach JSON parsing and the service. These tests pin that a
+  // forged Content-Length can be constructed here and that it no longer bypasses the limit.
+
+  it('rejects an oversized actual body even when Content-Length underreports it', async () => {
+    const execute = spyExecute(resolveResult(makeSuccessResult(makePrimaryExecution())));
+    const present = spyPresent(presentKmaLocationHourlyOverviewResponseV1);
+    const meta = spyMeta(makeMeta());
+    const app = mount(
+      makeDeps({ executeOverview: execute.fn, presentResponse: present.fn, createMeta: meta.fn }),
+    );
+
+    // The real body is over the limit; the header lies and under-reports it as a tiny value.
+    const base = JSON.stringify(makeValidRequestBody());
+    const oversized = base + ' '.repeat(WEATHER_REQUEST_MAX_BYTES + 1 - byteLen(base));
+    expect(byteLen(oversized)).toBe(WEATHER_REQUEST_MAX_BYTES + 1);
+
+    const request = rawWeatherRequest(
+      { 'content-type': 'application/json', 'content-length': '1' },
+      oversized,
+    );
+    // Guard: the forged, dishonest Content-Length really does stick in this runtime (otherwise the test
+    // would not exercise the bypass the previous Content-Length-only check was vulnerable to).
+    expect(request.headers.get('content-length')).toBe('1');
+
+    const res = await app.request(request);
+
+    expect(res.status).toBe(413);
+    expect(execute.calls).toHaveLength(0);
+    expect(present.calls).toHaveLength(0);
+    expect(meta.calls).toHaveLength(1);
+
+    const parsed = (await res.json()) as WeatherResponseV1;
+    expect(weatherErrorResponseV1.safeParse(parsed).success).toBe(true);
+    if (parsed.ok) {
+      throw new Error('expected an error response');
+    }
+    expect(parsed.error.code).toBe('PAYLOAD_TOO_LARGE');
+    expect(parsed.error.message).toBe(PAYLOAD_TOO_LARGE_MESSAGE);
+    expect(parsed.error.retryable).toBe(false);
+
+    // No body content or internal error detail leaks into the 413 response.
+    const serialized = JSON.stringify(parsed);
+    expect(serialized).not.toContain('loc_seoul_jung');
+    for (const marker of ['SyntaxError', 'position', 'token', 'stack']) {
+      expect(serialized).not.toContain(marker);
+    }
+  });
+
+  it.each([
+    { name: 'Content-Length 16384 (at the limit)', value: String(WEATHER_REQUEST_MAX_BYTES) },
+    { name: 'Content-Length 0', value: '0' },
+    { name: 'non-numeric Content-Length', value: 'not-a-number' },
+  ])(
+    'rejects a WEATHER_REQUEST_MAX_BYTES + 1 body with a dishonest $name (413, no service call)',
+    async ({ value }) => {
+      const execute = spyExecute(resolveResult(makeSuccessResult(makePrimaryExecution())));
+      const present = spyPresent(presentKmaLocationHourlyOverviewResponseV1);
+      const app = mount(
+        makeDeps({ executeOverview: execute.fn, presentResponse: present.fn }),
+      );
+
+      const base = JSON.stringify(makeValidRequestBody());
+      const oversized = base + ' '.repeat(WEATHER_REQUEST_MAX_BYTES + 1 - byteLen(base));
+      expect(byteLen(oversized)).toBe(WEATHER_REQUEST_MAX_BYTES + 1);
+
+      const res = await app.request(
+        rawWeatherRequest({ 'content-type': 'application/json', 'content-length': value }, oversized),
+      );
+
+      expect(res.status).toBe(413);
+      expect(execute.calls).toHaveLength(0);
+      expect(present.calls).toHaveLength(0);
+      const parsed = (await res.json()) as WeatherResponseV1;
+      if (parsed.ok) {
+        throw new Error('expected an error response');
+      }
+      expect(parsed.error.code).toBe('PAYLOAD_TOO_LARGE');
+    },
+  );
+
+  it('accepts an actual body of exactly WEATHER_REQUEST_MAX_BYTES even when Content-Length underreports it', async () => {
+    const execute = spyExecute(resolveResult(makeSuccessResult(makePrimaryExecution())));
+    const app = mount(makeDeps({ executeOverview: execute.fn }));
+
+    const base = JSON.stringify(makeValidRequestBody());
+    const body = base + ' '.repeat(WEATHER_REQUEST_MAX_BYTES - byteLen(base));
+    expect(byteLen(body)).toBe(WEATHER_REQUEST_MAX_BYTES);
+
+    const res = await app.request(
+      rawWeatherRequest({ 'content-type': 'application/json', 'content-length': '1' }, body),
+    );
+
+    // At-the-limit bytes are accepted (the trailing JSON whitespace keeps it schema-valid), and the
+    // service is reached exactly once — the under-reported Content-Length changes nothing.
+    expect(res.status).toBe(200);
+    expect(execute.calls).toHaveLength(1);
+  });
+
+  it('early-rejects when Content-Length declares over the limit even though the actual body is small', async () => {
+    const execute = spyExecute(resolveResult(makeSuccessResult(makePrimaryExecution())));
+    const present = spyPresent(presentKmaLocationHourlyOverviewResponseV1);
+    const meta = spyMeta(makeMeta());
+    const app = mount(
+      makeDeps({ executeOverview: execute.fn, presentResponse: present.fn, createMeta: meta.fn }),
+    );
+
+    // A small, valid body but a Content-Length that over-declares → rejected before the body is read.
+    const body = JSON.stringify(makeValidRequestBody());
+    expect(byteLen(body)).toBeLessThan(WEATHER_REQUEST_MAX_BYTES);
+
+    const res = await app.request(
+      rawWeatherRequest(
+        { 'content-type': 'application/json', 'content-length': String(WEATHER_REQUEST_MAX_BYTES + 1) },
+        body,
+      ),
+    );
+
+    expect(res.status).toBe(413);
+    expect(execute.calls).toHaveLength(0);
+    expect(present.calls).toHaveLength(0);
+    expect(meta.calls).toHaveLength(1);
+    const parsed = (await res.json()) as WeatherResponseV1;
+    if (parsed.ok) {
+      throw new Error('expected an error response');
+    }
+    expect(parsed.error.code).toBe('PAYLOAD_TOO_LARGE');
+  });
+
+  // NOTE: the limit is enforced on the ACTUAL number of bytes read from the request stream, never on a
+  // trusted Content-Length. Content-Length is used only as an early-rejection optimization (see the
+  // "early-rejects" case above); the streamed-body test (no Content-Length) and the dishonest
+  // Content-Length regression tests above together pin that a missing, honest, or under-reported
+  // Content-Length all resolve to the same actual-byte limit.
 });
 
 // ---------------------------------------------------------------------------

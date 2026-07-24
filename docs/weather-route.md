@@ -104,26 +104,40 @@ The Content-Type check runs **before** the body-size limit, so a large `text/pla
 ### Body-size policy
 
 The maximum request body size is **16 KiB** — `WEATHER_REQUEST_MAX_BYTES = 16 * 1024 = 16384` bytes. The
-limit is enforced by Hono's official `bodyLimit` middleware:
+limit is enforced on the **actual number of bytes read from the request stream** by a route-private reader
+(`readRequestBodyWithinLimit`), **not** by Hono's `bodyLimit` middleware and **never** on a trusted
+`Content-Length`:
 
-- When a `Content-Length` header is present, a value over the limit is rejected **before** the body is
-  read.
-- When there is no `Content-Length`, the actual streamed **byte** size is measured chunk by chunk and the
-  request is rejected as soon as it exceeds the limit — so a **missing or dishonest `Content-Length`
-  cannot bypass** the real byte limit.
+- **`Content-Length` is only an early-rejection hint, never a trust boundary.** A `Content-Length` that is
+  a plain decimal integer over the limit lets the route reject before reading a single byte. A missing,
+  under-reported, non-decimal, or otherwise untrustworthy `Content-Length` is ignored for this purpose.
+- **The real stream is always measured.** Even when a `Content-Length` is present and within the limit, the
+  route reads `request.body` chunk by chunk and counts the actual bytes, stopping the instant the running
+  count exceeds the limit. A **dishonest / under-reported `Content-Length` therefore cannot bypass** the
+  byte limit — an oversized body is a `413` regardless of what the header claims. At most 16 KiB is ever
+  buffered in memory.
+- **JSON parsing happens after the limited read.** The accepted bytes are decoded as UTF-8 and
+  `JSON.parse`d directly (the route does **not** call `c.req.json()`), so an oversized body never reaches
+  the parser or the service.
+- **The raw `Request` is never rebuilt.** The route consumes only the original `request.body` stream and
+  never clones, wraps, or replaces `c.req.raw` — so the raw `AbortSignal` keeps its identity (Hono's
+  `bodyLimit` rebuilds the request on its streaming path, which is one reason it is not used here).
 - Exactly `16384` bytes is accepted (trailing JSON whitespace is valid); `16385` bytes or more is
   rejected.
 - The limit is on **UTF-8 byte length**, not character count: a multi-byte body whose character count is
   under the limit but whose byte length exceeds it is rejected (a naive `text.length` check would wrongly
   pass it).
 
-On a `413`, JSON schema validation, the service, and the presenter are **not** called. The error body is a
-`PAYLOAD_TOO_LARGE` `WeatherErrorResponseV1`.
+On a `413`, JSON parsing, schema validation, the service, and the presenter are **not** called. The error
+body is a `PAYLOAD_TOO_LARGE` `WeatherErrorResponseV1`.
 
-> Runtime note: this runtime's `Request` implementation does not let a client forge a `Content-Length`
-> that disagrees with the actual body bytes (it is a managed header), so a "lying `Content-Length`" case
-> cannot be constructed in the tests. The streamed-body test (no `Content-Length`) demonstrates that the
-> limit is enforced on the real byte stream, not on a trusted header.
+> Why not Hono's `bodyLimit`: for Hono `4.12.30`, when a `Content-Length` header is present (and there is no
+> `Transfer-Encoding`), `bodyLimit` compares only the header value and skips measuring the body stream — so
+> a client that forges a `Content-Length` under-reporting the real body can push an oversized body past the
+> limit into JSON parsing and the service. This runtime keeps such a forged `Content-Length` verbatim (it is
+> not recomputed), so the bypass is real; the route-private reader measures the actual stream to close it,
+> and a regression test (`rejects an oversized actual body even when Content-Length underreports it`) pins
+> the fix.
 
 ### JSON parsing and request validation
 

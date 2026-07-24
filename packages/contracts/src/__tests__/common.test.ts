@@ -110,7 +110,7 @@ describe('apiErrorCode', () => {
       expect(apiErrorCode.strict.parse(code)).toBe(code);
       expect(apiErrorCode.compatible.parse(code)).toBe(code);
     }
-    // The known set is exactly these ten codes and no more.
+    // The known set is exactly the codes listed in KNOWN_CODES and no more.
     expect(apiErrorCode.strict.options.length).toBe(KNOWN_CODES.length);
     expect([...apiErrorCode.strict.options].sort()).toEqual([...KNOWN_CODES]);
   });

@@ -651,9 +651,11 @@ a project on first run; that step is intentionally deferred to a later PR.
     `app.route('/weather', createWeatherRoute(deps))`. It registers no `GET`, wildcard, health, global
     `notFound`, or global `onError`.
   - Pipeline: `Content-Type` must be `application/json` (else `415 UNSUPPORTED_MEDIA_TYPE`, checked
-    **before** the body limit); a **16 KiB byte** body limit via Hono's `bodyLimit` (`413
-    PAYLOAD_TOO_LARGE`, enforced on the actual byte length, not `text.length`, and not on a trusted
-    `Content-Length` alone); JSON parse + `WeatherRequestV1` strict validation (both `400
+    **before** the body is read); a **16 KiB byte** body limit enforced on the **actual bytes read** from
+    the request stream by a route-private reader (`413 PAYLOAD_TOO_LARGE`, measured chunk-by-chunk, not
+    `text.length`) — `Content-Length` is only an early-rejection hint, so an under-reported one **cannot
+    bypass** the limit (Hono's `bodyLimit`, which trusts a present `Content-Length`, is deliberately not
+    used, which also keeps the raw `AbortSignal` intact); JSON parse + `WeatherRequestV1` strict validation (both `400
     INVALID_REQUEST`; every extra top-level/nested key — a client `product`, `nx`/`ny`, `serviceKey`,
     `baseDate` — is rejected); the **server-owned** KMA product applied from a dependency; the injected
     service port called with the raw request `AbortSignal` forwarded by exact reference; the PR #29

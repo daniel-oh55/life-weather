@@ -51,7 +51,6 @@
  */
 
 import { Hono } from 'hono';
-import { bodyLimit } from 'hono/body-limit';
 
 import {
   CONTRACT_VERSION,
@@ -73,8 +72,9 @@ import type {
 /**
  * The maximum accepted `POST /weather` request body size: **16 KiB** (`16 * 1024 = 16384` bytes).
  * Exactly `16384` bytes is accepted; `16385` bytes or more is rejected with `413`. The limit is
- * enforced on the **actual byte length** of the body (via Hono's `bodyLimit`), never on a character
- * count or a trusted `Content-Length` alone.
+ * enforced on the **actual number of bytes read from the request stream** (see
+ * {@link readRequestBodyWithinLimit}), never on a character count or a trusted `Content-Length`: a
+ * `Content-Length` is only an early-rejection hint, so an under-reported one cannot bypass the limit.
  */
 export const WEATHER_REQUEST_MAX_BYTES = 16 * 1024;
 
@@ -203,6 +203,112 @@ function createWeatherRouteErrorResponse(
 }
 
 /**
+ * The outcome of reading a request body under a hard byte cap: either the fully-read `bytes` (at most
+ * `maximumBytes` long), or a `PAYLOAD_TOO_LARGE` signal when the actual stream exceeded the cap.
+ */
+type LimitedBodyReadResult =
+  | { readonly ok: true; readonly bytes: Uint8Array }
+  | { readonly ok: false; readonly kind: 'PAYLOAD_TOO_LARGE' };
+
+/**
+ * Decide whether a `Content-Length` header **alone** lets the route reject before reading a single
+ * body byte. This is a best-effort **early-rejection hint, never a trust boundary**: only a trimmed,
+ * pure ASCII-decimal value is interpreted, and only a value strictly greater than `maximumBytes`
+ * rejects. A missing, empty, non-decimal, negative, or fractional `Content-Length` returns `false`, so
+ * {@link readRequestBodyWithinLimit} always falls through to measuring the real stream — an
+ * under-reported (or absent) `Content-Length` can therefore never bypass the byte limit. A declared
+ * value beyond the safe-integer range is treated as an early rejection (it is astronomically larger
+ * than any accepted body).
+ */
+function contentLengthExceedsLimit(
+  contentLength: string | null,
+  maximumBytes: number,
+): boolean {
+  if (contentLength === null) {
+    return false;
+  }
+
+  const trimmed = contentLength.trim();
+  if (!/^[0-9]+$/.test(trimmed)) {
+    return false;
+  }
+
+  const declared = Number(trimmed);
+  if (!Number.isSafeInteger(declared)) {
+    return true;
+  }
+
+  return declared > maximumBytes;
+}
+
+/**
+ * Read a request body enforcing a hard cap on the **actual bytes read from the stream**. `Content-Length`
+ * is consulted only as an early-rejection hint (see {@link contentLengthExceedsLimit}); the real
+ * `request.body` stream is then measured chunk by chunk and reading stops the instant the running byte
+ * count exceeds `maximumBytes`, so at most `maximumBytes` bytes are ever buffered and a dishonest
+ * `Content-Length` cannot smuggle a larger body through.
+ *
+ * The original {@link Request} is never cloned, rebuilt, or replaced — only its own `body` stream is
+ * consumed — so the caller's `AbortSignal` (`request.signal`) keeps its identity. A `reader.cancel()` /
+ * `releaseLock()` failure is swallowed so it cannot turn an already-decided `413` into a `500`; a genuine
+ * read error from the underlying stream is allowed to throw for the caller to map. Module-private.
+ */
+async function readRequestBodyWithinLimit(
+  request: Request,
+  maximumBytes: number,
+): Promise<LimitedBodyReadResult> {
+  if (contentLengthExceedsLimit(request.headers.get('content-length'), maximumBytes)) {
+    return { ok: false, kind: 'PAYLOAD_TOO_LARGE' };
+  }
+
+  const body = request.body;
+  if (body === null) {
+    // No body stream (e.g. a body-less POST) → an empty body, rejected downstream as invalid JSON.
+    return { ok: true, bytes: new Uint8Array(0) };
+  }
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      totalBytes += value.byteLength;
+      if (totalBytes > maximumBytes) {
+        // Stop immediately; never buffer beyond the cap. A cancel() failure must not become a 500.
+        try {
+          await reader.cancel();
+        } catch {
+          // Ignore: the oversized decision is already made.
+        }
+        return { ok: false, kind: 'PAYLOAD_TOO_LARGE' };
+      }
+
+      chunks.push(value);
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // Ignore: releasing the reader lock must not override the read outcome.
+    }
+  }
+
+  // Combine the accepted chunks into a single exact-size buffer (`totalBytes <= maximumBytes`).
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { ok: true, bytes };
+}
+
+/**
  * Create a mountable `POST /weather` Hono sub-app bound to the injected {@link WeatherRouteDependencies}.
  *
  * The returned app registers **only** `POST /` (no `GET`, wildcard, health, global `notFound`, or global
@@ -215,8 +321,9 @@ export function createWeatherRoute(dependencies: WeatherRouteDependencies): Hono
 
   app.post(
     '/',
-    // 1. Content-Type guard — runs BEFORE the body-size limit, so a large non-JSON body is a 415, not a
-    //    413. On the happy path it calls next() and reads no meta (so createMeta stays once-per-request).
+    // 1. Content-Type guard — runs BEFORE any body read, so a large non-JSON body is a 415, not a 413
+    //    (and its bytes are never read). On the happy path it calls next() and reads no meta (so
+    //    createMeta stays once-per-request).
     async (c, next) => {
       if (!isApplicationJsonContentType(c.req.header('content-type'))) {
         const meta = dependencies.createMeta(c.req.raw);
@@ -228,29 +335,44 @@ export function createWeatherRoute(dependencies: WeatherRouteDependencies): Hono
 
       await next();
     },
-    // 2. Byte-based body-size limit (official Hono middleware). It rejects on Content-Length before
-    //    reading the body when the header is present, and otherwise enforces the actual streamed byte
-    //    size — so a missing or dishonest Content-Length cannot bypass the limit. onError builds the
-    //    413 body (createMeta runs only on this terminal path).
-    bodyLimit({
-      maxSize: WEATHER_REQUEST_MAX_BYTES,
-      onError: (c) => {
-        const meta = dependencies.createMeta(c.req.raw);
+    // 2. Body-size limit + parse + validate + execute + present, mapped to an HTTP status. createMeta is
+    //    called exactly once here (this handler is the terminal path for 413/400/200/422/500).
+    async (c) => {
+      const meta = dependencies.createMeta(c.req.raw);
+
+      // Body-size limit — enforced on the ACTUAL bytes read from the request stream, not on a trusted
+      // Content-Length (see readRequestBodyWithinLimit). The raw stream is read in place (no Request
+      // clone/rebuild), so the raw AbortSignal keeps its identity.
+      let read: LimitedBodyReadResult;
+      try {
+        read = await readRequestBodyWithinLimit(c.req.raw, WEATHER_REQUEST_MAX_BYTES);
+      } catch {
+        // The client body stream itself could not be read → a 400 invalid request. The raw stream
+        // error (message / stack / cause) is never exposed.
+        return c.json(
+          createWeatherRouteErrorResponse(meta, INVALID_REQUEST_ERROR),
+          400,
+        );
+      }
+
+      // The actual body exceeded the byte limit → 413. A dishonest/under-reported Content-Length cannot
+      // bypass this, because the decision is made on the measured stream. (This return is deliberately
+      // outside the read try/catch so it is never reclassified as a 400.)
+      if (!read.ok) {
         return c.json(
           createWeatherRouteErrorResponse(meta, PAYLOAD_TOO_LARGE_ERROR),
           413,
         );
-      },
-    }),
-    // 3. Parse, validate, execute, present, and map to an HTTP status. createMeta is called exactly once
-    //    here (this handler is the terminal path for 400/200/422/500).
-    async (c) => {
-      const meta = dependencies.createMeta(c.req.raw);
+      }
 
-      // Malformed JSON → 400. The parser's raw message (SyntaxError / position / body) is never exposed.
+      // Malformed JSON → 400. The already-read bytes are decoded as UTF-8 (never re-read via
+      // c.req.json()); invalid UTF-8, an empty body, or malformed JSON is a 400. The catch is scoped to
+      // decode + JSON.parse ONLY (so a later service/presenter error is not misreported as INVALID_REQUEST),
+      // and the decoder/parser's raw message (SyntaxError / position / body) is never exposed.
       let body: unknown;
       try {
-        body = await c.req.json();
+        const text = new TextDecoder('utf-8', { fatal: true }).decode(read.bytes);
+        body = JSON.parse(text);
       } catch {
         return c.json(
           createWeatherRouteErrorResponse(meta, INVALID_REQUEST_ERROR),
