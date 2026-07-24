@@ -282,7 +282,7 @@ async function readRequestBodyWithinLimit(
 
       totalBytes += value.byteLength;
       if (totalBytes > maximumBytes) {
-        // Stop immediately; never buffer beyond the cap. A cancel() failure must not become a 500.
+        // Stop immediately; do not add the over-limit chunk to the accepted chunks. A cancel() failure must not become a 500.
         try {
           await reader.cancel();
         } catch {
