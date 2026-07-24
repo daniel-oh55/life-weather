@@ -143,7 +143,8 @@
   [kma-hourly-weather-overview.md](./kma-hourly-weather-overview.md),
   [kma-location-hourly-overview.md](./kma-location-hourly-overview.md),
   [kma-selected-hourly-source-metadata.md](./kma-selected-hourly-source-metadata.md),
-  [kma-location-hourly-overview-composition.md](./kma-location-hourly-overview-composition.md) 참고.
+  [kma-location-hourly-overview-composition.md](./kma-location-hourly-overview-composition.md),
+  [weather-response-presenter.md](./weather-response-presenter.md) 참고.
 - `packages/contracts` — 모바일과 API가 공유할 정규화 요청/응답 계약의 위치입니다. **현재
   상태**: PR #2에서 Zod 4 기반 공유 기상 데이터 계약을 정의했습니다. 자세한 내용은
   [contracts.md](./contracts.md) 참고.
@@ -483,6 +484,24 @@ PR #27의 KMA location hourly overview composition
 import하지 않습니다). 이 다섯 번째 root는 기존 네 root를 **교체하지 않고 병렬로** 추가한 것이며, 재사용하는
 PR #21 location fallback root·PR #26 resolver·PR #24 service의 runtime과 공개 API를 변경하지 않았습니다.
 
+PR #29의 KMA location hourly overview **response presenter**(`apps/api/src/presenters/kma-location-hourly-overview-response.ts`)는
+**신규 dependency도, 신규 package-level 의존도 추가하지 않습니다.** 이 presenter는 새 **presenters 계층**
+(`src/presenters`)에 속하며, `@life-weather/contracts` 공개 surface의 runtime schema
+`weatherSuccessResponseV1`·`weatherErrorResponseV1`·상수 `CONTRACT_VERSION`(+ `ApiMetaV1`/`WeatherResponseV1`
+**타입**)과, `services` 공개 surface의 `KmaLocationHourlyOverviewResult` **타입만** 소비합니다(자기 barrel
+`./index` import 없음, composition·providers/kma·weather-core runtime import 없음). 따라서 강화되는 방향은
+`presenters → contracts`(runtime)와 `presenters → services`(type-only)뿐이며, `services → presenters`·
+`composition → presenters`·`presenters → composition`·`weather-core → apps/api`·`contracts → apps/api`·
+`mobile → apps/api` 같은 역방향은 금지합니다(순환 없음 — presenter는 순수 mapping 경계이지 orchestration도
+composition도 아님). presenter 계층은 PR #27 composition이 만드는 **내부 application result**와 향후
+`/weather` route가 모바일에 돌려줄 **공개 response body** 사이의 **serialization 경계**로, 성공 시 `overview`만
+`data`로 노출하고 `selection`/execution trace는 절대 serialize하지 않으며 `LOCATION` 실패는 안정적인
+`UNSUPPORTED_LOCATION` 오류로 매핑합니다. `UNSUPPORTED_LOCATION`은 `ApiErrorCode`에 **additive**로 추가한
+known value이므로 `CONTRACT_VERSION`은 계속 **1**입니다. presenter는 아직 `apps/api/src/index.ts`·startup·
+`/weather` route에 **연결되지 않았고**, HTTP status/헤더/body-size·clock(`generatedAt`)·`requestId` 생성은
+후속 route PR의 몫입니다. callable production composition root 수(**5**)와 services 계층 application component
+수(**12**)는 변하지 않습니다(presenter는 composition root도 service component도 아닌 별도 계층).
+
 향후 허용 방향:
 
 ```text
@@ -491,7 +510,7 @@ apps/mobile       → contracts
 lifestyle-engine  → contracts
 ```
 
-## 현재 구현 상태 요약 (PR #27 시점)
+## 현재 구현 상태 요약 (PR #29 시점)
 
 - `contracts`: PR #2에서 Zod 4 기반 공유 기상 계약을 정의했습니다.
 - `weather-core`: `classifyFreshness`(PR #2)와 KMA 단기·초단기예보 정규화 primitive(PR #3)에 더해,
@@ -696,4 +715,21 @@ lifestyle-engine  → contracts
   application component 수(**12**)는 변하지 않습니다(composition root는 service component가 아님). 다섯 root
   모두 아직 `apps/api/src/index.ts`·startup·`/weather` route에 **연결되지 않았습니다**
   ([kma-location-hourly-overview-composition.md](./kma-location-hourly-overview-composition.md)).
+- PR #29에서는 `apps/api`에 새 **presenters 계층**(`src/presenters`)과 그 첫 component인 **response
+  presenter**(`presentKmaLocationHourlyOverviewResponseV1`)를 추가했습니다 — PR #24 **내부 application
+  result**(`{ ok, selection, overview }` 또는 `LOCATION` 실패)를 모바일용 `WeatherResponseV1` body로
+  변환하는 순수·동기 mapping입니다. 성공은 `{ ok: true, meta, data: overview }`로 매핑하며 `overview`만
+  `data`로 노출하고 `selection`(PR #22 selection·PR #19 execution trace·PR #25 issuance identity·
+  `fallbackUsed`)은 절대 읽거나 serialize하지 않습니다(result·meta spread 없음). no-selection도 error가
+  아니라 **성공**이고, `LOCATION` 실패는 상수로 만든 안정적인 `UNSUPPORTED_LOCATION` 오류
+  (`retryable: false`)로 매핑합니다. `contractVersion`은 presenter가 소유(`CONTRACT_VERSION` 고정)하고
+  caller는 `generatedAt`/`requestId`만 제공하며 여분 meta key는 무시합니다. 출력은 contracts response
+  schema로 producer-side 검증하므로 invalid `generatedAt`/`requestId`/overview는 동기 `ZodError`로
+  전파됩니다(catch·wrap 없음). presenter는 PR #27 composition의 내부 result와 향후 `/weather` route의 공개
+  response 사이의 **serialization 경계**이며, `apps/api/src/index.ts`·startup·route에는 아직 **연결되지
+  않았습니다**(HTTP status/헤더/body-size·clock·`requestId` 생성은 후속 route PR). 이 presenter는
+  composition root도 service component도 아닌 별도 계층이므로 callable production composition root
+  수(**5**)와 services 계층 application component 수(**12**)는 변하지 않습니다. `UNSUPPORTED_LOCATION`은
+  `ApiErrorCode`에 additive로 추가한 known value이므로 `CONTRACT_VERSION`은 계속 **1**입니다
+  ([weather-response-presenter.md](./weather-response-presenter.md)).
 - 이 문서의 나머지 "예정" 구조는 앞으로의 합의이며, 위 요약이 현재 코드베이스의 상태입니다.

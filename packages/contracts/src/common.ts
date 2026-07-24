@@ -247,11 +247,22 @@ export const weatherAlertSeverity = createForwardCompatibleEnum(
 );
 export type WeatherAlertSeverity = z.infer<typeof weatherAlertSeverity.strict>;
 
-/** Machine-readable error code for an API error response. */
+/**
+ * Machine-readable error code for an API error response.
+ *
+ * `UNSUPPORTED_LOCATION` (a physically valid coordinate the server's forecast grid does not
+ * cover) was added **additively** in PR #29 so a response presenter can map an internal
+ * `LOCATION`/`UNSUPPORTED_LOCATION` failure to a stable public code. Adding a known value is a
+ * non-breaking change and does not bump {@link CONTRACT_VERSION}: the `compatible` schema still
+ * maps every *other* unknown string to `UNKNOWN`, so an older consumer that predates the new
+ * value keeps parsing. `LOCATION_NOT_FOUND` (a location that could not be resolved at all) is a
+ * distinct, pre-existing code and is left unchanged.
+ */
 export const apiErrorCode = createForwardCompatibleEnum(
   [
     'INVALID_REQUEST',
     'LOCATION_NOT_FOUND',
+    'UNSUPPORTED_LOCATION',
     'DATA_UNAVAILABLE',
     'PROVIDER_UNAVAILABLE',
     'UPSTREAM_TIMEOUT',

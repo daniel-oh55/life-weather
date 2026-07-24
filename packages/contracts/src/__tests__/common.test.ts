@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import {
+  apiErrorCode,
   ianaTimeZone,
   isoDate,
   isoDateTime,
@@ -12,6 +13,7 @@ import {
   weatherCondition,
   weatherLocation,
   windDirectionDegrees,
+  type ApiErrorCode,
   type WeatherAlertType,
   type WeatherCondition,
   type WeatherLocation,
@@ -55,6 +57,65 @@ describe('forward-compatible enums', () => {
 
     // The output is a finite literal union, not `string`.
     expectTypeOf<WeatherCondition>().not.toEqualTypeOf<string>();
+  });
+});
+
+describe('apiErrorCode', () => {
+  // The full set of known codes, sorted, as of PR #29. `UNSUPPORTED_LOCATION` was added
+  // additively; every other code and the `UNKNOWN` fallback are unchanged.
+  const KNOWN_CODES = [
+    'DATA_UNAVAILABLE',
+    'INTERNAL_ERROR',
+    'INVALID_REQUEST',
+    'LOCATION_NOT_FOUND',
+    'PROVIDER_UNAVAILABLE',
+    'RATE_LIMITED',
+    'UNKNOWN',
+    'UNSUPPORTED_CONTRACT_VERSION',
+    'UNSUPPORTED_LOCATION',
+    'UPSTREAM_TIMEOUT',
+  ] as const;
+
+  it('accepts UNSUPPORTED_LOCATION in the strict schema (additive known value)', () => {
+    expect(apiErrorCode.strict.parse('UNSUPPORTED_LOCATION')).toBe(
+      'UNSUPPORTED_LOCATION',
+    );
+  });
+
+  it('preserves UNSUPPORTED_LOCATION in the compatible schema (not mapped to UNKNOWN)', () => {
+    expect(apiErrorCode.compatible.parse('UNSUPPORTED_LOCATION')).toBe(
+      'UNSUPPORTED_LOCATION',
+    );
+  });
+
+  it('keeps every pre-existing known code unchanged', () => {
+    for (const code of KNOWN_CODES) {
+      expect(apiErrorCode.strict.parse(code)).toBe(code);
+      expect(apiErrorCode.compatible.parse(code)).toBe(code);
+    }
+    // The known set is exactly these ten codes and no more.
+    expect(apiErrorCode.strict.options.length).toBe(KNOWN_CODES.length);
+    expect([...apiErrorCode.strict.options].sort()).toEqual([...KNOWN_CODES]);
+  });
+
+  it('still maps an unknown string to UNKNOWN (compatible) and rejects it (strict)', () => {
+    expect(apiErrorCode.compatible.parse('SOME_FUTURE_CODE')).toBe('UNKNOWN');
+    expect(apiErrorCode.strict.safeParse('SOME_FUTURE_CODE').success).toBe(false);
+  });
+
+  it('rejects a missing value, null, and numbers in both schemas', () => {
+    for (const schema of [apiErrorCode.strict, apiErrorCode.compatible]) {
+      expect(schema.safeParse(undefined).success).toBe(false);
+      expect(schema.safeParse(null).success).toBe(false);
+      expect(schema.safeParse(42).success).toBe(false);
+    }
+  });
+
+  it('infers the literal union type (UNSUPPORTED_LOCATION assignable, string is not)', () => {
+    // The annotation itself is a compile-time proof the literal is a member of the union.
+    const code: ApiErrorCode = 'UNSUPPORTED_LOCATION';
+    expect(code).toBe('UNSUPPORTED_LOCATION');
+    expectTypeOf<ApiErrorCode>().not.toEqualTypeOf<string>();
   });
 });
 
