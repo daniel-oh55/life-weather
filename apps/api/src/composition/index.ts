@@ -49,7 +49,18 @@
  *   application result** (`{ ok, selection, overview }` on a supported location, or the `LOCATION`
  *   failure verbatim), which a future mobile-facing route must map to `overview` only rather than
  *   serialize directly. The four existing roots are **unchanged**; this is a fifth parallel root, and
- *   like the others it is **not yet wired into startup or any `/weather` route**.
+ *   PR #31 now consumes it at startup (see below).
+ *
+ * PR #31 adds the **production `/weather` route composition**
+ * (`createProductionWeatherRouteDependencies`): the adapter that turns the server-only `KMA_SERVICE_KEY`
+ * into the PR #30 route's `WeatherRouteDependencies`. It builds the location hourly-overview root above,
+ * binds the service to the route's narrow `(input, signal)` execution port, fixes the server-owned
+ * `PRODUCTION_WEATHER_PRODUCT` (`SHORT_FORECAST`), and supplies the production response `meta` provider
+ * (UTC `generatedAt` + a server-generated `requestId`). `apps/api/src/index.ts` calls it, mounts
+ * `createWeatherRoute(...)` at `/weather`, and default-exports the Hono app — so `POST /weather` is now a
+ * live production endpoint alongside `GET /health`. It reads `KMA_SERVICE_KEY` (server-only) at startup
+ * and **fail-fast** throws when it is missing/invalid, but issues **no** external `fetch` at startup — the
+ * KMA graph stays lazy until a real request arrives. See `docs/weather-production-wiring.md`.
  *
  * Boundary properties:
  *
@@ -59,15 +70,18 @@
  * - **Construction is network-free.** Building any graph only reads provider configuration and wires
  *   collaborators; the first converter run, the first clock read, and the first `fetch` happen only
  *   when the returned facade's / service's method is called.
- * - **Not yet routed.** None of the composition roots is wired into `apps/api/src/index.ts` or
- *   connected to a `/weather` route — that is a later PR.
+ * - **Routing.** The four scheduled/fallback roots remain **unrouted**. The location hourly-overview
+ *   root is now consumed by the PR #31 `createProductionWeatherRouteDependencies`, which
+ *   `apps/api/src/index.ts` wires into the live `POST /weather` route; startup still issues no external
+ *   `fetch` (the graph is lazy).
  *
- * It consumes only the `../providers/kma`, `../services`, and `@life-weather/weather-core` (the
- * PR #12 converter, the PR #14 availability-delay selector, and the PR #16 candidate selector) public
- * surfaces and is exported only from here (never re-exported from those barrels or from
- * `apps/api/src/index.ts`). See `docs/kma-production-composition.md`,
- * `docs/kma-location-scheduled-hourly.md`, `docs/kma-hourly-fallback-composition.md`,
- * `docs/kma-location-hourly-fallback.md`, and `docs/kma-location-hourly-overview-composition.md`.
+ * It consumes only the `../providers/kma`, `../services`, `../presenters`, `../routes`, and
+ * `@life-weather/weather-core` (the PR #12 converter, the PR #14 availability-delay selector, and the
+ * PR #16 candidate selector) public surfaces. The KMA composition roots are exported only from here; the
+ * PR #31 route composition is exported here too and consumed by `apps/api/src/index.ts`. See
+ * `docs/kma-production-composition.md`, `docs/kma-location-scheduled-hourly.md`,
+ * `docs/kma-hourly-fallback-composition.md`, `docs/kma-location-hourly-fallback.md`,
+ * `docs/kma-location-hourly-overview-composition.md`, and `docs/weather-production-wiring.md`.
  */
 
 export { createKmaSystemClock } from './system-clock';
@@ -101,3 +115,10 @@ export {
   type CreateKmaLocationHourlyOverviewCompositionResult,
   type KmaLocationHourlyOverviewCompositionDependencies,
 } from './kma-location-hourly-overview';
+
+export {
+  createProductionWeatherRouteDependencies,
+  KMA_SERVICE_KEY_REQUIRED_MESSAGE,
+  PRODUCTION_WEATHER_PRODUCT,
+  type ProductionWeatherRouteOptions,
+} from './weather-route';
