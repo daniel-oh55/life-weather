@@ -84,6 +84,19 @@ describe('weatherResponseV1', () => {
     }
   });
 
+  it.each(['UNSUPPORTED_MEDIA_TYPE', 'PAYLOAD_TOO_LARGE'])(
+    'preserves the additive PR #30 request-layer code %s through a full error parse',
+    (code) => {
+      const response = errorResponse();
+      response.error.code = code;
+      const parsed = weatherResponseV1.parse(response);
+      expect(parsed.ok).toBe(false);
+      if (!parsed.ok) {
+        expect(parsed.error.code).toBe(code);
+      }
+    },
+  );
+
   it('rejects an invalid `ok` discriminator value', () => {
     const response = { ...successResponse(), ok: 'true' };
     expect(weatherResponseV1.safeParse(response).success).toBe(false);

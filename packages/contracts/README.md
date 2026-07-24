@@ -50,16 +50,20 @@ valid zone identifier there. They are different concepts.
   `apiMetaV1`, the `weatherResponseV1` discriminated union, and the provider-neutral
   `weatherRequestV1` request schema.
 
-### `ApiErrorCode` — additive `UNSUPPORTED_LOCATION` (PR #29)
+### `ApiErrorCode` — additive `UNSUPPORTED_LOCATION` (PR #29), `UNSUPPORTED_MEDIA_TYPE` / `PAYLOAD_TOO_LARGE` (PR #30)
 
 `apiErrorCode` gained the known value `UNSUPPORTED_LOCATION` (a physically valid coordinate the
-server's forecast grid does not cover) **additively** in PR #29. Adding a known value is
+server's forecast grid does not cover) **additively** in PR #29, and `UNSUPPORTED_MEDIA_TYPE` (the
+`POST /weather` `Content-Type` was not `application/json`) and `PAYLOAD_TOO_LARGE` (the request body
+exceeded the route's byte limit) **additively** in PR #30 so the HTTP route factory can return
+request-layer failures in the existing `WeatherErrorResponseV1` shape. Adding a known value is
 non-breaking, so `CONTRACT_VERSION` stays `1`. Because `apiErrorV1.code` uses the `compatible`
 enum, an unknown code is mapped to `UNKNOWN` — so a code must be a *known* value to survive
-validation intact; every other unknown string still maps to `UNKNOWN` for older consumers, and the
-pre-existing, distinct `LOCATION_NOT_FOUND` code is unchanged. See
-[`docs/weather-response-presenter.md`](../../docs/weather-response-presenter.md) for the presenter
-that emits this code.
+validation intact; every other unknown string still maps to `UNKNOWN` for older consumers, the
+pre-existing, distinct `LOCATION_NOT_FOUND` code is unchanged, and the two new codes are appended
+before the terminal `UNKNOWN` fallback so no existing code is reordered. See
+[`docs/weather-response-presenter.md`](../../docs/weather-response-presenter.md) and
+[`docs/weather-route.md`](../../docs/weather-route.md) for the boundaries that emit these codes.
 
 All exports are re-exported from `src/index.ts`.
 

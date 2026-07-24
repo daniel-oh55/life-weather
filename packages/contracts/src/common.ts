@@ -252,11 +252,16 @@ export type WeatherAlertSeverity = z.infer<typeof weatherAlertSeverity.strict>;
  *
  * `UNSUPPORTED_LOCATION` (a physically valid coordinate the server's forecast grid does not
  * cover) was added **additively** in PR #29 so a response presenter can map an internal
- * `LOCATION`/`UNSUPPORTED_LOCATION` failure to a stable public code. Adding a known value is a
- * non-breaking change and does not bump {@link CONTRACT_VERSION}: the `compatible` schema still
- * maps every *other* unknown string to `UNKNOWN`, so an older consumer that predates the new
- * value keeps parsing. `LOCATION_NOT_FOUND` (a location that could not be resolved at all) is a
- * distinct, pre-existing code and is left unchanged.
+ * `LOCATION`/`UNSUPPORTED_LOCATION` failure to a stable public code. PR #30 added
+ * `UNSUPPORTED_MEDIA_TYPE` (the `POST /weather` `Content-Type` was not `application/json`) and
+ * `PAYLOAD_TOO_LARGE` (the request body exceeded the route's byte limit) the same way, so the
+ * HTTP route factory can return request-layer failures in the existing `WeatherErrorResponseV1`
+ * shape. Adding a known value is a non-breaking change and does not bump {@link CONTRACT_VERSION}:
+ * the `compatible` schema still maps every *other* unknown string to `UNKNOWN`, so an older
+ * consumer that predates the new value keeps parsing. `LOCATION_NOT_FOUND` (a location that could
+ * not be resolved at all) is a distinct, pre-existing code and is left unchanged; every existing
+ * code keeps its position (the two new codes are appended before the terminal `UNKNOWN`
+ * fallback).
  */
 export const apiErrorCode = createForwardCompatibleEnum(
   [
@@ -269,6 +274,8 @@ export const apiErrorCode = createForwardCompatibleEnum(
     'RATE_LIMITED',
     'UNSUPPORTED_CONTRACT_VERSION',
     'INTERNAL_ERROR',
+    'UNSUPPORTED_MEDIA_TYPE',
+    'PAYLOAD_TOO_LARGE',
     'UNKNOWN',
   ],
   'UNKNOWN',
