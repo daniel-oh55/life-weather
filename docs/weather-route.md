@@ -114,8 +114,12 @@ limit is enforced on the **actual number of bytes read from the request stream**
 - **The real stream is always measured.** Even when a `Content-Length` is present and within the limit, the
   route reads `request.body` chunk by chunk and counts the actual bytes, stopping the instant the running
   count exceeds the limit. A **dishonest / under-reported `Content-Length` therefore cannot bypass** the
-  byte limit — an oversized body is a `413` regardless of what the header claims. At most 16 KiB is ever
-  buffered in memory.
+  byte limit — an oversized body is a `413` regardless of what the header claims.
+- **Retained payload vs. process memory.** The accepted chunk payload the route retains sums to **at most
+  16 KiB**, and an oversized *actual* body is always a `413`, so this policy bounds the request payload the
+  route accepts. It does **not** guarantee that total process memory stays at exactly 16 KiB: combining the
+  accepted chunks into one contiguous buffer may temporarily duplicate the allowed payload, and the memory
+  of a chunk already produced by the upstream `ReadableStream` is outside the route's direct control.
 - **JSON parsing happens after the limited read.** The accepted bytes are decoded as UTF-8 and
   `JSON.parse`d directly (the route does **not** call `c.req.json()`), so an oversized body never reaches
   the parser or the service.

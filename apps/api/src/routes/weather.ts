@@ -245,8 +245,11 @@ function contentLengthExceedsLimit(
  * Read a request body enforcing a hard cap on the **actual bytes read from the stream**. `Content-Length`
  * is consulted only as an early-rejection hint (see {@link contentLengthExceedsLimit}); the real
  * `request.body` stream is then measured chunk by chunk and reading stops the instant the running byte
- * count exceeds `maximumBytes`, so at most `maximumBytes` bytes are ever buffered and a dishonest
- * `Content-Length` cannot smuggle a larger body through.
+ * count exceeds `maximumBytes`, so an oversized actual body is always a `PAYLOAD_TOO_LARGE` and a dishonest
+ * `Content-Length` cannot smuggle a larger body through. The accepted chunk payload retained here sums to
+ * at most `maximumBytes`; combining those chunks into one contiguous `Uint8Array` may temporarily duplicate
+ * that payload, and memory owned by the upstream stream implementation is outside this route's control — so
+ * this bounds the accepted request payload, not total process memory.
  *
  * The original {@link Request} is never cloned, rebuilt, or replaced — only its own `body` stream is
  * consumed — so the caller's `AbortSignal` (`request.signal`) keeps its identity. A `reader.cancel()` /
