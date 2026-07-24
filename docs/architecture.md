@@ -133,12 +133,18 @@
   전달)·PR #29 presenter·HTTP status mapping(200/422/500)을 수행합니다. service·presenter·server
   product·`meta` provider(clock/`requestId`)를 모두 주입받고 clock/env/randomness를 직접 읽지 않아
   startup과 무관하게 테스트 가능하며, request-layer 오류도 기존 `WeatherErrorResponseV1` 형태로만
-  반환하고 Zod issue·raw error·provider trace를 노출하지 않습니다. 다만 이 route factory는 아직
-  `apps/api/src/index.ts`에 **mount되지 않았고**(유일한 호출 가능 endpoint는 여전히 `GET /health`),
-  production service adapter·server product 정책·실제 clock/`requestId` 생성은 **PR #31 startup
-  wiring**의 몫입니다. 다섯 composition root도 모두 아직 `apps/api/src/index.ts`·startup에 **연결되지
-  않았습니다.** live availability fallback/retry 정책·production `/weather` mount·cache·mobile
-  client는 여전히 **미구현**(후속 PR)이며, 별도 general `config` package도 여전히 미구현입니다.
+  반환하고 Zod issue·raw error·provider trace를 노출하지 않습니다. **PR #31**에서는 이 route factory를
+  실제 production Hono 앱에 연결했습니다 — `createApiApp`(`src/app.ts`)이 `GET /health`를 등록하고
+  주입된 `/weather` sub-app을 `app.route('/weather', …)`로 mount하며,
+  `createProductionWeatherRouteDependencies`(`src/composition/weather-route.ts`)가 PR #27 KMA
+  production graph·service→route adapter(raw `AbortSignal`을 exact reference로 전달, 새 controller 없음)·
+  server-owned `SHORT_FORECAST` product·production `meta` provider(UTC `generatedAt` +
+  `crypto.randomUUID()` `requestId`, inbound request-id 헤더 무시)를 조립하고, `src/index.ts`가
+  server-only `KMA_SERVICE_KEY`를 읽어(누락·무효 시 fail-fast throw) 조립된 Hono 앱을 default export
+  합니다. 따라서 이제 `POST /weather`는 `GET /health`와 함께 **호출 가능한 production endpoint**이며,
+  startup에서는 외부 `fetch`를 실행하지 않습니다(KMA graph는 실제 요청 시에만 호출). 다섯 composition
+  root 중 location hourly overview root만 `/weather`를 통해 startup에 연결됐고 나머지 네 root는 여전히
+  unrouted이며, cache·mobile client·별도 general `config` package는 여전히 **미구현**(후속 PR)입니다.
   자세한 내용은
   [kma-response-boundary.md](./kma-response-boundary.md),
   [kma-http-provider.md](./kma-http-provider.md),
@@ -156,7 +162,8 @@
   [kma-selected-hourly-source-metadata.md](./kma-selected-hourly-source-metadata.md),
   [kma-location-hourly-overview-composition.md](./kma-location-hourly-overview-composition.md),
   [weather-response-presenter.md](./weather-response-presenter.md),
-  [weather-route.md](./weather-route.md) 참고.
+  [weather-route.md](./weather-route.md),
+  [weather-production-wiring.md](./weather-production-wiring.md) 참고.
 - `packages/contracts` — 모바일과 API가 공유할 정규화 요청/응답 계약의 위치입니다. **현재
   상태**: PR #2에서 Zod 4 기반 공유 기상 데이터 계약을 정의했습니다. 자세한 내용은
   [contracts.md](./contracts.md) 참고.
@@ -526,10 +533,14 @@ import 없음). 따라서 강화되는 방향은 `routes → contracts`(runtime)
 `routes → presenters`(type-only)·`routes → hono`뿐이며, `services → routes`·`presenters → routes`·
 `composition → routes`·`routes → composition`·`weather-core → apps/api`·`contracts → apps/api`·
 `mobile → apps/api` 같은 역방향은 금지합니다(순환 없음 — route는 HTTP adapter일 뿐 composition root가
-아니고 service/presenter를 생성하지 않으며 주입만 받습니다). route factory는 `apps/api/src/index.ts`에
-아직 **mount되지 않았고** production service adapter·server product·clock/`requestId` 생성(PR #31 startup
-wiring)은 여전히 미구현입니다. callable production composition root 수(**5**)와 services 계층 application
-component 수(**12**)는 변하지 않습니다(route는 별도 계층).
+아니고 service/presenter를 생성하지 않으며 주입만 받습니다). **PR #31**에서 이 route factory를
+`apps/api/src/index.ts`에 **mount**했습니다 — `createApiApp`(`src/app.ts`)이 `/health` 등록 + `/weather`
+mount를, `createProductionWeatherRouteDependencies`(`src/composition/weather-route.ts`)가 production
+service adapter·server-owned `SHORT_FORECAST` product·clock(`generatedAt`)/`requestId`(`crypto.randomUUID()`)
+생성을 담당하며, `index.ts`가 server-only `KMA_SERVICE_KEY`를 읽어 fail-fast validation 후 Hono 앱을
+default export합니다(startup 시 외부 `fetch` 없음). route factory runtime 자체는 PR #31에서 바뀌지
+않았습니다. callable production composition root 수(**5**)와 services 계층 application component 수(**12**)는
+변하지 않습니다(app factory·route composition은 별도 계층).
 
 향후 허용 방향:
 
@@ -539,7 +550,7 @@ apps/mobile       → contracts
 lifestyle-engine  → contracts
 ```
 
-## 현재 구현 상태 요약 (PR #30 시점)
+## 현재 구현 상태 요약 (PR #31 시점)
 
 - `contracts`: PR #2에서 Zod 4 기반 공유 기상 계약을 정의했습니다.
 - `weather-core`: `classifyFreshness`(PR #2)와 KMA 단기·초단기예보 정규화 primitive(PR #3)에 더해,
@@ -778,8 +789,21 @@ lifestyle-engine  → contracts
   단위/통합 테스트가 가능합니다. request-layer 오류 코드를 위해 `ApiErrorCode`에 `UNSUPPORTED_MEDIA_TYPE`·
   `PAYLOAD_TOO_LARGE`를 **additive**로 추가했으므로 `CONTRACT_VERSION`은 계속 **1**입니다. 이 route는
   composition root도 service component도 아닌 별도 계층이므로 callable production composition root 수(**5**)와
-  services 계층 application component 수(**12**)는 변하지 않습니다. route factory는 아직
-  `apps/api/src/index.ts`에 **mount되지 않았고**(유일한 호출 가능 endpoint는 여전히 `GET /health`),
-  production service adapter·server product 정책·실제 clock/`requestId` 생성·production `/weather` mount는
-  **PR #31 startup wiring**의 몫입니다 ([weather-route.md](./weather-route.md)).
+  services 계층 application component 수(**12**)는 변하지 않습니다. route factory runtime은 PR #31에서도
+  불변이며, PR #31이 이 factory를 `apps/api/src/index.ts`에 mount했습니다(아래) ([weather-route.md](./weather-route.md)).
+- PR #31에서는 PR #30 route factory를 실제 production 앱에 **연결**했습니다 — startup wiring만 추가하고
+  route/service/provider/presenter/contracts runtime은 바꾸지 않았으며 신규 dependency도 없습니다. 새
+  **app factory**(`src/app.ts`, `createApiApp`)가 기존 `GET /health`를 등록하고 주입된 `/weather` sub-app을
+  `app.route('/weather', …)`로 **정확히 한 번** mount하며(`/weather/weather` 아님, 새 global
+  `onError`/`notFound` 없음), 새 **production route composition**(`src/composition/weather-route.ts`,
+  `createProductionWeatherRouteDependencies`)이 PR #27 KMA location hourly-overview graph를 재사용해
+  service→route adapter(raw `AbortSignal`을 exact reference로 service까지 전달, 새 AbortController·timeout·
+  result 변환·error 재포장 없음)·server-owned `PRODUCTION_WEATHER_PRODUCT`(`SHORT_FORECAST`, env·요청·
+  헤더로 선택 불가)·production `meta` provider(UTC `generatedAt` = `toISOString()`, server-generated
+  `requestId` = `globalThis.crypto.randomUUID()`, inbound `x-request-id`/`x-vercel-id` 미신뢰,
+  `Math.random` fallback·신규 UUID dependency 없음)를 조립합니다. `src/index.ts`는 server-only
+  `KMA_SERVICE_KEY`를 읽어 누락·무효 시 안전한 고정 메시지로 **fail-fast throw**하고(외부 fetch 없음,
+  key 값 미노출) 조립된 Hono 앱을 **default export**합니다 — 따라서 `POST /weather`는 이제 `GET /health`와
+  함께 호출 가능한 production endpoint이고, 외부 KMA 호출은 startup이 아니라 실제 요청 시에만 일어납니다.
+  cache·mobile client는 여전히 미구현입니다 ([weather-production-wiring.md](./weather-production-wiring.md)).
 - 이 문서의 나머지 "예정" 구조는 앞으로의 합의이며, 위 요약이 현재 코드베이스의 상태입니다.

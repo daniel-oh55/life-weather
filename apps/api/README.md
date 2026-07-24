@@ -21,9 +21,12 @@ a project on first run; that step is intentionally deferred to a later PR.
 
 ## Current state
 
-- `GET /health` returns a deterministic health payload (unchanged). It remains the **only callable
-  production endpoint** — the PR #30 `POST /weather` route factory below exists as a mountable sub-app
-  and is exercised by tests, but is **not** mounted into `src/index.ts` startup yet.
+- `GET /health` returns a deterministic health payload (unchanged).
+- `POST /weather` is a **live production endpoint** as of PR #31: the PR #30 route factory is now mounted
+  into `src/index.ts` startup, wired to the production KMA location hourly-overview graph with a
+  server-owned `SHORT_FORECAST` product and a server-generated response `meta`. `KMA_SERVICE_KEY` is read
+  (server-only) and validated fail-fast at startup, but no external `fetch` runs until a real request
+  arrives. See [docs/weather-production-wiring.md](../../docs/weather-production-wiring.md).
 - **KMA raw-response boundary** — `src/providers/kma/` validates the raw 기상청 `getVilageFcst` /
   `getUltraSrtFcst` JSON at runtime with **Zod**, classifies it (success / upstream error /
   invalid response), and groups a validated page into per-time forecast slots with an explicit
@@ -664,23 +667,30 @@ a project on first run; that step is intentionally deferred to a later PR.
     error code).
   - The service, presenter, server product, and `meta` provider (clock + `requestId`) are **injected**;
     the factory reads no `process.env`, `Date.now`, `randomUUID`, or `Math.random`, and adds no
-    logging — so it is testable independently of startup, and PR #31 supplies the production adapters.
+    logging — so it is testable independently of startup, and PR #31 supplied the production adapters
+    (now wired into `src/index.ts`; see below).
   - Request-layer errors are producer-validated `WeatherErrorResponseV1` bodies; Zod issues, raw error
     messages/stacks, and provider traces are never exposed. `UNSUPPORTED_MEDIA_TYPE` and
     `PAYLOAD_TOO_LARGE` were added **additively** to `ApiErrorCode` (`CONTRACT_VERSION` stays `1`).
-  - **Not mounted.** `src/index.ts` is unchanged and the factory is not wired into startup — that is
-    PR #31. It reads no env/service key and builds no production composition.
+  - **Now mounted (PR #31).** `src/index.ts` mounts this factory at `/weather` via the `createApiApp` app
+    factory and the `createProductionWeatherRouteDependencies` composition (see below); the factory
+    runtime itself is unchanged.
+- **Production wiring (PR #31).** `createApiApp` (`src/app.ts`) registers `GET /health` and mounts the
+  injected `/weather` sub-app; `createProductionWeatherRouteDependencies` (`src/composition/weather-route.ts`)
+  builds the PR #27 KMA production graph, the service→route adapter (raw `AbortSignal` forwarded by exact
+  reference, no new controller), the server-owned `PRODUCTION_WEATHER_PRODUCT` (`SHORT_FORECAST`), and the
+  production response `meta` provider (UTC `generatedAt` + a `crypto.randomUUID()` `requestId`, inbound
+  request-id headers ignored); and `src/index.ts` reads the server-only `KMA_SERVICE_KEY`, fail-fast throws
+  on a missing/invalid key, and default-exports the assembled Hono app. Startup issues **no** external
+  `fetch`. See [docs/weather-production-wiring.md](../../docs/weather-production-wiring.md).
 - **Still not implemented.** `current`/`daily`/air-quality/alerts `WeatherOverview` sections and their
   `SourceMetadata`; a `fallbackUsed` API field; current weather, daily forecast (incl. `TMN`/`TMX`),
-  feels-like computation; a common provider interface; **running any of the five production composition
-  roots at API app startup and mounting the `/weather` route factory there**; the production service
-  adapter / server-product policy / real clock / `requestId` generator that PR #31 will inject;
-  API-availability retry beyond the single previous-issuance fallback; and cache are **not** here —
-  those are later PRs. The PR #24 **application service**, the PR #26 **live resolver**, the PR #27
-  **production composition**, the PR #29 **response presenter**, and now the PR #30 **route factory** are
-  all implemented, but none of the **five** composition roots (grid scheduled, location scheduled, grid
-  fallback, location fallback, location hourly overview) is wired into `src/index.ts`, and the route
-  factory is not mounted there either (`/health` remains the only callable endpoint).
+  feels-like computation; a common provider interface; API-availability retry beyond the single
+  previous-issuance fallback; a server-side cache (so `retrievalMode` stays `LIVE`); and the mobile API
+  client are **not** here — those are later PRs. Of the **five** production composition roots (grid
+  scheduled, location scheduled, grid fallback, location fallback, location hourly overview), only the
+  location hourly overview root is wired into startup (through the `/weather` route); the other four remain
+  unrouted.
 
 ### Dependencies
 
