@@ -156,6 +156,51 @@ inbound headers, or the internal `selection`/execution trace. The presenter (PR 
 No test calls the real 기상청 / 공공데이터포털 / 에어코리아 / Vercel / any external URL: every KMA response
 is served by an injected in-memory `fetch` over the existing fixtures.
 
+## Vercel Hono deployment build configuration
+
+Two deployment blockers surfaced only in the Vercel Hono build (the repo-local
+`pnpm --filter @life-weather/api typecheck` never reproduced them), and both were resolved without touching
+any runtime source:
+
+1. **Zero-config entrypoint collision** — Vercel's Hono preset scans the package root and `src/` for an
+   `app`/`index`/`server` basename and warned `Multiple entrypoints found` while silently picking the first,
+   which let the pure DI factory shadow the real composition root. The factory was moved from `src/app.ts` to
+   the non-recognized `src/api-app.ts`, leaving `src/index.ts` as the sole recognized entrypoint. Locked by
+   `apps/api/src/deployment-entrypoint.test.ts`.
+2. **Effective TypeScript compiler options resolving differently in the build** — the Vercel build reported
+   two error groups the local typecheck did not:
+   - **Web `Request`/`Response` types missing** — `Request.headers`/`body`/`signal` and
+     `Response.headers`/`body`/`ok`/`status` were unresolved (no DOM lib), across `routes/weather.ts`,
+     `services/kma-hourly-forecast.ts`, `services/kma-hourly-fallback-eligibility.ts`,
+     `services/kma-location-hourly-overview.ts`, `providers/kma/provider.ts`, `providers/kma/read-response.ts`,
+     and `providers/kma/request.ts`.
+   - **`boolean` literal discriminated unions failing to narrow** — `result.error`/`issues`/`stage`, the
+     selected `true`/`false` arm, and the success/failure union arm in the same files.
+
+   These are not individual runtime bugs; they are the symptom of `apps/api`'s effective compiler options
+   being resolved differently in the deployment sandbox than by the repo-local typecheck (the `extends` chain
+   or a preset override not landing the same way). Rather than narrowing each source file, the
+   deployment-critical options are **pinned directly** on `apps/api/tsconfig.json` so they hold regardless of
+   how the build resolves `extends`:
+
+   ```jsonc
+   "target": "ES2022",
+   "lib": ["ES2022", "DOM", "DOM.Iterable"],   // provides Web Request/Response types
+   "module": "ESNext",
+   "moduleResolution": "Bundler",
+   "strict": true,
+   "strictNullChecks": true,                    // enables boolean-literal union narrowing
+   "types": ["node"],
+   "rootDir": "./src"
+   ```
+
+   `noEmit`/`isolatedModules`/`skipLibCheck`/`esModuleInterop` continue to be inherited from
+   `tsconfig.base.json` (the base is **not** duplicated). Locked by `apps/api/src/deployment-tsconfig.test.ts`,
+   which parses the tsconfig as JSON and asserts each pinned value.
+
+The default-export Hono app, the KMA runtime, the request/response contracts, and the f88bf27 result
+narrowing are all unchanged by this configuration fix.
+
 ## Not in this PR (later work)
 
 - A **server-side response cache** / stale fallback — `retrievalMode` stays `LIVE`.
