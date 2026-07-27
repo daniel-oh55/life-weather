@@ -126,7 +126,7 @@ export function createKmaScheduledHourlyCompositionFromEnv(
 
   // Step 2: a configuration failure is returned as a value, with the provider's own error reference
   // passed through unchanged — no clock read, no collaborator construction, no network.
-  if (!providerResult.ok) {
+  if (providerResult.ok === false) {
     return {
       ok: false,
       error: providerResult.error,

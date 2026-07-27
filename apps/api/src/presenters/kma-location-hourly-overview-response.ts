@@ -119,7 +119,7 @@ export function presentKmaLocationHourlyOverviewResponseV1(
 ): WeatherResponseV1 {
   // Success: the overview is the ONLY data source. `result.selection` (and its execution trace,
   // issuance identity, and fallback detail) is never read — it stops at this boundary.
-  if (result.ok) {
+  if (result.ok === true) {
     return weatherSuccessResponseV1.parse({
       ok: true,
       meta: {
