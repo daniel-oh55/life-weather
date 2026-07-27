@@ -40,15 +40,15 @@ import { selectLatestKmaForecastBaseTimeAfterAvailabilityDelay } from '@life-wea
 import {
   createKmaForecastProviderFromEnv,
   type KmaProviderConfigError,
-} from '../providers/kma';
+} from '../providers/kma/index.js';
 import {
   createKmaForecastRequestFactory,
   createKmaHourlyForecastService,
   createKmaScheduledHourlyForecastFacade,
   type KmaForecastRequestClock,
   type KmaScheduledHourlyForecastFacade,
-} from '../services';
-import { createKmaSystemClock } from './system-clock';
+} from '../services/index.js';
+import { createKmaSystemClock } from './system-clock.js';
 
 /**
  * The dependencies a caller may override for the composed pipeline. Both are optional and, when

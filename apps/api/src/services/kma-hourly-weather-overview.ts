@@ -83,7 +83,7 @@ import {
   type WeatherOverview,
 } from '@life-weather/contracts';
 
-import type { KmaHourlyFallbackSelection } from './kma-hourly-fallback-selection';
+import type { KmaHourlyFallbackSelection } from './kma-hourly-fallback-selection.js';
 
 /**
  * The assembler-local **nonempty guard** for a *selected* result's hourly list. The public

@@ -32,7 +32,7 @@
  * is ever exposed on the output.
  */
 
-import type { KmaHourlyForecastServiceResult } from './kma-hourly-forecast';
+import type { KmaHourlyForecastServiceResult } from './kma-hourly-forecast.js';
 
 /**
  * The 기상청 upstream result code that means `NODATA_ERROR` — the newest scheduled issuance has no

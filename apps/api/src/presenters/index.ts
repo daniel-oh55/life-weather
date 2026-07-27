@@ -24,4 +24,4 @@
 export {
   presentKmaLocationHourlyOverviewResponseV1,
   type WeatherResponsePresenterMetaV1,
-} from './kma-location-hourly-overview-response';
+} from './kma-location-hourly-overview-response.js';

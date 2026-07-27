@@ -23,7 +23,7 @@
  * expects — not a monotonic or high-resolution timer, and with no intermediate object allocation.
  */
 
-import type { KmaForecastRequestClock } from '../services';
+import type { KmaForecastRequestClock } from '../services/index.js';
 
 /**
  * Create the production system clock. Pure construction: it reads no time, holds no state, and

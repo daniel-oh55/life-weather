@@ -51,16 +51,16 @@ import { selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay } from '@life
 import {
   createKmaForecastProviderFromEnv,
   type KmaProviderConfigError,
-} from '../providers/kma';
+} from '../providers/kma/index.js';
 import {
   classifyKmaHourlyFallbackEligibility,
   createKmaFallbackRequestPlanFactory,
   createKmaHourlyForecastService,
   createKmaHourlyFallbackService,
   type KmaHourlyFallbackService,
-} from '../services';
-import type { KmaScheduledHourlyCompositionDependencies } from './kma-scheduled-hourly';
-import { createKmaSystemClock } from './system-clock';
+} from '../services/index.js';
+import type { KmaScheduledHourlyCompositionDependencies } from './kma-scheduled-hourly.js';
+import { createKmaSystemClock } from './system-clock.js';
 
 /**
  * The dependencies a caller may override for the composed fallback pipeline. A deliberate **alias**

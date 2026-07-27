@@ -7,7 +7,7 @@ import {
   type KmaForecastRequest,
   type KmaRequestIssue,
   type ValidateKmaForecastRequestResult,
-} from './request';
+} from './request.js';
 
 /** An obviously fake decoded service key with the three characters that must be percent-encoded. */
 const FAKE_KEY = 'test-key+with/slash==';

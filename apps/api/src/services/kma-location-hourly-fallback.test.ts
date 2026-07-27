@@ -13,11 +13,11 @@ import type {
   KmaHourlyFallbackServiceInput,
   KmaHourlyFallbackServiceOptions,
   KmaHourlyFallbackServiceResult,
-} from './kma-hourly-fallback';
+} from './kma-hourly-fallback.js';
 import {
   createKmaLocationHourlyFallbackFacade,
   type KmaLocationHourlyFallbackInput,
-} from './kma-location-hourly-fallback';
+} from './kma-location-hourly-fallback.js';
 
 /**
  * These tests exercise the location fallback facade in isolation: the grid converter and the

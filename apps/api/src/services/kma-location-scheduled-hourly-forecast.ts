@@ -68,7 +68,7 @@ import type {
   KmaScheduledHourlyForecastFacade,
   KmaScheduledHourlyForecastOptions,
   KmaScheduledHourlyForecastResult,
-} from './kma-scheduled-hourly-forecast';
+} from './kma-scheduled-hourly-forecast.js';
 
 /**
  * The injected forward converter. Structurally the PR #12

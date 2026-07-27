@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { KmaForecastProduct } from '@life-weather/weather-core';
 
-import { getKmaForecastField, groupKmaForecastItems } from './group-forecast-items';
-import type { KmaForecastItem } from './raw-schema';
+import { getKmaForecastField, groupKmaForecastItems } from './group-forecast-items.js';
+import type { KmaForecastItem } from './raw-schema.js';
 
 const SHORT = KmaForecastProduct.SHORT_FORECAST;
 const ULTRA = KmaForecastProduct.ULTRA_SHORT_FORECAST;

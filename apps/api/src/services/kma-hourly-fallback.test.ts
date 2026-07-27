@@ -7,24 +7,24 @@ import type {
   KmaForecastProviderError,
   KmaForecastRequest,
   KmaHourlyNormalizationIssue,
-} from '../providers/kma';
-import { createKmaFallbackRequestPlanFactory } from './kma-fallback-request-plan';
-import type { KmaFallbackRequestPlan } from './kma-fallback-request-plan';
-import type { KmaForecastIssuanceIdentity } from './kma-forecast-issuance-identity';
+} from '../providers/kma/index.js';
+import { createKmaFallbackRequestPlanFactory } from './kma-fallback-request-plan.js';
+import type { KmaFallbackRequestPlan } from './kma-fallback-request-plan.js';
+import type { KmaForecastIssuanceIdentity } from './kma-forecast-issuance-identity.js';
 import {
   createKmaHourlyFallbackService,
   type KmaHourlyFallbackEligibilityClassifier,
   type KmaHourlyFallbackServiceInput,
   type KmaHourlyFallbackServiceOptions,
   type KmaHourlyFallbackServiceResult,
-} from './kma-hourly-fallback';
-import type { KmaForecastRequestClock } from './kma-forecast-request';
+} from './kma-hourly-fallback.js';
+import type { KmaForecastRequestClock } from './kma-forecast-request.js';
 import {
   classifyKmaHourlyFallbackEligibility,
   type KmaHourlyFallbackEligibility,
   type KmaHourlyFallbackReason,
-} from './kma-hourly-fallback-eligibility';
-import type { KmaHourlyForecastServiceResult } from './kma-hourly-forecast';
+} from './kma-hourly-fallback-eligibility.js';
+import type { KmaHourlyForecastServiceResult } from './kma-hourly-forecast.js';
 
 const SHORT = KmaForecastProduct.SHORT_FORECAST;
 

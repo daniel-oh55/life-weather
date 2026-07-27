@@ -34,23 +34,23 @@ export {
   type KmaForecastProviderResult,
   type KmaForecastProviderSuccess,
   type KmaResponseMismatchField,
-} from './provider';
+} from './provider.js';
 
 export {
   normalizeKmaHourlyForecast,
   type KmaHourlyNormalizationIssue,
   type NormalizeKmaHourlyForecastResult,
-} from './normalize-hourly';
+} from './normalize-hourly.js';
 
 export {
   type KmaForecastProviderOptions,
   type KmaProviderConfigError,
-} from './config';
+} from './config.js';
 
 export {
   type KmaForecastRequest,
   type KmaRequestIssue,
-} from './request';
+} from './request.js';
 
 export {
   parseKmaForecastResponse,
@@ -60,7 +60,7 @@ export {
   type KmaResponseIssue,
   type KmaUpstreamError,
   type ParseKmaForecastResponseResult,
-} from './parse-response';
+} from './parse-response.js';
 
 export {
   getKmaForecastField,
@@ -70,7 +70,7 @@ export {
   type KmaForecastFieldLookup,
   type KmaForecastScalar,
   type KmaForecastSlot,
-} from './group-forecast-items';
+} from './group-forecast-items.js';
 
 export {
   KMA_SUCCESS_RESULT_CODE,
@@ -83,4 +83,4 @@ export {
   type KmaForecastBody,
   type KmaForecastItem,
   type KmaResponseHeader,
-} from './raw-schema';
+} from './raw-schema.js';

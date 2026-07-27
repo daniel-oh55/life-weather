@@ -6,9 +6,9 @@ import { KmaForecastProduct } from '@life-weather/weather-core';
 import type {
   KmaForecastField,
   KmaForecastSlot,
-} from './group-forecast-items';
-import { normalizeKmaHourlyForecast } from './normalize-hourly';
-import type { KmaForecastProviderSuccess } from './provider';
+} from './group-forecast-items.js';
+import { normalizeKmaHourlyForecast } from './normalize-hourly.js';
+import type { KmaForecastProviderSuccess } from './provider.js';
 
 const SHORT = KmaForecastProduct.SHORT_FORECAST;
 const ULTRA = KmaForecastProduct.ULTRA_SHORT_FORECAST;

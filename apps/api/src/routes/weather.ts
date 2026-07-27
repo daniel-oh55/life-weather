@@ -63,11 +63,11 @@ import {
 import type {
   presentKmaLocationHourlyOverviewResponseV1,
   WeatherResponsePresenterMetaV1,
-} from '../presenters';
+} from '../presenters/index.js';
 import type {
   KmaLocationHourlyOverviewInput,
   KmaLocationHourlyOverviewResult,
-} from '../services';
+} from '../services/index.js';
 
 /**
  * The maximum accepted `POST /weather` request body size: **16 KiB** (`16 * 1024 = 16384` bytes).

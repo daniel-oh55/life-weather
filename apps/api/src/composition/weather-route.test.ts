@@ -11,15 +11,15 @@ import {
 } from '@life-weather/contracts';
 import { KmaForecastProduct } from '@life-weather/weather-core';
 
-import { createApiApp } from '../api-app';
-import { createWeatherRoute } from '../routes';
-import type { KmaForecastRequestClock } from '../services';
+import { createApiApp } from '../api-app.js';
+import { createWeatherRoute } from '../routes/index.js';
+import type { KmaForecastRequestClock } from '../services/index.js';
 import {
   createProductionWeatherRouteDependencies,
   KMA_SERVICE_KEY_REQUIRED_MESSAGE,
   PRODUCTION_WEATHER_PRODUCT,
   type ProductionWeatherRouteOptions,
-} from './weather-route';
+} from './weather-route.js';
 
 /**
  * These tests assemble the **real** PR #31 production `/weather` route composition

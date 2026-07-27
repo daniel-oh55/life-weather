@@ -68,7 +68,7 @@ import {
   type WeatherResponseV1,
 } from '@life-weather/contracts';
 
-import type { KmaLocationHourlyOverviewResult } from '../services';
+import type { KmaLocationHourlyOverviewResult } from '../services/index.js';
 
 /**
  * The subset of {@link ApiMetaV1} a caller supplies to the presenter: `generatedAt` and `requestId`

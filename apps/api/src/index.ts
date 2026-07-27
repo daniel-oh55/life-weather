@@ -38,9 +38,9 @@
 
 import type { Hono } from 'hono';
 
-import { createApiApp } from './api-app';
-import { createProductionWeatherRouteDependencies } from './composition';
-import { createWeatherRoute } from './routes';
+import { createApiApp } from './api-app.js';
+import { createProductionWeatherRouteDependencies } from './composition/index.js';
+import { createWeatherRoute } from './routes/index.js';
 
 /**
  * Build the production API app from an environment: read the server-only `KMA_SERVICE_KEY`, compose the

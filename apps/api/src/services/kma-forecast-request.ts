@@ -57,7 +57,7 @@ import {
   type SelectLatestKmaForecastBaseTimeInput,
 } from '@life-weather/weather-core';
 
-import type { KmaForecastRequest } from '../providers/kma';
+import type { KmaForecastRequest } from '../providers/kma/index.js';
 
 /**
  * The injected clock. Its single method returns the current instant as absolute epoch milliseconds

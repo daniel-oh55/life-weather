@@ -21,4 +21,4 @@ export {
   WEATHER_REQUEST_MAX_BYTES,
   type WeatherRouteDependencies,
   type WeatherRouteExecuteOverview,
-} from './weather';
+} from './weather.js';

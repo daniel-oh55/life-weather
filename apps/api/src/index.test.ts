@@ -37,7 +37,7 @@ async function importIndexWith(key: string | undefined) {
   } else {
     process.env.KMA_SERVICE_KEY = key;
   }
-  return import('./index');
+  return import('./index.js');
 }
 
 /** A `globalThis.fetch` spy that throws if called — proves startup / a routed request touches no network. */

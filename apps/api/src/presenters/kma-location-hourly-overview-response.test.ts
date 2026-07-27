@@ -22,12 +22,12 @@ import {
   type KmaHourlyFallbackServiceResult,
   type KmaHourlySourceMetadataInput,
   type KmaLocationHourlyOverviewResult,
-} from '../services';
+} from '../services/index.js';
 
 import {
   presentKmaLocationHourlyOverviewResponseV1,
   type WeatherResponsePresenterMetaV1,
-} from './kma-location-hourly-overview-response';
+} from './kma-location-hourly-overview-response.js';
 
 /**
  * These tests exercise the PR #29 response presenter in isolation. Success/no-selection fixtures are

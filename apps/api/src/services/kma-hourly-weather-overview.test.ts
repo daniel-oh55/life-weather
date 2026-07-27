@@ -8,15 +8,15 @@ import {
 } from '@life-weather/contracts';
 import { KmaForecastProduct } from '@life-weather/weather-core';
 
-import type { KmaHourlyFallbackReason } from './kma-hourly-fallback-eligibility';
-import type { KmaHourlyFallbackSelection } from './kma-hourly-fallback-selection';
-import type { KmaHourlyFallbackServiceResult } from './kma-hourly-fallback';
-import type { KmaHourlyForecastServiceResult } from './kma-hourly-forecast';
+import type { KmaHourlyFallbackReason } from './kma-hourly-fallback-eligibility.js';
+import type { KmaHourlyFallbackSelection } from './kma-hourly-fallback-selection.js';
+import type { KmaHourlyFallbackServiceResult } from './kma-hourly-fallback.js';
+import type { KmaHourlyForecastServiceResult } from './kma-hourly-forecast.js';
 import {
   assembleKmaHourlyWeatherOverview,
   type KmaHourlySourceMetadataInput,
   type KmaHourlyWeatherOverviewInput,
-} from './kma-hourly-weather-overview';
+} from './kma-hourly-weather-overview.js';
 
 // ---------------------------------------------------------------------------
 // Key contracts — the exact own keys the assembler must emit, and the

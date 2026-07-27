@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createApiApp, type ApiAppDependencies } from './api-app';
+import { createApiApp, type ApiAppDependencies } from './api-app.js';
 
 /**
  * These tests exercise the PR #31 app factory (`createApiApp`) with a **fake** `/weather` sub-app, so the

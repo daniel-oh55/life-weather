@@ -7,11 +7,11 @@ import {
 } from '@life-weather/contracts';
 import { KmaForecastProduct } from '@life-weather/weather-core';
 
-import type { KmaForecastRequestClock } from '../services';
+import type { KmaForecastRequestClock } from '../services/index.js';
 import {
   createKmaLocationHourlyOverviewCompositionFromEnv,
   type KmaLocationHourlyOverviewCompositionDependencies,
-} from './kma-location-hourly-overview';
+} from './kma-location-hourly-overview.js';
 
 /**
  * These tests assemble the **real** production graph through the new location hourly-overview

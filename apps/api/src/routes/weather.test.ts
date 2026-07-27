@@ -16,7 +16,7 @@ import { KmaForecastProduct } from '@life-weather/weather-core';
 import {
   presentKmaLocationHourlyOverviewResponseV1,
   type WeatherResponsePresenterMetaV1,
-} from '../presenters';
+} from '../presenters/index.js';
 import {
   assembleKmaHourlyWeatherOverview,
   selectKmaHourlyFallbackResult,
@@ -24,14 +24,14 @@ import {
   type KmaHourlyFallbackServiceResult,
   type KmaLocationHourlyOverviewInput,
   type KmaLocationHourlyOverviewResult,
-} from '../services';
+} from '../services/index.js';
 
 import {
   createWeatherRoute,
   WEATHER_REQUEST_MAX_BYTES,
   type WeatherRouteDependencies,
   type WeatherRouteExecuteOverview,
-} from './weather';
+} from './weather.js';
 
 /**
  * These tests exercise the PR #30 `POST /weather` route factory mounted exactly as production will mount

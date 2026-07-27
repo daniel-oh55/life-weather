@@ -6,11 +6,11 @@ import {
   validateKmaProviderOptions,
   type KmaForecastProviderOptions,
   type ValidateKmaProviderOptionsResult,
-} from './config';
+} from './config.js';
 import {
   createKmaForecastProvider,
   createKmaForecastProviderFromEnv,
-} from './provider';
+} from './provider.js';
 
 /** An obviously fake decoded service key — never a real/production-shaped string. */
 const FAKE_KEY = 'test-key+with/slash==';

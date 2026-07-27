@@ -53,12 +53,12 @@
 import type {
   KmaForecastRequestFactory,
   KmaForecastRequestFactoryInput,
-} from './kma-forecast-request';
+} from './kma-forecast-request.js';
 import type {
   KmaHourlyForecastService,
   KmaHourlyForecastServiceOptions,
   KmaHourlyForecastServiceResult,
-} from './kma-hourly-forecast';
+} from './kma-hourly-forecast.js';
 
 /**
  * The caller-supplied input. Reused verbatim from the PR #9 request factory — the facade never

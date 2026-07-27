@@ -10,15 +10,15 @@ import type {
   KmaForecastProviderSuccess,
   KmaForecastRequest,
   KmaHourlyNormalizationIssue,
-} from '../providers/kma';
+} from '../providers/kma/index.js';
 import {
   classifyKmaHourlyFallbackEligibility,
   type KmaHourlyFallbackEligibility,
-} from './kma-hourly-fallback-eligibility';
+} from './kma-hourly-fallback-eligibility.js';
 import {
   createKmaHourlyForecastService,
   type KmaHourlyForecastServiceResult,
-} from './kma-hourly-forecast';
+} from './kma-hourly-forecast.js';
 
 const SHORT = KmaForecastProduct.SHORT_FORECAST;
 

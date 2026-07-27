@@ -15,7 +15,7 @@
 
 import { KmaForecastProduct } from '@life-weather/weather-core';
 
-import { isCalendarDate, isClockTime, isNonNegativeSafeInteger } from './validation';
+import { isCalendarDate, isClockTime, isNonNegativeSafeInteger } from './validation.js';
 
 /**
  * A forecast request. Only these five vary per call; pagination and format are fixed internally

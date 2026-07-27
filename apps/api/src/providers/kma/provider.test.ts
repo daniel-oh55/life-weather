@@ -1,12 +1,12 @@
 import { KmaForecastProduct } from '@life-weather/weather-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { getKmaForecastField } from './group-forecast-items';
+import { getKmaForecastField } from './group-forecast-items.js';
 import {
   createKmaForecastProvider,
   type KmaForecastProvider,
-} from './provider';
-import type { KmaForecastRequest, KmaRequestIssue } from './request';
+} from './provider.js';
+import type { KmaForecastRequest, KmaRequestIssue } from './request.js';
 
 /** An obviously fake decoded service key. Never a real/production-shaped string. */
 const FAKE_KEY = 'test-key+with/slash==';

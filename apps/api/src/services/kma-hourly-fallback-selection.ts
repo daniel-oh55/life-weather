@@ -76,8 +76,8 @@
  * See `docs/kma-hourly-fallback-selection.md`.
  */
 
-import type { KmaHourlyForecastServiceResult } from './kma-hourly-forecast';
-import type { KmaHourlyFallbackServiceResult } from './kma-hourly-fallback';
+import type { KmaHourlyForecastServiceResult } from './kma-hourly-forecast.js';
+import type { KmaHourlyFallbackServiceResult } from './kma-hourly-fallback.js';
 
 /**
  * A usable hourly-forecast result: the success branch of {@link KmaHourlyForecastServiceResult}. Used

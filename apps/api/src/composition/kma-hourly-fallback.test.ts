@@ -3,11 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { hourlyForecast } from '@life-weather/contracts';
 import { KmaForecastProduct } from '@life-weather/weather-core';
 
-import type { KmaForecastRequestClock } from '../services';
+import type { KmaForecastRequestClock } from '../services/index.js';
 import {
   createKmaHourlyFallbackCompositionFromEnv,
   type KmaHourlyFallbackCompositionDependencies,
-} from './kma-hourly-fallback';
+} from './kma-hourly-fallback.js';
 
 /**
  * These tests assemble the **real** production components through the new grid fallback composition

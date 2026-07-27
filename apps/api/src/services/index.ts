@@ -194,7 +194,7 @@ export {
   type KmaHourlyForecastService,
   type KmaHourlyForecastServiceOptions,
   type KmaHourlyForecastServiceResult,
-} from './kma-hourly-forecast';
+} from './kma-hourly-forecast.js';
 
 export {
   createKmaForecastRequestFactory,
@@ -202,7 +202,7 @@ export {
   type KmaForecastRequestClock,
   type KmaForecastRequestFactory,
   type KmaForecastRequestFactoryInput,
-} from './kma-forecast-request';
+} from './kma-forecast-request.js';
 
 export {
   createKmaScheduledHourlyForecastFacade,
@@ -210,7 +210,7 @@ export {
   type KmaScheduledHourlyForecastInput,
   type KmaScheduledHourlyForecastOptions,
   type KmaScheduledHourlyForecastResult,
-} from './kma-scheduled-hourly-forecast';
+} from './kma-scheduled-hourly-forecast.js';
 
 export {
   createKmaLocationScheduledHourlyForecastFacade,
@@ -220,13 +220,13 @@ export {
   type KmaLocationScheduledHourlyForecastOptions,
   type KmaLocationScheduledHourlyForecastResult,
   type KmaUnsupportedLocationError,
-} from './kma-location-scheduled-hourly-forecast';
+} from './kma-location-scheduled-hourly-forecast.js';
 
 export {
   classifyKmaHourlyFallbackEligibility,
   type KmaHourlyFallbackEligibility,
   type KmaHourlyFallbackReason,
-} from './kma-hourly-fallback-eligibility';
+} from './kma-hourly-fallback-eligibility.js';
 
 export {
   createKmaFallbackRequestPlanFactory,
@@ -234,9 +234,9 @@ export {
   type KmaFallbackRequestPlanFactory,
   type KmaFallbackRequestPlanFactoryInput,
   type KmaForecastBaseTimeCandidatesSelector,
-} from './kma-fallback-request-plan';
+} from './kma-fallback-request-plan.js';
 
-export type { KmaForecastIssuanceIdentity } from './kma-forecast-issuance-identity';
+export type { KmaForecastIssuanceIdentity } from './kma-forecast-issuance-identity.js';
 
 export {
   createKmaHourlyFallbackService,
@@ -245,7 +245,7 @@ export {
   type KmaHourlyFallbackServiceInput,
   type KmaHourlyFallbackServiceOptions,
   type KmaHourlyFallbackServiceResult,
-} from './kma-hourly-fallback';
+} from './kma-hourly-fallback.js';
 
 export {
   createKmaLocationHourlyFallbackFacade,
@@ -253,19 +253,19 @@ export {
   type KmaLocationHourlyFallbackInput,
   type KmaLocationHourlyFallbackOptions,
   type KmaLocationHourlyFallbackResult,
-} from './kma-location-hourly-fallback';
+} from './kma-location-hourly-fallback.js';
 
 export {
   selectKmaHourlyFallbackResult,
   type KmaHourlyFallbackSelection,
   type KmaHourlyFallbackSelectionSource,
-} from './kma-hourly-fallback-selection';
+} from './kma-hourly-fallback-selection.js';
 
 export {
   assembleKmaHourlyWeatherOverview,
   type KmaHourlySourceMetadataInput,
   type KmaHourlyWeatherOverviewInput,
-} from './kma-hourly-weather-overview';
+} from './kma-hourly-weather-overview.js';
 
 export {
   createKmaLocationHourlyOverviewService,
@@ -275,10 +275,10 @@ export {
   type KmaSelectedHourlySourceMetadataResolver,
   type KmaLocationHourlyOverviewResult,
   type KmaLocationHourlyOverviewService,
-} from './kma-location-hourly-overview';
+} from './kma-location-hourly-overview.js';
 
 export {
   convertKmaForecastIssuanceToIssuedAt,
   createKmaLiveSelectedHourlySourceMetadataResolver,
   type KmaSelectedHourlySourceMetadataClock,
-} from './kma-selected-hourly-source-metadata';
+} from './kma-selected-hourly-source-metadata.js';

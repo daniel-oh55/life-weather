@@ -11,8 +11,8 @@ import type {
   KmaForecastProviderSuccess,
   KmaForecastRequest,
   KmaForecastSlot,
-} from '../providers/kma';
-import { createKmaHourlyForecastService } from './kma-hourly-forecast';
+} from '../providers/kma/index.js';
+import { createKmaHourlyForecastService } from './kma-hourly-forecast.js';
 
 const SHORT = KmaForecastProduct.SHORT_FORECAST;
 const ULTRA = KmaForecastProduct.ULTRA_SHORT_FORECAST;

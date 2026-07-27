@@ -91,8 +91,8 @@
 import { isoDateTime, type SourceMetadata } from '@life-weather/contracts';
 import { KmaForecastProduct } from '@life-weather/weather-core';
 
-import type { KmaForecastIssuanceIdentity } from './kma-forecast-issuance-identity';
-import type { KmaSelectedHourlySourceMetadataResolver } from './kma-location-hourly-overview';
+import type { KmaForecastIssuanceIdentity } from './kma-forecast-issuance-identity.js';
+import type { KmaSelectedHourlySourceMetadataResolver } from './kma-location-hourly-overview.js';
 
 /**
  * The injected clock the resolver reads to stamp `fetchedAt`. Structurally identical to the

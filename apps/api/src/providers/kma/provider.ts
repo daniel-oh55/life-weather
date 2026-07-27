@@ -24,18 +24,18 @@ import {
   type KmaForecastProviderOptions,
   type KmaProviderConfigError,
   type ResolvedKmaProviderConfig,
-} from './config';
+} from './config.js';
 import {
   groupKmaForecastItems,
   type KmaForecastSlot,
-} from './group-forecast-items';
-import { detectKmaGatewayError } from './gateway-error';
+} from './group-forecast-items.js';
+import { detectKmaGatewayError } from './gateway-error.js';
 import {
   parseKmaForecastResponse,
   type KmaForecastPage,
   type KmaResponseIssue,
-} from './parse-response';
-import { readResponseTextWithLimit } from './read-response';
+} from './parse-response.js';
+import { readResponseTextWithLimit } from './read-response.js';
 import {
   buildKmaForecastRequestUrl,
   validateKmaForecastRequest,
@@ -43,7 +43,7 @@ import {
   KMA_FIXED_PAGE_NO,
   type KmaForecastRequest,
   type KmaRequestIssue,
-} from './request';
+} from './request.js';
 
 /** A successful forecast fetch: the request identity, the page total, and the grouped slots. */
 export interface KmaForecastProviderSuccess {

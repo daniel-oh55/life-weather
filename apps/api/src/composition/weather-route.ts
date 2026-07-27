@@ -46,16 +46,16 @@ import { KmaForecastProduct } from '@life-weather/weather-core';
 import {
   presentKmaLocationHourlyOverviewResponseV1,
   type WeatherResponsePresenterMetaV1,
-} from '../presenters';
-import type { KmaForecastRequestClock } from '../services';
+} from '../presenters/index.js';
+import type { KmaForecastRequestClock } from '../services/index.js';
 import type {
   WeatherRouteDependencies,
   WeatherRouteExecuteOverview,
-} from '../routes';
+} from '../routes/index.js';
 import {
   createKmaLocationHourlyOverviewCompositionFromEnv,
   type KmaLocationHourlyOverviewCompositionDependencies,
-} from './kma-location-hourly-overview';
+} from './kma-location-hourly-overview.js';
 
 /**
  * The **server-owned** production KMA forecast product for `/weather`: `SHORT_FORECAST` (단기예보). It is

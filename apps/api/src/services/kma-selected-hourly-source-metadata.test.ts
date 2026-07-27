@@ -9,31 +9,31 @@ import {
 } from '@life-weather/contracts';
 import { KmaForecastProduct } from '@life-weather/weather-core';
 
-import type { KmaForecastIssuanceIdentity } from './kma-forecast-issuance-identity';
-import type { KmaHourlyFallbackReason } from './kma-hourly-fallback-eligibility';
-import type { KmaHourlyFallbackServiceResult } from './kma-hourly-fallback';
+import type { KmaForecastIssuanceIdentity } from './kma-forecast-issuance-identity.js';
+import type { KmaHourlyFallbackReason } from './kma-hourly-fallback-eligibility.js';
+import type { KmaHourlyFallbackServiceResult } from './kma-hourly-fallback.js';
 import {
   selectKmaHourlyFallbackResult,
   type KmaHourlyFallbackSelection,
-} from './kma-hourly-fallback-selection';
-import type { KmaHourlyForecastServiceResult } from './kma-hourly-forecast';
+} from './kma-hourly-fallback-selection.js';
+import type { KmaHourlyForecastServiceResult } from './kma-hourly-forecast.js';
 import {
   createKmaLocationHourlyOverviewService,
   type KmaLocationHourlyOverviewInput,
   type KmaSelectedHourlySourceMetadataResolver,
   type KmaSelectedHourlySourceMetadataResolverInput,
-} from './kma-location-hourly-overview';
+} from './kma-location-hourly-overview.js';
 import type {
   KmaLocationHourlyFallbackFacade,
   KmaLocationHourlyFallbackInput,
   KmaLocationHourlyFallbackOptions,
   KmaLocationHourlyFallbackResult,
-} from './kma-location-hourly-fallback';
+} from './kma-location-hourly-fallback.js';
 import {
   convertKmaForecastIssuanceToIssuedAt,
   createKmaLiveSelectedHourlySourceMetadataResolver,
   type KmaSelectedHourlySourceMetadataClock,
-} from './kma-selected-hourly-source-metadata';
+} from './kma-selected-hourly-source-metadata.js';
 
 /**
  * These tests exercise the PR #26 live selected-source metadata resolver and its public issuedAt

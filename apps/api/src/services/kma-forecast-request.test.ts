@@ -6,13 +6,13 @@ import {
   type SelectLatestKmaForecastBaseTimeInput,
 } from '@life-weather/weather-core';
 
-import type { KmaForecastRequest } from '../providers/kma';
+import type { KmaForecastRequest } from '../providers/kma/index.js';
 import {
   createKmaForecastRequestFactory,
   type KmaForecastBaseTimeSelector,
   type KmaForecastRequestClock,
   type KmaForecastRequestFactoryInput,
-} from './kma-forecast-request';
+} from './kma-forecast-request.js';
 
 const SHORT = KmaForecastProduct.SHORT_FORECAST;
 const ULTRA = KmaForecastProduct.ULTRA_SHORT_FORECAST;

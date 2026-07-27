@@ -59,17 +59,17 @@
  * execution trace directly. See `docs/kma-location-hourly-overview-composition.md`.
  */
 
-import type { KmaProviderConfigError } from '../providers/kma';
+import type { KmaProviderConfigError } from '../providers/kma/index.js';
 import {
   createKmaLiveSelectedHourlySourceMetadataResolver,
   createKmaLocationHourlyOverviewService,
   type KmaLocationHourlyOverviewService,
-} from '../services';
+} from '../services/index.js';
 import {
   createKmaLocationHourlyFallbackCompositionFromEnv,
   type KmaLocationHourlyFallbackCompositionDependencies,
-} from './kma-location-hourly-fallback';
-import { createKmaSystemClock } from './system-clock';
+} from './kma-location-hourly-fallback.js';
+import { createKmaSystemClock } from './system-clock.js';
 
 /**
  * The dependencies a caller may override for the composed location hourly-overview pipeline. A

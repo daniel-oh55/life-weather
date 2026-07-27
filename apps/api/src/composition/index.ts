@@ -84,41 +84,41 @@
  * `docs/kma-location-hourly-overview-composition.md`, and `docs/weather-production-wiring.md`.
  */
 
-export { createKmaSystemClock } from './system-clock';
+export { createKmaSystemClock } from './system-clock.js';
 
 export {
   createKmaScheduledHourlyCompositionFromEnv,
   type CreateKmaScheduledHourlyCompositionResult,
   type KmaScheduledHourlyCompositionDependencies,
-} from './kma-scheduled-hourly';
+} from './kma-scheduled-hourly.js';
 
 export {
   createKmaLocationScheduledHourlyCompositionFromEnv,
   type CreateKmaLocationScheduledHourlyCompositionResult,
   type KmaLocationScheduledHourlyCompositionDependencies,
-} from './kma-location-scheduled-hourly';
+} from './kma-location-scheduled-hourly.js';
 
 export {
   createKmaHourlyFallbackCompositionFromEnv,
   type CreateKmaHourlyFallbackCompositionResult,
   type KmaHourlyFallbackCompositionDependencies,
-} from './kma-hourly-fallback';
+} from './kma-hourly-fallback.js';
 
 export {
   createKmaLocationHourlyFallbackCompositionFromEnv,
   type CreateKmaLocationHourlyFallbackCompositionResult,
   type KmaLocationHourlyFallbackCompositionDependencies,
-} from './kma-location-hourly-fallback';
+} from './kma-location-hourly-fallback.js';
 
 export {
   createKmaLocationHourlyOverviewCompositionFromEnv,
   type CreateKmaLocationHourlyOverviewCompositionResult,
   type KmaLocationHourlyOverviewCompositionDependencies,
-} from './kma-location-hourly-overview';
+} from './kma-location-hourly-overview.js';
 
 export {
   createProductionWeatherRouteDependencies,
   KMA_SERVICE_KEY_REQUIRED_MESSAGE,
   PRODUCTION_WEATHER_PRODUCT,
   type ProductionWeatherRouteOptions,
-} from './weather-route';
+} from './weather-route.js';
