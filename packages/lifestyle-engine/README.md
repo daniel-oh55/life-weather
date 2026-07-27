@@ -209,6 +209,86 @@ reference bands**, but the grade → mask-status mapping is Life Weather's **ini
 heuristic**. See [`docs/lifestyle-mask-policy.md`](../../docs/lifestyle-mask-policy.md) for the full
 policy and its change history. Any change to how a decision is reached must bump `policyVersion`.
 
+### Laundry drying-suitability engine — `assessLaundryDryingSuitability`
+
+The fourth life-weather calculation. It takes the same normalized `HourlyForecast[]` and an explicit
+evaluation instant, analyses precipitation, precipitation probability, humidity, temperature, and
+strong wind over the next 8 hours, and returns a deterministic **outdoor drying** verdict: a status,
+a machine-readable reason code, stable Korean user copy, the driver behind the decision, the
+evidence it rests on, a data-quality grade, and the policy version.
+
+```ts
+import { assessLaundryDryingSuitability } from '@life-weather/lifestyle-engine';
+
+const decision = assessLaundryDryingSuitability({
+  evaluatedAt: '2026-07-15T12:00:00+09:00',
+  hourlyForecasts, // readonly HourlyForecast[]
+});
+
+decision.status; // 'NOT_RECOMMENDED' | 'POOR' | 'FAIR' | 'GOOD' | 'EXCELLENT' | 'INSUFFICIENT_DATA'
+```
+
+**Scope** — the engine answers one narrow question: *"if I hang laundry outdoors now, will the next
+few hours suit outdoor drying?"* It does **not** judge whether laundry can be washed, fabric-specific
+drying, indoor humidity, dryer/electricity usage, or a drying-completion time.
+
+**Evaluation window** — `[evaluatedAt, evaluatedAt + 8h]`, inclusive at both ends. Past forecasts and
+forecasts beyond 8 hours are ignored. Forecasts sharing one absolute instant collapse to a single
+**conservative** representative (wetness and every adverse maximum win; temperature uses the
+minimum), so a provider conflict never makes outdoor drying look better than it is.
+
+**Adverse signals** (per representative instant)
+
+- *Strong precipitation*: a precipitation condition (`RAIN`, `SNOW`, `SLEET`, `SHOWER`,
+  `THUNDERSTORM`), a positive precipitation amount, a positive snowfall amount, or a probability
+  `>= 60%`.
+- *Strong wind*: `windSpeedMetersPerSecond >= 10`.
+- *Possible precipitation*: not strong, but a probability `>= 30%`.
+- *High humidity*: `humidityPercent >= 85`.
+
+Boundaries are inclusive (`60`, `10`, `30`, `85` all trigger); an amount or snowfall of exactly `0`
+is not a signal.
+
+**Status priority** — the first match wins:
+
+1. Any strong precipitation → `NOT_RECOMMENDED` (`PRECIPITATION_EXPECTED`, driver `PRECIPITATION`)
+2. Any strong wind → `NOT_RECOMMENDED` (`STRONG_WIND`, driver `WIND`)
+3. Any possible precipitation → `POOR` (`PRECIPITATION_POSSIBLE`, driver `PRECIPITATION`)
+4. Any high humidity → `POOR` (`HIGH_HUMIDITY`, driver `HUMIDITY`)
+5. No adverse signal but insufficient drying coverage → `INSUFFICIENT_DATA` (`INSUFFICIENT_FORECAST`)
+6. Coverage met and `maximumHumidityPercent <= 55` and `minimumTemperatureCelsius >= 18` →
+   `EXCELLENT` (`EXCELLENT_DRYING_CONDITIONS`)
+7. Coverage met and `maximumHumidityPercent <= 70` and `minimumTemperatureCelsius >= 10` → `GOOD`
+   (`FAVORABLE_DRYING_CONDITIONS`)
+8. Coverage met otherwise → `FAIR` (`MARGINAL_DRYING_CONDITIONS`)
+
+All positive/marginal bands carry the driver `TEMPERATURE_HUMIDITY`. Humidity `>= 85` (`POOR`) is
+checked before the positive bands, so it always outranks `GOOD`/`FAIR`.
+
+**Drying forecast & coverage** — an instant is a *drying forecast* only when it carries a usable
+temperature, a usable humidity, **and** precipitation assessability (a known condition — wet or dry —
+or a usable probability / precipitation amount / snowfall). Coverage (`dryingCoverageMet`) is met
+when there are at least 4 distinct drying instants and the last is at least 4 hours out (both
+inclusive). A clear adverse signal produces a real status even without coverage; a positive
+FAIR/GOOD/EXCELLENT verdict is only ever returned when coverage is met.
+
+**Data quality** — `INSUFFICIENT` when the status is `INSUFFICIENT_DATA`; `SUFFICIENT` when a real
+status is returned with coverage met (so a positive verdict is always `SUFFICIENT`); `LIMITED` when a
+real adverse status is returned without coverage.
+
+**Evidence** — window bounds, `firstAdverseAt` (the earliest instant of the selected adverse reason,
+`null` for a positive/insufficient status), the peak probability / precipitation / snowfall
+(null-ignoring maxima), the maximum humidity, minimum temperature, and maximum wind, the considered
+vs. drying instant counts (over **distinct instants**), `lastDryingForecastAt`, and
+`dryingCoverageMet`. Numbers keep the input's precision — nothing is rounded; timestamps are
+canonical UTC ISO 8601. No raw provider payload, wind direction, or unknown-condition string is
+exposed.
+
+The policy constants live in the frozen `LAUNDRY_POLICY` export. **Every threshold and the final
+status mapping are Life Weather's initial product heuristic, not an official 기상청 (KMA) 빨래지수 /
+생활기상지수.** See [`docs/lifestyle-laundry-policy.md`](../../docs/lifestyle-laundry-policy.md) for the
+full policy and its change history. Any change to how a decision is reached must bump `policyVersion`.
+
 ## Principles
 
 - Pure TypeScript, no runtime dependency on React Native, Node.js, Hono, or the browser.
