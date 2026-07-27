@@ -133,6 +133,82 @@ The policy constants live in the frozen `OUTFIT_POLICY` export. These thresholds
 [`docs/lifestyle-outfit-policy.md`](../../docs/lifestyle-outfit-policy.md) for the full policy and
 its change history. Any change to how a decision is reached must bump `policyVersion`.
 
+### Mask recommendation engine — `assessMaskNeed`
+
+The third life-weather calculation. It takes a normalized `CurrentAirQuality` observation (from
+`@life-weather/contracts`) and an explicit evaluation instant, analyses the **PM10 / PM2.5**
+particulate levels and the freshness of the measurement, and returns a deterministic mask decision:
+a status, a machine-readable reason code, stable Korean user copy, the pollutant that drove the
+decision, per-pollutant evidence, a data-quality grade, and the policy version.
+
+```ts
+import { assessMaskNeed } from '@life-weather/lifestyle-engine';
+
+const decision = assessMaskNeed({
+  evaluatedAt: '2026-07-15T12:00:00+09:00',
+  airQuality, // CurrentAirQuality | null
+});
+
+decision.status; // 'REQUIRED' | 'RECOMMENDED' | 'NOT_NEEDED' | 'INSUFFICIENT_DATA'
+```
+
+**Input** — only five fields of the observation are consulted: `measuredAt`,
+`pm10MicrogramsPerCubicMeter`, `pm25MicrogramsPerCubicMeter`, `pm10Grade`, and `pm25Grade`. Ozone,
+the composite index (CAI), and `overallGrade` are **deliberately ignored** — `overallGrade` can be
+driven worse by ozone, so it must not decide a particulate-mask recommendation. The engine never
+fetches this data itself.
+
+**Concentration → grade (AirKorea reference bands)** — inclusive upper bounds, in ㎍/㎥:
+
+| Grade | PM10 | PM2.5 |
+| --- | --- | --- |
+| `GOOD` | `≤ 30` | `≤ 15` |
+| `MODERATE` | `≤ 80` | `≤ 35` |
+| `BAD` | `≤ 150` | `≤ 75` |
+| `VERY_BAD` | `> 150` | `> 75` |
+
+**Effective grade** — for each pollutant the engine combines a usable provider grade
+(`GOOD`/`MODERATE`/`BAD`/`VERY_BAD`; `UNKNOWN`/`null`/non-string are not usable) with the
+concentration-derived grade. When both are usable the **worse** wins (so a provider/concentration
+conflict never under-warns); otherwise whichever single input is usable is used. The overall grade
+is the worse of the two pollutants' effective grades.
+
+**Status mapping (Life Weather product policy)**
+
+1. Overall `VERY_BAD` → `REQUIRED` (`PARTICULATE_VERY_BAD`)
+2. Overall `BAD` → `RECOMMENDED` (`PARTICULATE_BAD`)
+3. Overall `GOOD` or `MODERATE` → `NOT_NEEDED` (`PARTICULATE_ACCEPTABLE`)
+4. A missing / invalid / future / stale measurement, or a fresh observation with no usable PM grade
+   → `INSUFFICIENT_DATA`
+
+**Freshness** — the current instant is always `evaluatedAt` (never `Date.now()`). An observation at
+most `maximumObservationAgeMinutes` (180, inclusive) old is `FRESH`; older is `STALE`; a future or
+unparseable `measuredAt` is `INVALID`; a missing/non-object observation is `MISSING`. Only a `FRESH`
+observation can produce `REQUIRED` / `RECOMMENDED` / `NOT_NEEDED` — stale/invalid/missing all yield
+`INSUFFICIENT_DATA` even when PM values are present.
+
+**Driver** — the pollutant behind the overall grade: `PM10`, `PM25`, `BOTH` on a tie, or `null` when
+the observation is not fresh or no grade is available. The `REQUIRED` / `RECOMMENDED` Korean copy
+names the driving pollutant.
+
+**Data quality** (a `FRESH` observation) — `SUFFICIENT` when both pollutants have an effective grade,
+`LIMITED` when exactly one does (a real recommendation is still returned), `INSUFFICIENT` when
+neither does. Any non-fresh observation is `INSUFFICIENT` regardless of the PM values it carries.
+
+**Evidence** — the canonical UTC `measuredAt`, the (unrounded) observation age, freshness, the
+driver, the count of pollutants with an effective grade, and per-pollutant evidence (sanitized
+concentration, normalized provider grade, derived grade, effective grade, grade source, and a
+provider/concentration disagreement flag). Concentrations keep the input's precision — nothing is
+rounded. No raw provider payload, ozone value, composite index, `overallGrade`, or unknown grade
+string is exposed.
+
+This is **general lifestyle guidance for the public, not a medical diagnosis or a personalised
+health instruction**, and it does not prescribe a specific KF mask grade. The policy constants live
+in the frozen `MASK_POLICY` export. The concentration → grade bands are the current **AirKorea
+reference bands**, but the grade → mask-status mapping is Life Weather's **initial product
+heuristic**. See [`docs/lifestyle-mask-policy.md`](../../docs/lifestyle-mask-policy.md) for the full
+policy and its change history. Any change to how a decision is reached must bump `policyVersion`.
+
 ## Principles
 
 - Pure TypeScript, no runtime dependency on React Native, Node.js, Hono, or the browser.
