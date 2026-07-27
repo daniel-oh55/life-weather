@@ -343,13 +343,21 @@ describe('measurement time and freshness', () => {
   });
 
   it('37. a future measuredAt is INVALID / INSUFFICIENT_DATA', () => {
+    // A parseable offset-bearing future measuredAt: 21:10+09:00 is the instant
+    // 2026-07-15T12:10:00.000Z, ten minutes after evaluatedAt. Even though the reading is
+    // rejected as future-dated, its canonical UTC evidence is still preserved, and the future
+    // VERY_BAD particulate never leaks into a current REQUIRED status.
     const decision = assess(
-      makeAirQuality({ measuredAt: isoShiftMinutes(BASE, 10), pm25Grade: 'VERY_BAD' }),
+      makeAirQuality({ measuredAt: '2026-07-15T21:10:00+09:00', pm25Grade: 'VERY_BAD' }),
+      '2026-07-15T12:00:00Z',
     );
+    expect(decision.evidence.measuredAt).toBe('2026-07-15T12:10:00.000Z');
     expect(decision.evidence.freshness).toBe('INVALID');
     expect(decision.evidence.observationAgeMinutes).toBeNull();
+    expect(decision.evidence.driver).toBeNull();
     expect(decision.status).toBe('INSUFFICIENT_DATA');
     expect(decision.reasonCode).toBe('INVALID_MEASUREMENT_TIME');
+    expect(decision.dataQuality).toBe('INSUFFICIENT');
   });
 
   it('38. a malformed measuredAt is INVALID without crashing', () => {
