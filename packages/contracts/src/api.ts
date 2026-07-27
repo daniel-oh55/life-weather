@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
-import { apiErrorCode, isoDateTime, nonEmptyString } from './common';
-import { weatherLocation } from './location';
-import { weatherOverview } from './weather';
+import { apiErrorCode, isoDateTime, nonEmptyString } from './common.js';
+import { weatherLocation } from './location.js';
+import { weatherOverview } from './weather.js';
 
 /**
  * Current contract version. Bumped only on a breaking change; additive changes

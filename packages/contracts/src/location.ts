@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { ianaTimeZone, latitude, longitude, nonEmptyString } from './common';
+import { ianaTimeZone, latitude, longitude, nonEmptyString } from './common.js';
 
 /**
  * A location the weather data describes.

@@ -53,12 +53,12 @@
  * `AfterAvailabilityDelay`, not "available" or "ready", for exactly this reason.
  */
 
-import { KmaForecastProduct } from './condition';
+import { KmaForecastProduct } from './condition.js';
 import {
   selectLatestKmaForecastBaseTime,
   type KmaForecastBaseTime,
   type SelectLatestKmaForecastBaseTimeInput,
-} from './issue-time';
+} from './issue-time.js';
 
 const MINUTE_IN_MILLISECONDS = 60_000;
 

@@ -26,7 +26,7 @@
  * via host-local getters (`getHours`, `getDate`, …) or `Intl`.
  */
 
-import { KmaForecastProduct } from './condition';
+import { KmaForecastProduct } from './condition.js';
 
 const MINUTE_IN_MS = 60_000;
 const HOUR_IN_MS = 3_600_000;
