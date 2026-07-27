@@ -11,7 +11,7 @@ import {
 } from '@life-weather/contracts';
 import { KmaForecastProduct } from '@life-weather/weather-core';
 
-import { createApiApp } from '../app';
+import { createApiApp } from '../api-app';
 import { createWeatherRoute } from '../routes';
 import type { KmaForecastRequestClock } from '../services';
 import {

@@ -38,7 +38,7 @@
 
 import type { Hono } from 'hono';
 
-import { createApiApp } from './app';
+import { createApiApp } from './api-app';
 import { createProductionWeatherRouteDependencies } from './composition';
 import { createWeatherRoute } from './routes';
 

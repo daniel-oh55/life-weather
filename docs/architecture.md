@@ -134,7 +134,7 @@
   product·`meta` provider(clock/`requestId`)를 모두 주입받고 clock/env/randomness를 직접 읽지 않아
   startup과 무관하게 테스트 가능하며, request-layer 오류도 기존 `WeatherErrorResponseV1` 형태로만
   반환하고 Zod issue·raw error·provider trace를 노출하지 않습니다. **PR #31**에서는 이 route factory를
-  실제 production Hono 앱에 연결했습니다 — `createApiApp`(`src/app.ts`)이 `GET /health`를 등록하고
+  실제 production Hono 앱에 연결했습니다 — `createApiApp`(`src/api-app.ts`)이 `GET /health`를 등록하고
   주입된 `/weather` sub-app을 `app.route('/weather', …)`로 mount하며,
   `createProductionWeatherRouteDependencies`(`src/composition/weather-route.ts`)가 PR #27 KMA
   production graph·service→route adapter(raw `AbortSignal`을 exact reference로 전달, 새 controller 없음)·
@@ -534,7 +534,7 @@ import 없음). 따라서 강화되는 방향은 `routes → contracts`(runtime)
 `composition → routes`·`routes → composition`·`weather-core → apps/api`·`contracts → apps/api`·
 `mobile → apps/api` 같은 역방향은 금지합니다(순환 없음 — route는 HTTP adapter일 뿐 composition root가
 아니고 service/presenter를 생성하지 않으며 주입만 받습니다). **PR #31**에서 이 route factory를
-`apps/api/src/index.ts`에 **mount**했습니다 — `createApiApp`(`src/app.ts`)이 `/health` 등록 + `/weather`
+`apps/api/src/index.ts`에 **mount**했습니다 — `createApiApp`(`src/api-app.ts`)이 `/health` 등록 + `/weather`
 mount를, `createProductionWeatherRouteDependencies`(`src/composition/weather-route.ts`)가 production
 service adapter·server-owned `SHORT_FORECAST` product·clock(`generatedAt`)/`requestId`(`crypto.randomUUID()`)
 생성을 담당하며, `index.ts`가 server-only `KMA_SERVICE_KEY`를 읽어 fail-fast validation 후 Hono 앱을
@@ -793,7 +793,7 @@ lifestyle-engine  → contracts
   불변이며, PR #31이 이 factory를 `apps/api/src/index.ts`에 mount했습니다(아래) ([weather-route.md](./weather-route.md)).
 - PR #31에서는 PR #30 route factory를 실제 production 앱에 **연결**했습니다 — startup wiring만 추가하고
   route/service/provider/presenter/contracts runtime은 바꾸지 않았으며 신규 dependency도 없습니다. 새
-  **app factory**(`src/app.ts`, `createApiApp`)가 기존 `GET /health`를 등록하고 주입된 `/weather` sub-app을
+  **app factory**(`src/api-app.ts`, `createApiApp`)가 기존 `GET /health`를 등록하고 주입된 `/weather` sub-app을
   `app.route('/weather', …)`로 **정확히 한 번** mount하며(`/weather/weather` 아님, 새 global
   `onError`/`notFound` 없음), 새 **production route composition**(`src/composition/weather-route.ts`,
   `createProductionWeatherRouteDependencies`)이 PR #27 KMA location hourly-overview graph를 재사용해

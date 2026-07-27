@@ -13,7 +13,7 @@ dependency; and it implements no cache, rate-limit, auth, CORS, logging, or tele
 
 | File | Responsibility |
 | --- | --- |
-| `apps/api/src/app.ts` | **App factory** `createApiApp({ weatherRoute })` — registers `GET /health` and mounts the injected `/weather` sub-app. Pure DI; no env/KMA/clock/network. |
+| `apps/api/src/api-app.ts` | **App factory** `createApiApp({ weatherRoute })` — registers `GET /health` and mounts the injected `/weather` sub-app. Pure DI; no env/KMA/clock/network. |
 | `apps/api/src/composition/weather-route.ts` | **Production route composition** `createProductionWeatherRouteDependencies(options)` — builds the KMA production graph, the service→route adapter, the server product, and the response `meta` provider. |
 | `apps/api/src/index.ts` | **Composition root + entrypoint** — reads `KMA_SERVICE_KEY`, builds the dependencies, creates the route, mounts it via the app factory, and `export default`s the Hono app. |
 
@@ -27,7 +27,7 @@ process.env.KMA_SERVICE_KEY (server-only)
        → product: PRODUCTION_WEATHER_PRODUCT (SHORT_FORECAST)
        → createMeta(request): { generatedAt: now().toISOString(), requestId: crypto.randomUUID() }
   → createWeatherRoute(dependencies)                                   // PR #30 mountable sub-app
-  → createApiApp({ weatherRoute })                                     // app.ts
+  → createApiApp({ weatherRoute })                                     // api-app.ts
        → app.get('/health', …)
        → app.route('/weather', weatherRoute)
   → export default app                                                 // index.ts (Hono default export)
@@ -140,7 +140,7 @@ inbound headers, or the internal `selection`/execution trace. The presenter (PR 
 
 ## Testing (no external network)
 
-- `app.test.ts` drives `createApiApp` with a **fake** `/weather` sub-app — health regression, the exact
+- `api-app.test.ts` drives `createApiApp` with a **fake** `/weather` sub-app — health regression, the exact
   `/weather` mount, factory isolation, and the absence of any new global `onError`/`notFound`.
 - `composition/weather-route.test.ts` builds the **real** production composition with an **injected
   in-memory `fetch`** and a fixed KMA clock — the product policy, the service adapter (input + exact

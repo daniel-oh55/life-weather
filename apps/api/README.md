@@ -675,7 +675,7 @@ a project on first run; that step is intentionally deferred to a later PR.
   - **Now mounted (PR #31).** `src/index.ts` mounts this factory at `/weather` via the `createApiApp` app
     factory and the `createProductionWeatherRouteDependencies` composition (see below); the factory
     runtime itself is unchanged.
-- **Production wiring (PR #31).** `createApiApp` (`src/app.ts`) registers `GET /health` and mounts the
+- **Production wiring (PR #31).** `createApiApp` (`src/api-app.ts`) registers `GET /health` and mounts the
   injected `/weather` sub-app; `createProductionWeatherRouteDependencies` (`src/composition/weather-route.ts`)
   builds the PR #27 KMA production graph, the service→route adapter (raw `AbortSignal` forwarded by exact
   reference, no new controller), the server-owned `PRODUCTION_WEATHER_PRODUCT` (`SHORT_FORECAST`), and the
