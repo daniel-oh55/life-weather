@@ -8,3 +8,15 @@ export {
   type UmbrellaReasonCode,
   type UmbrellaStatus,
 } from './umbrella';
+
+export {
+  assessOutfitRecommendation,
+  OUTFIT_POLICY,
+  type OutfitAssessmentInput,
+  type OutfitDataQuality,
+  type OutfitDecision,
+  type OutfitEvidence,
+  type OutfitReasonCode,
+  type OutfitStatus,
+  type OutfitTemperatureSource,
+} from './outfit';
