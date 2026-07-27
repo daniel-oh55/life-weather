@@ -924,3 +924,55 @@ describe('data quality matrix', () => {
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// I. Extreme evaluatedAt year range (contracts 4-digit-year ISO)
+//
+// Evidence timestamps are canonical UTC and must stay inside @life-weather/contracts' isoDateTime,
+// which only admits a 4-digit year. A valid extreme evaluatedAt can still normalize to a UTC year
+// outside [0000, 9999] — either directly (an offset pushing it negative) or via the +8h window end
+// crossing into year 10000 — and such a window must be rejected. The rejection reuses the same
+// fixed RangeError and never echoes the input.
+// ---------------------------------------------------------------------------
+
+describe('I. extreme evaluatedAt year range', () => {
+  const FIXED_MESSAGE = 'evaluatedAt must be an ISO 8601 datetime with a timezone designator';
+
+  it('85. +8h window end crossing into year 10000 → fixed RangeError', () => {
+    // Start (9999-12-31T20:00:00.000Z) is a 4-digit year, but +8h ends at +010000-01-01T04:00:00Z.
+    const evaluatedAt = '9999-12-31T20:00:00Z';
+    expect(() => assess([], evaluatedAt)).toThrow(RangeError);
+    try {
+      assess([], evaluatedAt);
+    } catch (error) {
+      expect((error as Error).message).toBe(FIXED_MESSAGE);
+      expect((error as Error).message).not.toContain(evaluatedAt);
+    }
+  });
+
+  it('86. offset normalizing the UTC year below 0000 → fixed RangeError', () => {
+    // The string year is 4-digit, but +14:00 normalizes to canonical -000001-12-31T10:00:00Z.
+    const evaluatedAt = '0000-01-01T00:00:00+14:00';
+    expect(() => assess([], evaluatedAt)).toThrow(RangeError);
+    try {
+      assess([], evaluatedAt);
+    } catch (error) {
+      expect((error as Error).message).toBe(FIXED_MESSAGE);
+      expect((error as Error).message).not.toContain(evaluatedAt);
+    }
+  });
+
+  it('87. an upper-bound window that stays within year 9999 is accepted', () => {
+    const decision = assess([], '9999-12-31T15:59:59Z');
+    expect(decision.evidence.windowStartAt).toBe('9999-12-31T15:59:59.000Z');
+    expect(decision.evidence.windowEndAt).toBe('9999-12-31T23:59:59.000Z');
+    expect(decision.status).toBe('INSUFFICIENT_DATA');
+  });
+
+  it('88. a lower-bound window that stays within year 0000 is accepted', () => {
+    const decision = assess([], '0000-01-01T00:00:00Z');
+    expect(decision.evidence.windowStartAt).toBe('0000-01-01T00:00:00.000Z');
+    expect(decision.evidence.windowEndAt).toBe('0000-01-01T08:00:00.000Z');
+    expect(decision.status).toBe('INSUFFICIENT_DATA');
+  });
+});

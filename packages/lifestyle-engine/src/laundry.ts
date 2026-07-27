@@ -259,6 +259,44 @@ function parseAbsoluteInstantMs(value: unknown): number | null {
 }
 
 // ---------------------------------------------------------------------------
+// Canonical UTC evidence timestamps
+//
+// Every evidence timestamp is `new Date(...).toISOString()`. That form widens the year to an
+// expanded `±YYYYYY` representation for any instant whose UTC year is outside `[0000, 9999]` — a
+// valid `evaluatedAt` can still normalize to a negative UTC year (a large positive offset before
+// year 1), and the `+8h` window end can cross into year 10000. Such strings are valid JavaScript
+// but fall outside `@life-weather/contracts`' `isoDateTime` (Zod's `z.iso.datetime`), so the engine
+// must reject a window whose canonical bounds escape the 4-digit-year contract.
+// ---------------------------------------------------------------------------
+
+/** The canonical UTC millisecond ISO form the contracts' 4-digit-year `isoDateTime` admits. */
+const CANONICAL_UTC_MILLISECOND_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+/**
+ * Format an epoch-ms instant as canonical UTC ISO, or return `null` when the result escapes the
+ * contracts' 4-digit-year range (an expanded `±YYYYYY` year).
+ */
+function canonicalUtcIsoOrNull(epochMs: number): string | null {
+  const value = new Date(epochMs).toISOString();
+  return CANONICAL_UTC_MILLISECOND_ISO.test(value) ? value : null;
+}
+
+/**
+ * Format an epoch-ms instant already proven to lie inside a validated evaluation window. The
+ * window's start and end are checked with {@link canonicalUtcIsoOrNull} up front, so every instant
+ * between them is canonical too (the canonical range is a single contiguous interval); a `null`
+ * here would be an internal invariant violation rather than bad input, and is rejected with the
+ * same fixed error rather than silently dropped.
+ */
+function canonicalUtcIsoWithinWindow(epochMs: number): string {
+  const value = canonicalUtcIsoOrNull(epochMs);
+  if (value === null) {
+    throw new RangeError('evaluatedAt must be an ISO 8601 datetime with a timezone designator');
+  }
+  return value;
+}
+
+// ---------------------------------------------------------------------------
 // Value normalization
 // ---------------------------------------------------------------------------
 
@@ -450,8 +488,9 @@ function isDryingForecast(aggregate: InstantAggregate): boolean {
  * (`dataQuality: 'SUFFICIENT'`). The input array and its objects are never mutated; the result is
  * independent of input order and of differing timezone spellings of the same instant.
  *
- * @throws RangeError synchronously if `evaluatedAt` is not a timezone-qualified ISO 8601 datetime.
- *   The message is fixed and never echoes the input.
+ * @throws RangeError synchronously if `evaluatedAt` is not a timezone-qualified ISO 8601 datetime,
+ *   or if the canonical UTC evaluation window (`evaluatedAt` .. `+evaluationWindowHours`) would fall
+ *   outside the contracts' 4-digit-year ISO range. The message is fixed and never echoes the input.
  */
 export function assessLaundryDryingSuitability(input: LaundryAssessmentInput): LaundryDecision {
   const startMs = parseAbsoluteInstantMs(input.evaluatedAt);
@@ -460,6 +499,17 @@ export function assessLaundryDryingSuitability(input: LaundryAssessmentInput): L
   }
 
   const windowEndMs = startMs + LAUNDRY_POLICY.evaluationWindowHours * HOUR_IN_MS;
+
+  // Every evidence timestamp is canonical UTC (millisecond precision). Reject up front any window
+  // whose canonical start or end escapes the contracts' 4-digit-year ISO range — a valid extreme
+  // `evaluatedAt` can normalize to a negative UTC year, and the `+8h` end can cross into year 10000.
+  // The error is the same fixed RangeError and never echoes the input.
+  const canonicalWindowStartAt = canonicalUtcIsoOrNull(startMs);
+  const canonicalWindowEndAt = canonicalUtcIsoOrNull(windowEndMs);
+  if (canonicalWindowStartAt === null || canonicalWindowEndAt === null) {
+    throw new RangeError('evaluatedAt must be an ISO 8601 datetime with a timezone designator');
+  }
+
   const coverageMinimumMs = startMs + LAUNDRY_POLICY.minimumDryingCoverageHours * HOUR_IN_MS;
 
   const rawForecasts: readonly unknown[] = Array.isArray(input.hourlyForecasts)
@@ -643,9 +693,9 @@ export function assessLaundryDryingSuitability(input: LaundryAssessmentInput): L
     driver: resolution.driver,
     dataQuality,
     evidence: {
-      windowStartAt: new Date(startMs).toISOString(),
-      windowEndAt: new Date(windowEndMs).toISOString(),
-      firstAdverseAt: firstAdverseMs === null ? null : new Date(firstAdverseMs).toISOString(),
+      windowStartAt: canonicalWindowStartAt,
+      windowEndAt: canonicalWindowEndAt,
+      firstAdverseAt: firstAdverseMs === null ? null : canonicalUtcIsoWithinWindow(firstAdverseMs),
       peakPrecipitationProbabilityPercent: peakProbability,
       peakPrecipitationAmountMillimeters: peakPrecipitationAmount,
       peakSnowfallAmountCentimeters: peakSnowfall,
@@ -655,7 +705,7 @@ export function assessLaundryDryingSuitability(input: LaundryAssessmentInput): L
       consideredForecastCount: aggregatesByInstant.size,
       dryingForecastCount,
       lastDryingForecastAt:
-        lastDryingForecastMs === null ? null : new Date(lastDryingForecastMs).toISOString(),
+        lastDryingForecastMs === null ? null : canonicalUtcIsoWithinWindow(lastDryingForecastMs),
       dryingCoverageMet,
     },
   };
