@@ -158,9 +158,9 @@ is served by an injected in-memory `fetch` over the existing fixtures.
 
 ## Vercel Hono deployment build configuration
 
-Two deployment blockers surfaced only in the Vercel Hono build (the repo-local
-`pnpm --filter @life-weather/api typecheck` never reproduced them), and both were resolved without touching
-any runtime source:
+Several deployment blockers surfaced only in the Vercel Hono build (the repo-local
+`pnpm --filter @life-weather/api typecheck` never reproduced them), and all were resolved without changing
+any runtime behaviour. The first two are TypeScript build-configuration fixes:
 
 1. **Zero-config entrypoint collision** — Vercel's Hono preset scans the package root and `src/` for an
    `app`/`index`/`server` basename and warned `Multiple entrypoints found` while silently picking the first,
@@ -201,6 +201,48 @@ any runtime source:
 The default-export Hono app, the KMA runtime, the request/response contracts, and the f88bf27 result
 narrowing are all unchanged by this configuration fix.
 
+## Node ESM relative-specifier and shared-package resolution
+
+The Vercel build then runs the **emitted ES modules** under Node's native ESM resolver, which is stricter
+than the repo-local type-checker in two further ways that surfaced only in the deployment sandbox. Both were
+resolved without changing any runtime behaviour:
+
+3. **Extensionless relative imports fail under emitted Node ESM.** A TypeScript-source relative import
+   written without a file extension type-checks fine but throws `ERR_MODULE_NOT_FOUND` once emitted and run
+   as Node ESM. Every `apps/api` local relative specifier was made explicit — an `./name.js` file specifier
+   or a `./dir/index.js` directory-barrel specifier — so the emitted module graph resolves natively. An AST
+   regression test asserts that local relative specifiers stay extension-explicit, so this class of failure
+   cannot silently return.
+4. **Shared runtime packages must expose a compiled ESM entrypoint.** `@life-weather/contracts` and
+   `@life-weather/weather-core` previously pointed their package entrypoints at raw TypeScript, which the
+   Node ESM runtime cannot import. Each package now builds a NodeNext ESM `dist/index.js` plus a
+   `dist/index.d.ts`, and its `main`/`types`/`exports` point at `dist`, so a consumer resolves and imports
+   the compiled artifact rather than the source. Node-native resolve/import of the built entrypoints is
+   verified.
+
+## Bootstrap and stale-`dist` protection
+
+5. **Clean-checkout bootstrap and build-first checks.** Because the shared packages now resolve to `dist`
+   (which stays gitignored/untracked), a clean checkout or the deployment sandbox could otherwise run against
+   a missing or stale `dist`. A root `postinstall` bootstraps the shared `dist` on a clean checkout; the
+   Vercel build runs an explicit shared build → verify step; the standalone `typecheck`/`test` scripts are
+   build-first; and `pnpm check` builds the shared `dist` **exactly once** before verify/lint/typecheck/test,
+   so no run reuses a stale `dist`.
+
+## Current deployment status
+
+As of the current branch HEAD the deployment is green and behaviourally verified on Vercel's Node 22 runtime,
+using an already-registered server-only `KMA_SERVICE_KEY` (never printed anywhere):
+
+- **CI** — the GitHub Actions pipeline completes successfully (the full workspace test suite passes).
+- **Vercel Preview READY** — the Node 22 Preview build (install → build → verify) reaches `READY`.
+- **`GET /health` → 200** — the deterministic health payload is unchanged.
+- **Invalid `POST /weather` → 400** — a malformed/invalid body is a leak-free `INVALID_REQUEST`.
+- **Valid `POST /weather` → 200** — a valid body returns a `WeatherResponseV1` that parses against the
+  contracts producer schema, carrying a live 기상청 hourly overview.
+- **Secret/internal non-exposure** — no response or error surfaces the service key, `process.env`, the
+  provider URL/query, the raw KMA payload, or the internal `selection`/execution trace.
+
 ## Not in this PR (later work)
 
 - A **server-side response cache** / stale fallback — `retrievalMode` stays `LIVE`.
@@ -208,5 +250,5 @@ narrowing are all unchanged by this configuration fix.
 - Product selection by environment/request, additional products, rate-limiting, auth/authorization, CORS
   changes, logging/telemetry, retry/timeout policy changes, AirKorea, alerts, the lifestyle engine, and
   OpenAPI.
-- The real deployment: registering the production `KMA_SERVICE_KEY` in Vercel and running post-deploy
-  `/health` and controlled `/weather` smoke tests.
+- A **production (non-Preview) deployment and a linked production domain** — the current verification is on
+  the Vercel Node 22 Preview with a registered server-only `KMA_SERVICE_KEY`.

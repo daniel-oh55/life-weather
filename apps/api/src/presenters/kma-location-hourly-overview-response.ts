@@ -54,9 +54,11 @@
  * ### What it is not
  *
  * It decides **no** HTTP status, `Content-Type`, header, or body-size limit; registers **no** route; does
- * **no** startup wiring; and generates neither the clock (`generatedAt`) nor the `requestId` — those are
- * a later route PR's concern. A future `/weather` route will call this presenter with a caller-supplied
- * `generatedAt`/`requestId` and map the returned body to an HTTP status. See
+ * **no** startup wiring; and generates neither the clock (`generatedAt`) nor the `requestId` — those stay
+ * with the route and its production composition. The production `POST /weather` route calls this presenter
+ * with a caller-supplied `generatedAt`/`requestId` to turn a location hourly overview result into a
+ * `WeatherResponseV1` body, then maps that body to an HTTP status. The presenter itself reads no
+ * environment/network and never exposes a raw provider error, stack, cause, or provider URL/query. See
  * `docs/weather-response-presenter.md`.
  */
 

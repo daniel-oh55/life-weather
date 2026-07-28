@@ -29,7 +29,8 @@
  *    for the two no-data signals — a `PROVIDER`-stage `KMA_UPSTREAM_ERROR` with `resultCode`
  *    exactly `'03'` (`KMA_NO_DATA`) or a success with an empty `hourly` array (`EMPTY_HOURLY`);
  *    every other result is ineligible. It performs **no** actual fallback execution and is not the
- *    provider's, facade's, or composition's responsibility; no route consumes it yet.
+ *    provider's, facade's, or composition's responsibility. The PR #20 grid fallback composition injects
+ *    it, so it now runs inside the `POST /weather` production route's fallback graph.
  * 6. The PR #18 KMA **fallback request-plan factory** (`createKmaFallbackRequestPlanFactory`):
  *    combines an injected clock, an injectable candidate selector, and caller-supplied
  *    `product`/`nx`/`ny` into a `{ primary, previous }` pair of complete `KmaForecastRequest`s from a
@@ -40,7 +41,7 @@
  *    two requests only — it performs **no** provider, hourly-service, or PR #17 classifier
  *    invocation and **no** fallback execution: the factory itself never executes anything. The PR #20
  *    grid fallback composition (`../composition`) **consumes** it as its production request-plan
- *    source; no HTTP route consumes it.
+ *    source, which now runs inside the `POST /weather` production route's fallback graph.
  * 7. The PR #19 KMA **fallback orchestration service** (`createKmaHourlyFallbackService`): the first
  *    component that actually **executes** a `previous` request. It combines the PR #18 request-plan
  *    factory, this file's hourly service, and the PR #17 classifier into an at-most-two-attempt run —
@@ -63,8 +64,9 @@
  *    derived once from the existing plan — the service reads no clock and makes no extra
  *    selector/plan-factory call. The `PRIMARY`/`PREVIOUS` distinction stays with the later selection
  *    step. The orchestration itself owns **no** composition responsibility: the PR #20 grid fallback
- *    composition (`../composition`) **consumes** it as the live production fallback service. No HTTP
- *    route or cache consumes it yet; the PR #26 live selected-source metadata resolver (component 12)
+ *    composition (`../composition`) **consumes** it as the live production fallback service, which now
+ *    runs inside the `POST /weather` production route's fallback graph. No cache consumes it yet; the
+ *    PR #26 live selected-source metadata resolver (component 12)
  *    consumes these preserved identities to materialize the selected source's `SourceMetadata`.
  * 8. The PR #21 KMA **location hourly-forecast fallback facade**
  *    (`createKmaLocationHourlyFallbackFacade`): a thin adapter that puts an injected
@@ -89,8 +91,8 @@
  *    handles **no** `LOCATION` branch, and builds **no** `WeatherOverview`/`SourceMetadata` itself. It
  *    is the PR #24 application service's fixed production **default** selector, and through the PR #27
  *    fifth composition root (`createKmaLocationHourlyOverviewCompositionFromEnv`) it is part of the
- *    live production graph; it is **not yet wired into** `apps/api/src/index.ts` startup or any HTTP
- *    route.
+ *    live production graph, which is **now wired into** `apps/api/src/index.ts` startup and served at the
+ *    `POST /weather` production route.
  * 10. The PR #23 KMA **hourly `WeatherOverview` assembler** (`assembleKmaHourlyWeatherOverview`): a
  *    **pure, synchronous** function that consumes a **precomputed PR #22 selection** and assembles the
  *    hourly-only partial contracts `WeatherOverview`. When a hourly source is selected it maps the
@@ -113,8 +115,8 @@
  *    that first), handles **no** `LOCATION` branch, and builds no `current`/`daily`/air-quality/alerts
  *    data. It is the PR #24 application service's fixed production **default** assembler, and through
  *    the PR #27 fifth composition root (`createKmaLocationHourlyOverviewCompositionFromEnv`) it is part
- *    of the live production graph; it is **not yet wired into** `apps/api/src/index.ts` startup or any
- *    HTTP route.
+ *    of the live production graph, which is **now wired into** `apps/api/src/index.ts` startup and served
+ *    at the `POST /weather` production route.
  * 11. The PR #24 KMA **location hourly `WeatherOverview` application service**
  *    (`createKmaLocationHourlyOverviewService`): the orchestration layer that connects the previous four
  *    hourly building blocks into a single call. Per call it (a) runs the contracts `weatherLocation`
@@ -135,10 +137,10 @@
  *    resolver *seam*, and never rebuilds a request plan or reconstructs a KMA base time. The **production
  *    resolver** is now the PR #26 component 12 below; together with it this service is assembled by the
  *    PR #27 `createKmaLocationHourlyOverviewCompositionFromEnv` — the fifth callable production
- *    composition root — where it is available as a live service. It is **not yet wired into**
- *    `apps/api/src/index.ts` startup or any HTTP route. Because the internal application result carries
- *    the `selection`/execution trace alongside the `overview`, a future mobile-facing route must
- *    serialize the `overview` only.
+ *    composition root — where it is available as a live service. That composition root is **now wired
+ *    into** `apps/api/src/index.ts` startup and mounted at the `POST /weather` production route. Because
+ *    the internal application result carries the `selection`/execution trace alongside the `overview`,
+ *    the production route serializes the `overview` only (through the PR #29 presenter).
  * 12. The PR #26 KMA **live selected-source metadata resolver**
  *    (`createKmaLiveSelectedHourlySourceMetadataResolver`): the production
  *    `KmaSelectedHourlySourceMetadataResolver` the component 11 service injects. It **consumes** the
@@ -164,8 +166,9 @@
  *    read; inside component 11's `.then` handler that synchronous throw becomes the returned Promise's
  *    rejection with the same reference. It reads no env/network, opens no `fetch`/`AbortController`,
  *    and adds no dependency. The PR #27 `createKmaLocationHourlyOverviewCompositionFromEnv` — the
- *    fifth callable production composition root — injects it into the component 11 service; it is
- *    **not yet wired into** `apps/api/src/index.ts` startup or any HTTP route.
+ *    fifth callable production composition root — injects it into the component 11 service, which is
+ *    **now wired into** `apps/api/src/index.ts` startup and served at the `POST /weather` production
+ *    route.
  *
  * The grid-based single-request **production composition root** (system clock adapter,
  * provider-from-env wiring, a live facade instance) is built in PR #11 and lives in `../composition`;
@@ -176,8 +179,10 @@
  * fallback service; and PR #27 added the location hourly overview composition root
  * (`createKmaLocationHourlyOverviewCompositionFromEnv`) that assembles the PR #24 service over the
  * PR #21 location fallback facade and the PR #26 live resolver (all production wiring lives in
- * `../composition`). That is **five** callable production composition roots in total; none of them is
- * yet wired into `apps/api/src/index.ts` startup or any HTTP route — that is a later PR.
+ * `../composition`). That is **five** callable production composition roots in total. The location hourly
+ * overview root is **now wired into** `apps/api/src/index.ts` startup and mounted at the `POST /weather`
+ * production route; the other four roots (grid scheduled, location scheduled, grid fallback, location
+ * fallback) are internal building blocks and are **not** exposed as their own HTTP routes.
  *
  * Application services deliberately live **outside** `providers/kma` (they are not part of the
  * provider boundary) and are exported only from here, never from `providers/kma/index.ts`. See

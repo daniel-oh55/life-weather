@@ -462,12 +462,12 @@ a project on first run; that step is intentionally deferred to a later PR.
     no `Promise`, Provider, network, clock, environment, or `AbortSignal`; it runs the PR #22 selector
     for **nobody** (the caller does that first), handles **no** `LOCATION` branch, and builds no
     `current`/`daily`/air-quality/alerts data.
-  - **Production wiring not implemented.** The assembler is wired into **no** composition root or route.
-    The PR #24 application service (below) now narrows a location result's `LOCATION` branch, applies the
-    selector, resolves the selected source's provenance via an **injected** resolver, and calls this
-    assembler; the **production resolver** is now the PR #26
-    `createKmaLiveSelectedHourlySourceMetadataResolver` (below), while the **production composition**
-    remains a later PR. It changes no existing runtime and adds **no** new dependency.
+  - **Now in the production graph.** The PR #24 application service (below) narrows a location result's
+    `LOCATION` branch, applies the selector, resolves the selected source's provenance via an **injected**
+    resolver, and calls this assembler; the **production resolver** is the PR #26
+    `createKmaLiveSelectedHourlySourceMetadataResolver` (below), and the PR #27 production composition
+    assembles the whole graph behind the `POST /weather` production route (PR #31). It changes no existing
+    runtime and adds **no** new dependency.
 - **KMA location hourly `WeatherOverview` application service** — PR #24 adds
   `createKmaLocationHourlyOverviewService` (`src/services/`), the orchestration layer that connects the
   previous four hourly building blocks into a single call. See
@@ -510,11 +510,11 @@ a project on first run; that step is intentionally deferred to a later PR.
     are: **synchronous throw** — invalid `WeatherLocation`, facade synchronous throw; **returned-Promise
     rejection** — facade rejection, selector throw, resolver throw, assembler throw, and the selected-empty
     assembler `ZodError`.
-  - **Application service implemented; production resolver now implemented (PR #26); production
-    composition not.** It is wired into **no** composition root or route; the production metadata resolver
-    is the PR #26 `createKmaLiveSelectedHourlySourceMetadataResolver` (below), while the PR #24 production
-    composition (and the `/weather` route) remain later PRs. It changes no existing runtime and adds
-    **no** new dependency.
+  - **Application service, production resolver (PR #26), and production composition (PR #27) all
+    implemented.** The production metadata resolver is the PR #26
+    `createKmaLiveSelectedHourlySourceMetadataResolver` (below), and the PR #27 composition assembles this
+    service into the graph behind the `POST /weather` production route (PR #31). It changes no existing
+    runtime and adds **no** new dependency.
 - **KMA forecast sanitized issuance identity in the execution trace** — PR #25 adds the public type
   `KmaForecastIssuanceIdentity` (`src/services/kma-forecast-issuance-identity.ts`,
   `product`/`baseDate`/`baseTime` only) and preserves it inside the PR #19 execution trace, derived from
@@ -581,9 +581,9 @@ a project on first run; that step is intentionally deferred to a later PR.
     synchronous; inside the PR #24 `.then` handler the throw becomes the returned Promise's rejection.
     Output has exactly the four sorted own keys `fetchedAt`/`issuedAt`/`retrievalMode`/`sourceId`, is
     fresh per call, and leaks no transport/selection/location field.
-  - **Not implemented.** It is wired into **no** composition root or route; production composition and
-    cache are PR #27. It reads no env/network, opens no `fetch`/`AbortController`, and adds **no** new
-    dependency.
+  - **In the production graph; cache still later.** The PR #27 composition wires this resolver into the
+    graph behind the `POST /weather` production route (PR #31); a server-side cache is still a later PR. It
+    reads no env/network, opens no `fetch`/`AbortController`, and adds **no** new dependency.
 - **KMA location hourly overview production composition** — PR #27 adds
   `createKmaLocationHourlyOverviewCompositionFromEnv` (`src/composition/`), a **fifth** callable
   production root that assembles the PR #24 application service over a live graph beside (never
@@ -617,7 +617,8 @@ a project on first run; that step is intentionally deferred to a later PR.
     `overview`, never serialize the `selection`/execution trace directly (this PR adds no such mapper).
     The four existing roots and their contracts are **unchanged**; it consumes only the `providers/kma`
     (type), `services`, sibling composition, and `./system-clock` public surfaces and adds **no** new
-    dependency. This fifth root is **not** wired into `src/index.ts` or any route either.
+    dependency. This fifth root is the one wired into `src/index.ts` startup and mounted at the
+    `POST /weather` production route (PR #31); the other four roots remain unrouted.
 - **Mobile-safe weather response presenter** — PR #29 adds
   `presentKmaLocationHourlyOverviewResponseV1` (`src/presenters/`), the **pure, synchronous** boundary
   that maps the PR #24 internal application result to the mobile-facing `WeatherResponseV1` body. See
@@ -644,9 +645,10 @@ a project on first run; that step is intentionally deferred to a later PR.
     contracts response schema (a synchronous `ZodError` on an invalid `generatedAt`/`requestId`/
     overview — never caught or wrapped). It is pure (no clock/env/network/random/logging) and returns a
     fresh wrapper per call.
-  - **Not wired.** The presenter is **not** connected to any `/weather` route and `src/index.ts` is
-    unchanged. It decides no HTTP status/header/body-size and generates no clock/`requestId` — a future
-    route PR will call the presenter and map its body to a status.
+  - **Wired into `POST /weather` (PR #31).** The production `POST /weather` route calls this presenter to
+    turn a location hourly overview result into the `WeatherResponseV1` body, then maps that body to an
+    HTTP status. The presenter itself still decides no HTTP status/header/body-size and generates no
+    clock/`requestId` — those stay with the route and its production `meta` provider.
 - **Injectable `POST /weather` route factory** — PR #30 adds `createWeatherRoute` (`src/routes/`), the
   HTTP boundary that connects the request contract, application service, and PR #29 presenter. See
   [docs/weather-route.md](../../docs/weather-route.md). Highlights:

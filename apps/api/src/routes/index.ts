@@ -12,8 +12,10 @@
  *    response `meta` provider are all injected — the factory reads no clock/env/randomness — so it is
  *    testable independently of startup. See `docs/weather-route.md`.
  *
- * This barrel is **not** re-exported from `apps/api/src/index.ts`; the route is not mounted into app
- * startup yet — that is a later PR. The only callable production endpoint remains `GET /health`.
+ * This barrel is the weather route factory's public export and has **no** env/network side effect of its
+ * own. Production startup mounts the route at `/weather` through `createApiApp` and the production route
+ * composition (`src/api-app.ts` + `src/composition/weather-route.ts`), so `POST /weather` is a live
+ * production endpoint alongside `GET /health`.
  */
 
 export {

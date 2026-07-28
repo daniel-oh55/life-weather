@@ -5,7 +5,7 @@
  * ### What it is
  *
  * {@link createWeatherRoute} returns a **mountable Hono sub-app** that registers exactly one handler —
- * `POST /` — so a startup wiring PR can mount it at `/weather`:
+ * `POST /` — which `createApiApp` mounts at `/weather`, so the public production path is `POST /weather`:
  *
  * ```ts
  * const app = new Hono();
@@ -35,7 +35,7 @@
  * - **Dependency injection only.** The service execution port, the presenter, the server product, and
  *   the response `meta` provider are all injected. The factory reads **no** `process.env`, generates
  *   **no** clock/`requestId`, and calls **no** `Date.now`/`randomUUID`/`Math.random` — so it is fully
- *   testable independently of startup, and PR #31 supplies the production adapters.
+ *   testable independently of startup, and the PR #31 production composition supplies those adapters.
  * - **AbortSignal pass-through.** The raw `Request` `AbortSignal` (`c.req.raw.signal`) is forwarded to
  *   the service port by the same reference — no new `AbortController`, no wrapping, no timeout.
  * - **Contract-shaped, leak-free errors.** Every request-layer failure is a `WeatherErrorResponseV1`
@@ -45,9 +45,10 @@
  *
  * ### What it is not
  *
- * It is **not** mounted into `apps/api/src/index.ts` in this PR, builds **no** production composition,
- * reads no environment, and adds no cache, CORS, rate-limit, auth, logging, or custom global
- * `onError`/`notFound`. See `docs/weather-route.md`.
+ * The factory itself builds **no** production composition, reads no environment, and adds no cache, CORS,
+ * rate-limit, auth, logging, or custom global `onError`/`notFound`: `createApiApp` (not this factory)
+ * mounts it at `/weather`, and the PR #31 production composition (not this factory) reads `KMA_SERVICE_KEY`
+ * and builds the injected dependencies. See `docs/weather-route.md`.
  */
 
 import { Hono } from 'hono';
