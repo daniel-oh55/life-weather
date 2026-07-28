@@ -8,9 +8,10 @@
   "packageManager": "pnpm@11.13.0",
   "scripts": {
     "dev:mobile": "pnpm --filter @life-weather/mobile dev",
-    "dev:api": "pnpm --filter @life-weather/api dev",
+    "dev:api": "pnpm run build:api-runtime-packages && pnpm --filter @life-weather/api dev",
     "build:api-runtime-packages": "pnpm --filter @life-weather/contracts run build && pnpm --filter @life-weather/weather-core run build",
     "verify:api-runtime-packages": "node apps/api/scripts/verify-shared-runtime-entrypoints.mjs",
+    "postinstall": "pnpm run build:api-runtime-packages",
     "lint": "pnpm -r --if-present run lint",
     "typecheck": "pnpm -r --if-present run typecheck",
     "test": "pnpm -r --if-present run test",

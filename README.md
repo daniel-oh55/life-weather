@@ -39,11 +39,13 @@ docs/        # 제품 범위, 아키텍처, 개발 가이드 문서
 pnpm install
 ```
 
+`pnpm install`은 설치 직후 루트 `postinstall`로 공유 런타임 패키지(`@life-weather/contracts`, `@life-weather/weather-core`)를 컴파일해 `dist/`를 자동 생성합니다. 따라서 새로 클론한 clean checkout에서도 별도의 수동 빌드 없이 `pnpm typecheck`/`pnpm test`가 바로 동작합니다. `dist/`는 계속 Git에 커밋하지 않습니다(gitignored).
+
 ## 개발 명령
 
 ```bash
 pnpm dev:mobile   # Expo 개발 서버 (--dev-client)
-pnpm dev:api      # Hono API 로컬 개발 서버 (vercel dev)
+pnpm dev:api      # 공유 패키지 dist 재빌드 후 Hono API 로컬 개발 서버 (vercel dev)
 ```
 
 ## 검사 명령
@@ -52,7 +54,7 @@ pnpm dev:api      # Hono API 로컬 개발 서버 (vercel dev)
 pnpm lint         # 존재하는 패키지에서 lint 실행
 pnpm typecheck    # 전체 워크스페이스 타입체크
 pnpm test         # 전체 워크스페이스 테스트
-pnpm check        # lint → typecheck → test 순서로 실행
+pnpm check        # 공유 dist clean rebuild → verify → lint → typecheck → test 순서로 실행
 ```
 
 ## API 키 보안 원칙
