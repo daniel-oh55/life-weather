@@ -1,4 +1,4 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "pnpm install --frozen-lockfile && pnpm -w run verify:api-runtime-packages"
+  "installCommand": "pnpm install --frozen-lockfile && pnpm -w run build:api-runtime-packages && pnpm -w run verify:api-runtime-packages"
 }

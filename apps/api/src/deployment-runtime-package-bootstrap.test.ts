@@ -17,9 +17,10 @@ import { describe, expect, it } from 'vitest';
  *   - a root `postinstall` builds the shared `dist` right after every `pnpm install`, so the existing
  *     root/API `typecheck` and `test` commands work on a fresh checkout with no manual bootstrap;
  *   - `dev:api` rebuilds the shared packages before starting the dev server, so it never serves stale `dist`;
- *   - because `postinstall` now builds during install, `apps/api/vercel.json`'s install command drops the
- *     now-duplicate build and instead runs the Node-native `verify` so a deploy fails closed if the
- *     bootstrap ever fails to produce resolvable `dist` entrypoints.
+ *   - `apps/api/vercel.json`'s install command builds the shared `dist` explicitly and then runs the
+ *     Node-native `verify` as a fail-closed gate. Vercel caches `node_modules`, so a warm-cache
+ *     `pnpm install` can no-op and skip the root `postinstall`; the explicit build keeps the deploy
+ *     correct regardless, and `verify` aborts the deploy if `dist` is ever unresolvable.
  *
  * This test locks that wiring in place. It parses `package.json` / `vercel.json` as JSON (never a loose
  * string search of file bytes), touches no network / environment / Vercel API, and asserts full strings or
@@ -82,11 +83,15 @@ describe('shared runtime package bootstrap', () => {
     }
   });
 
-  it('vercel install does a frozen install then Node-native verify, with no duplicate build', () => {
-    expect(installCommand).toContain('pnpm install --frozen-lockfile');
-    expect(installCommand).toContain('verify:api-runtime-packages');
-    // The root postinstall already builds dist; the install command must not build it a second time.
-    expect(installCommand).not.toContain('build:api-runtime-packages');
+  it('vercel install does a frozen install, then builds the shared dist, then Node-native verifies it', () => {
+    const install = installCommand.indexOf('pnpm install --frozen-lockfile');
+    const build = installCommand.indexOf('build:api-runtime-packages');
+    const verify = installCommand.indexOf('verify:api-runtime-packages');
+    // Vercel caches node_modules, so a warm-cache install can skip the root postinstall; the deploy must
+    // build dist explicitly and only then verify it resolves, in that order.
+    expect(install).toBeGreaterThanOrEqual(0);
+    expect(build).toBeGreaterThan(install);
+    expect(verify).toBeGreaterThan(build);
   });
 
   it('vercel.json stays zero-config (no build/output/functions/includeFiles/env overrides)', () => {
