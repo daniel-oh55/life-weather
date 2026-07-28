@@ -52,10 +52,17 @@ pnpm dev:api      # 공유 패키지 dist 재빌드 후 Hono API 로컬 개발 �
 
 ```bash
 pnpm lint         # 존재하는 패키지에서 lint 실행
-pnpm typecheck    # 전체 워크스페이스 타입체크
-pnpm test         # 전체 워크스페이스 테스트
-pnpm check        # 공유 dist clean rebuild → verify → lint → typecheck → test 순서로 실행
+pnpm typecheck    # 공유 dist를 먼저 재빌드한 뒤 전체 워크스페이스 타입체크
+pnpm test         # 공유 dist를 먼저 재빌드한 뒤 전체 워크스페이스 테스트
+pnpm check        # 공유 dist를 한 번만 빌드 → verify → lint → typecheck → test 순서로 실행
 ```
+
+공유 런타임 패키지(`@life-weather/contracts`, `@life-weather/weather-core`)는 컴파일된 `dist/`를 진입점으로 사용하므로, 검사 명령은 항상 최신 소스로 `dist`를 먼저 재빌드하도록 구성되어 있습니다.
+
+- `pnpm typecheck`/`pnpm test`는 실행 시 공유 `dist`를 먼저 재빌드합니다. 따라서 공유 패키지 소스를 수정한 뒤 이 명령만 단독으로 실행해도 항상 최신 소스를 검사하며, 오래된(stale) `dist`를 그대로 재사용하지 않습니다.
+- `pnpm check`는 공유 `dist`를 **정확히 한 번만** 빌드하고, 내부적으로는 build 단계가 없는 워크스페이스 전용 검사 명령(`typecheck:workspace`, `test:workspace`)을 사용합니다. 따라서 한 번의 `check` 안에서 공유 빌드가 중복 실행되지 않습니다.
+- `apps/api` 및 공유 컴파일 패키지를 소비하는 패키지(`packages/weather-core`, `packages/lifestyle-engine`)의 개별 `typecheck`/`test`도 build-first입니다. 예를 들어 `pnpm --filter @life-weather/api run typecheck`처럼 패키지 범위로 실행해도 공유 `dist`를 먼저 재빌드합니다.
+- `dist/`는 계속 Git에 커밋하지 않습니다(gitignored/untracked).
 
 ## API 키 보안 원칙
 

@@ -13,8 +13,10 @@
     "verify:api-runtime-packages": "node apps/api/scripts/verify-shared-runtime-entrypoints.mjs",
     "postinstall": "pnpm run build:api-runtime-packages",
     "lint": "pnpm -r --if-present run lint",
-    "typecheck": "pnpm -r --if-present run typecheck",
-    "test": "pnpm -r --if-present run test",
-    "check": "pnpm run build:api-runtime-packages && pnpm run verify:api-runtime-packages && pnpm run lint && pnpm run typecheck && pnpm run test"
+    "typecheck:workspace": "pnpm -r --if-present run typecheck:workspace",
+    "test:workspace": "pnpm -r --if-present run test:workspace",
+    "typecheck": "pnpm run build:api-runtime-packages && pnpm run typecheck:workspace",
+    "test": "pnpm run build:api-runtime-packages && pnpm run test:workspace",
+    "check": "pnpm run build:api-runtime-packages && pnpm run verify:api-runtime-packages && pnpm run lint && pnpm run typecheck:workspace && pnpm run test:workspace"
   }
 }

@@ -6,8 +6,10 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "typecheck": "pnpm -w run build:api-runtime-packages && pnpm run typecheck:workspace",
+    "typecheck:workspace": "tsc --noEmit",
+    "test": "pnpm -w run build:api-runtime-packages && pnpm run test:workspace",
+    "test:workspace": "vitest run"
   },
   "devDependencies": {
     "@life-weather/contracts": "workspace:*",
