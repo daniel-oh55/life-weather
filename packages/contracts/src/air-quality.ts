@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { airQualityGrade, isoDate, isoDateTime, nonNegativeNumber } from './common';
+import { airQualityGrade, isoDate, isoDateTime, nonNegativeNumber } from './common.js';
 
 /**
  * A current air-quality observation.

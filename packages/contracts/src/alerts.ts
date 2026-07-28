@@ -5,7 +5,7 @@ import {
   nonEmptyString,
   weatherAlertSeverity,
   weatherAlertType,
-} from './common';
+} from './common.js';
 
 /**
  * A normalized weather alert.

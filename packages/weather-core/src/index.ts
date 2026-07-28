@@ -2,7 +2,7 @@ export {
   classifyFreshness,
   FreshnessStatus,
   type ClassifyFreshnessInput,
-} from './freshness';
+} from './freshness.js';
 export {
   convertKmaLatitudeLongitudeToGrid,
   KmaForecastProduct,
@@ -25,4 +25,4 @@ export {
   type SelectKmaForecastBaseTimeCandidatesAfterAvailabilityDelayInput,
   type SelectLatestKmaForecastBaseTimeAfterAvailabilityDelayInput,
   type SelectLatestKmaForecastBaseTimeInput,
-} from './kma';
+} from './kma/index.js';
