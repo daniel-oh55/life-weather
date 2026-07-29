@@ -346,7 +346,9 @@ mm, `snowfallAmountCentimeters`는 cm, 확인된 "없음"은 `0`, 미제공·파
 계약에 넣으면 모바일·생활지수 엔진이 특정 Provider 세부사항에 결합됩니다. 따라서
 `WeatherLocation`은 앱 발급 opaque `id`만 가지며, `kmaGrid`는 필요 시 **모바일 로컬 저장
 모델**이나 **서버 내부 위치 레지스트리**에서 별도로 다룹니다. `isCurrentLocation`,
-`sortOrder` 같은 UI/저장 관심사도 공유 계약에서 제외합니다.
+`sortOrder` 같은 UI/저장 관심사도 공유 계약에서 제외합니다. 모바일 로컬 저장 모델이 이 필드들을
+실제로 어떻게 담고 공유 필드만 요청으로 매핑하는지는 [mobile-saved-location.md](./mobile-saved-location.md)
+참고.
 
 object 스키마는 Zod 기본 동작을 사용하여 알 수 없는 추가 필드를 제거합니다. 따라서 실수로
 `kmaGrid` 같은 필드가 섞여 들어와도 파싱 결과에서 제거됩니다.

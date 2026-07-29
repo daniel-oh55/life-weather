@@ -17,6 +17,15 @@
   주입받아 construction·import 시 network·환경 접근이 없고, retry/timeout/cache/auth/logging과 실제 URL은
   없습니다. 이 client는 아직 어떤 화면에도 연결되지 않았습니다(screen 연결·실제 호출·좌표/저장소는
   후속 PR). 자세한 내용은 [mobile-weather-api-client.md](./mobile-weather-api-client.md) 참고.
+  이에 더해 기기 로컬 **저장 지역(saved-location) 경계**(`src/locations`)가 추가됐습니다 — 공유
+  `weatherLocation`을 **확장**한 strict `mobileSavedLocation` schema(로컬 전용 `kmaGrid`/`isCurrent`/
+  `sortOrder` 필드를 additive하게 더하고 공유 필드 규칙은 그대로 상속)와, 저장 지역을 공유
+  `WeatherRequestV1`으로 **명시적으로 매핑**하는 순수 함수(`createWeatherRequestFromSavedLocation`)를
+  제공합니다. 함수는 unknown 입력을 `safeParse`로 검증해 throw 없이 3-way 없는 `ok`/고정
+  `INVALID_SAVED_LOCATION` result를 반환하고, 공유 9개 필드만 하나씩 매핑해(spread 금지) 로컬 전용·
+  Provider-native(`nx`/`ny`) 필드가 요청에 새어 나가지 않게 합니다. 이 경계는 실제 저장소·위치 권한·
+  현재 위치 조회·화면 연결·실제 호출을 다루지 않습니다(후속 PR). 자세한 내용은
+  [mobile-saved-location.md](./mobile-saved-location.md) 참고.
 - `apps/api` — Hono 기반 백엔드. 외부 공공데이터 API 호출, API 키 보관, 응답 정규화를 담당할
   위치입니다. **현재 상태**: `GET /health`에 더해, PR #4에서 기상청(KMA) **원본 응답 경계**
   (`src/providers/kma`)를 구현했습니다 — 단기·초단기예보 원본 JSON의 Zod 런타임 검증, 성공·
@@ -268,7 +277,7 @@ RN1/SNO/TMP/T1H/POP/REH/WSD/VEC를 공통 값으로 정규화하고 contracts `H
 contracts    → zod
 weather-core → (런타임 의존 없음; contracts는 타입 검증용 devDependency)
 apps/api     → contracts, weather-core, zod, hono
-apps/mobile  → contracts (weather API client 경계; zod는 contracts를 통한 transitive)
+apps/mobile  → contracts, zod (weather API client + saved-location 경계)
 ```
 
 모바일 weather API client 경계가 추가되면서 `apps/mobile`은 `@life-weather/contracts`를 **workspace
@@ -278,6 +287,15 @@ contracts consumer(`apps/api` 등)와 동일하게 shared `dist`를 먼저 빌�
 새 범용 HTTP dependency는 추가하지 않았고(주입된 `fetchImpl`만 사용), `contracts → apps/mobile`·
 `apps/mobile → apps/api` 같은 역방향은 없습니다(모바일은 계약만 공유하고 API 내부 계층은 import하지
 않습니다).
+
+이후 모바일 저장 지역 경계(`src/locations`)가 추가되면서 `apps/mobile`은 공유 `weatherLocation`을
+`.extend()`로 확장하고 로컬 전용 필드 schema를 직접 정의하기 위해 **`zod`를 direct runtime
+dependency**(`^4.1.11`, contracts와 동일 버전 계열)로 선언했습니다. 기존에도 zod는 contracts를 통해
+전이적으로 존재했고 lockfile은 단일 `zod@4.1.11`로 해석되므로 새 zod 버전이나 중복은 없습니다. 이
+변경은 `apps/mobile/package.json`의 direct `zod` 항목과 그에 필요한 최소 `pnpm-lock.yaml` importer
+변경뿐이며, 다른 dependency·package manager·lockfile format·build-first scripts는 바뀌지 않았습니다.
+saved-location 경계 역시 `@life-weather/contracts` compiled `dist`만 소비하므로 동일한 build-first
+계약을 따르고, `contracts → apps/mobile`·`apps/mobile → apps/api` 역방향은 그대로 없습니다.
 
 `weather-core`는 런타임에 zod에도 contracts에도 의존하지 않습니다. PR #3에서 상태 정규화의
 반환 타입이 contracts의 `WeatherCondition`에 할당 가능한지를 **컴파일 타임 타입 테스트**로만
