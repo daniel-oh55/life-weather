@@ -3,6 +3,7 @@
   "main": "expo-router/entry",
   "version": "1.0.0",
   "dependencies": {
+    "@life-weather/contracts": "workspace:*",
     "expo": "~57.0.4",
     "expo-constants": "~57.0.3",
     "expo-dev-client": "~57.0.5",
@@ -21,7 +22,8 @@
     "@types/react": "~19.2.2",
     "eslint": "^9.39.5",
     "eslint-config-expo": "~57.0.0",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.10"
   },
   "scripts": {
     "start": "expo start",
@@ -30,8 +32,10 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "typecheck": "tsc --noEmit",
-    "typecheck:workspace": "tsc --noEmit"
+    "typecheck": "pnpm -w run build:api-runtime-packages && pnpm run typecheck:workspace",
+    "typecheck:workspace": "tsc --noEmit",
+    "test": "pnpm -w run build:api-runtime-packages && pnpm run test:workspace",
+    "test:workspace": "vitest run"
   },
   "private": true
 }

@@ -6,7 +6,17 @@
 ## apps와 packages의 책임
 
 - `apps/mobile` — Expo Router 기반 모바일 앱. 화면, 네비게이션, 사용자 입력 처리를 담당합니다.
-  외부 공공데이터 API를 직접 호출하지 않습니다 (아래 참고).
+  외부 공공데이터 API를 직접 호출하지 않습니다 (아래 참고). **현재 상태**: 최소 실행 화면에 더해,
+  `apps/api`의 production `POST /weather` 계약을 안전하게 소비하는 **contract-safe weather API client
+  경계**(`src/weather-api`, `createWeatherApiClient`)가 추가되었습니다 — 공유
+  `@life-weather/contracts` schema(`weatherRequestV1`/`apiEnvelopeHeader`/`weatherResponseV1`,
+  `CONTRACT_VERSION`)를 **직접** 소비해 outbound 요청을 전송 전에 검증하고, 응답은 envelope
+  header→contract version→full V1 순서로 방어적으로 파싱하며, network/abort/non-JSON/malformed/
+  invalid-envelope/unsupported-version/invalid-response/invalid-config 같은 transport·consumer 오류를
+  API의 `WeatherErrorResponseV1`과 구분되는 좁은 typed result로 반환합니다. `baseUrl`과 `fetchImpl`을
+  주입받아 construction·import 시 network·환경 접근이 없고, retry/timeout/cache/auth/logging과 실제 URL은
+  없습니다. 이 client는 아직 어떤 화면에도 연결되지 않았습니다(screen 연결·실제 호출·좌표/저장소는
+  후속 PR). 자세한 내용은 [mobile-weather-api-client.md](./mobile-weather-api-client.md) 참고.
 - `apps/api` — Hono 기반 백엔드. 외부 공공데이터 API 호출, API 키 보관, 응답 정규화를 담당할
   위치입니다. **현재 상태**: `GET /health`에 더해, PR #4에서 기상청(KMA) **원본 응답 경계**
   (`src/providers/kma`)를 구현했습니다 — 단기·초단기예보 원본 JSON의 Zod 런타임 검증, 성공·
@@ -258,7 +268,16 @@ RN1/SNO/TMP/T1H/POP/REH/WSD/VEC를 공통 값으로 정규화하고 contracts `H
 contracts    → zod
 weather-core → (런타임 의존 없음; contracts는 타입 검증용 devDependency)
 apps/api     → contracts, weather-core, zod, hono
+apps/mobile  → contracts (weather API client 경계; zod는 contracts를 통한 transitive)
 ```
+
+모바일 weather API client 경계가 추가되면서 `apps/mobile`은 `@life-weather/contracts`를 **workspace
+runtime 의존**으로 소비합니다(방향 `apps/mobile → contracts`). client는 compiled contracts `dist`(Node
+ESM)와 그 안의 Zod runtime을 그대로 사용하므로, mobile의 public `typecheck`/`test`는 다른 compiled-
+contracts consumer(`apps/api` 등)와 동일하게 shared `dist`를 먼저 빌드하는 build-first 계약을 따릅니다.
+새 범용 HTTP dependency는 추가하지 않았고(주입된 `fetchImpl`만 사용), `contracts → apps/mobile`·
+`apps/mobile → apps/api` 같은 역방향은 없습니다(모바일은 계약만 공유하고 API 내부 계층은 import하지
+않습니다).
 
 `weather-core`는 런타임에 zod에도 contracts에도 의존하지 않습니다. PR #3에서 상태 정규화의
 반환 타입이 contracts의 `WeatherCondition`에 할당 가능한지를 **컴파일 타임 타입 테스트**로만
