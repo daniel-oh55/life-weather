@@ -6,7 +6,7 @@
 
 TypeScript pnpm 모노레포 위에 Hono API가 올라가 있으며, `GET /health`와 함께 `POST /weather`가 프로덕션에 마운트되어 실제로 호출 가능한 엔드포인트입니다. 현재 `POST /weather`는 기상청 SHORT_FORECAST(단기예보) 기반 시간별 예보(location hourly overview)를 제공합니다. 공통 런타임 패키지(`@life-weather/contracts`, `@life-weather/weather-core`)는 컴파일된 Node ESM `dist`를 진입점으로 사용합니다.
 
-현재(current)/일별(daily)/대기질/특보 예보 섹션, 서버 응답 캐시, 그리고 모바일 API 클라이언트는 아직 구현되지 않았습니다.
+현재(current)/일별(daily)/대기질/특보 예보 섹션과 서버 응답 캐시는 아직 구현되지 않았습니다. 모바일에는 `POST /weather` 계약을 안전하게 소비하는 contract-safe API 클라이언트 경계가 추가되었지만, 아직 화면에는 연결되어 있지 않습니다.
 
 ## 확정 기술 스택
 
@@ -79,6 +79,7 @@ pnpm check        # 공유 dist를 한 번만 빌드 → verify → lint → typ
 - Expo SDK 57 + Expo Router 최소 실행 화면, `expo-dev-client` 설치
 - Hono API의 `GET /health` 엔드포인트와 프로덕션에 마운트된 `POST /weather` 엔드포인트, 그리고 각 테스트
 - 기상청 SHORT_FORECAST(단기예보) 기반 시간별 예보(location hourly overview) 프로덕션 그래프를 `POST /weather` 라우트에 연결
+- 모바일 `POST /weather` contract-safe API 클라이언트 경계(`apps/mobile/src/weather-api`): 공유 계약을 직접 소비해 요청·응답을 런타임 검증하고 전송/검증 오류를 typed result로 구분(화면 연결·실제 호출 없음)
 - 공통 런타임 패키지(`contracts`, `weather-core`)는 컴파일된 Node ESM `dist`를 진입점으로 사용
 - GitHub Actions CI (`lint` → `typecheck` → `test`)
 - 환경변수 예시(`.env.example`)와 보안 관련 `.gitignore` 규칙
@@ -87,7 +88,7 @@ pnpm check        # 공유 dist를 한 번만 빌드 → verify → lint → typ
 
 - 에어코리아 대기질 연동, 기상 특보(alerts) 연동
 - `current`(현재)/`daily`(일별) 예보 섹션, 서버 응답 캐시
-- 모바일 API 클라이언트와 화면 연결, 지역 데이터 모델, 위치 권한, 지역 저장소
+- 모바일 API 클라이언트의 화면 연결, 지역 데이터 모델, 위치 권한, 지역 저장소
 - 화면 탭 구조, 디자인 시스템, 날씨 배경 이미지
 - Android 위젯, AdMob SDK, 푸시 알림, 데이터베이스
 - 실제 운영 Vercel 배포/도메인 연결, 실제 EAS 빌드, Android package name, 개인정보 처리방침

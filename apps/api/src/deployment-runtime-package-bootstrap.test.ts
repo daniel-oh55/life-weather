@@ -33,8 +33,9 @@ import { describe, expect, it } from 'vitest';
  *   - `check` builds the shared `dist` exactly once, then runs `verify`, `lint`, and the recursive
  *     `:workspace` runners directly (never the public build-first commands), so the shared build is not
  *     repeated inside a single `check`;
- *   - consumer packages of the compiled shared packages (`apps/api`, `packages/lifestyle-engine`,
- *     `packages/weather-core`) get a build-first public `typecheck` / `test` wrapper (`pnpm -w run
+ *   - consumer packages of the compiled shared packages (`apps/api`, `apps/mobile`,
+ *     `packages/lifestyle-engine`, `packages/weather-core`) get a build-first public `typecheck` / `test`
+ *     wrapper (`pnpm -w run
  *     build:api-runtime-packages && pnpm run <check>:workspace`) so a package-scoped run also refreshes
  *     `dist`. The build wrapper only calls package `build` scripts (never `typecheck`/`test`), so it cannot
  *     recurse.
@@ -176,6 +177,9 @@ describe('stale-dist regression: public build-first vs internal :workspace scrip
 
   const consumerCases: Array<[string, Record<string, string>]> = [
     ['apps/api', apiScripts],
+    // apps/mobile became a compiled-contracts consumer when the mobile weather API client started
+    // importing `@life-weather/contracts` at runtime, so its public checks are build-first too.
+    ['apps/mobile', mobileScripts],
     ['packages/lifestyle-engine', lifestyleScripts],
     ['packages/weather-core', weatherCoreScripts],
   ];
@@ -203,12 +207,9 @@ describe('stale-dist regression: public build-first vs internal :workspace scrip
   }
 
   it('non-consumer packages keep source-only public checks and add :workspace aliases', () => {
-    // mobile / config have only a typecheck; the public command stays source-only (no build wrapper) and the
-    // alias mirrors it for the root recursive runner.
-    expect(mobileScripts.typecheck).toBe('tsc --noEmit');
-    expect(mobileScripts['typecheck:workspace']).toBe('tsc --noEmit');
-    expect(mobileScripts.typecheck).not.toContain('build:api-runtime-packages');
-
+    // config consumes no compiled shared package, so its public command stays source-only (no build
+    // wrapper) and the alias mirrors it for the root recursive runner. (apps/mobile used to be here but
+    // is now a build-first consumer — see the consumer cases above.)
     expect(configScripts.typecheck).toBe('tsc --noEmit');
     expect(configScripts['typecheck:workspace']).toBe('tsc --noEmit');
     expect(configScripts.typecheck).not.toContain('build:api-runtime-packages');

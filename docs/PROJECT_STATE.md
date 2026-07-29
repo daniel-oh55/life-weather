@@ -29,7 +29,9 @@
 - AirKorea air quality
 - alerts
 - response cache
-- mobile API client와 화면 연결
+- mobile API client의 화면 연결 (contract-safe `POST /weather` client boundary
+  `apps/mobile/src/weather-api`는 구현됨 — 요청·응답 계약 소비와 typed 오류 경계까지; 화면 연결·실제
+  호출은 미구현)
 - location permission/storage model
 - 디자인 시스템과 주요 화면
 - Android widget
