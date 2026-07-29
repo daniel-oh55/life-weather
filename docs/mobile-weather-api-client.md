@@ -27,7 +27,8 @@ const result = await client.fetchWeather(request, { signal });
 ```
 
 - `createWeatherApiClient({ baseUrl, fetchImpl })` — client를 생성합니다. `fetchImpl`은 선택이며
-  생략 시 런타임 global `fetch`를 사용합니다. construction은 side effect가 없습니다.
+  생략 시 런타임 global `fetch`를 사용합니다. construction은 side effect가 없으며 잘못된 설정에도
+  throw하지 않습니다(자세한 정책은 아래 "설정(config) 검증" 참고).
 - `fetchWeather(request, options?)` — 단일 weather fetch method. `request`는 `WeatherRequestV1`,
   `options.signal`은 caller의 `AbortSignal`입니다.
 
@@ -45,6 +46,23 @@ const result = await client.fetchWeather(request, { signal });
 `success`/`apiError` 구분은 공개 계약의 `ok` discriminator만으로 수행하며, HTTP status별 error
 mapping을 모바일에서 재작성하지 않습니다.
 
+## 설정(config) 검증
+
+`createWeatherApiClient`는 construction 시 `baseUrl`과 `fetchImpl`을 side effect 없이 정규화·검증하며,
+runtime-invalid 설정에도 throw하지 않습니다. 설정이 사용 불가하면 fetch를 호출하지 않고 첫 `fetchWeather`
+호출에서 `clientError`(`invalidClientConfiguration`)를 반환하며, 오류 객체에는 URL이나 config 원문을 담지
+않습니다.
+
+`baseUrl` 정책:
+
+- 앞뒤 whitespace는 trim(무시)하며 endpoint에 raw whitespace를 보존하지 않습니다.
+- 절대 `http:`/`https:` URL만 허용합니다(다른 scheme·malformed·상대 경로 거부).
+- query·fragment·embedded credentials(`user:pass@`)가 포함된 URL은 거부합니다.
+- optional base path는 보존하고, trailing slash 유무와 무관하게 정확히 한 번 `/weather`를 추가합니다.
+
+`fetchImpl` 정책: caller가 제공하면 runtime에서도 함수인지 확인하고(비함수면 global fetch로 fallback하지
+않고 invalid 설정), 생략된 경우에만 함수인 global `fetch`를 사용합니다.
+
 ## Outbound request 검증
 
 전송 전에 기존 `weatherRequestV1`(strict)로 request를 런타임 parse합니다. request는 정확히
@@ -59,7 +77,9 @@ request만 serialize하고 caller 입력을 그대로 spread해 전송하지 않
 
 응답 처리 순서는 고정되어 있습니다.
 
-1. response `Content-Type`을 방어적으로 확인하고 body를 읽습니다.
+1. response `Content-Type`의 media type(첫 `;` 이전, trim·case-insensitive)이 정확히
+   `application/json`인지 확인한 뒤 body를 읽습니다. `application/jsonp`·`application/json-extra`·
+   `application/problem+json` 같은 lookalike/`+json` 계열은 거부합니다.
 2. parsed JSON을 최소 `apiEnvelopeHeader`로 먼저 검사합니다.
 3. envelope의 `meta.contractVersion`을 `CONTRACT_VERSION`과 비교합니다.
 4. version이 다르면 full V1 parse를 **하지 않고** `unsupportedContractVersion`으로 종료합니다.
@@ -93,8 +113,10 @@ fetch error message, 전체 headers, request location/좌표, secret marker, pro
 ## AbortSignal
 
 caller의 `AbortSignal`은 wrapping 없이 **동일 reference**로 `fetch`에 전달합니다. 이미 abort된
-signal은 fetch를 호출하지 않고 `aborted`로 즉시 종료합니다. client는 자체 timeout이나 controller를
-만들지 않습니다.
+signal은 fetch를 호출하지 않고 `aborted`로 즉시 종료합니다. body read 도중 실패한 경우에도 error가
+`AbortError`이거나 caller signal이 이미 aborted면 `aborted`로 분류하고, 그 외에는 `networkError`로
+분류합니다(일부 런타임은 body read 취소를 `AbortError`가 아닌 일반 error로 표면화하기 때문). client는
+자체 timeout이나 controller를 만들지 않습니다.
 
 ## Build-first 계약
 

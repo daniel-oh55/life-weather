@@ -40,8 +40,11 @@ export type WeatherApiFetch = (
 /** Construction options. Both collaborators are injected; nothing is read from the environment. */
 export interface WeatherApiClientConfig {
   /**
-   * The API origin (optionally with a base path), e.g. `https://example.test`. The client
-   * appends `/weather`; a single trailing slash is tolerated. No URL is hard-coded here.
+   * The API origin (optionally with a base path), e.g. `https://example.test`. Must be an
+   * absolute `http:`/`https:` URL with no query, fragment, or embedded credentials; surrounding
+   * whitespace is trimmed. The client appends exactly one `/weather` segment, tolerating a
+   * trailing slash. An unusable value yields an `invalidClientConfiguration` result — it never
+   * throws — and no URL is hard-coded here.
    */
   readonly baseUrl: string;
   /**
@@ -105,9 +108,21 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
-/** Whether a `Content-Type` header value declares a JSON body. */
+/**
+ * Whether a `Content-Type` header value declares exactly an `application/json` body.
+ *
+ * Only the media type is examined: the portion before the first `;` (dropping any parameters
+ * such as `charset`), trimmed and lower-cased, must equal `application/json` exactly. A
+ * lookalike type — `application/jsonp`, `application/json-extra`, `text/application/json`, or any
+ * `application/*+json` such as `application/problem+json` — is not accepted, matching the exact
+ * `application/json` the server produces today.
+ */
 function isJsonContentType(contentType: string | null): boolean {
-  return contentType !== null && contentType.toLowerCase().includes(JSON_CONTENT_TYPE);
+  if (contentType === null) {
+    return false;
+  }
+  const mediaType = contentType.split(';', 1)[0]!.trim().toLowerCase();
+  return mediaType === JSON_CONTENT_TYPE;
 }
 
 /**
@@ -121,7 +136,10 @@ function isJsonContentType(contentType: string | null): boolean {
  * 4. only on a version match, run the full `weatherResponseV1` parse;
  * 5. return the `success` / `apiError` variant off the response `ok` discriminator.
  */
-async function readResponse(response: Response): Promise<WeatherApiResult> {
+async function readResponse(
+  response: Response,
+  signal?: AbortSignal,
+): Promise<WeatherApiResult> {
   if (!isJsonContentType(response.headers.get('content-type'))) {
     return clientError('nonJsonResponse');
   }
@@ -130,8 +148,13 @@ async function readResponse(response: Response): Promise<WeatherApiResult> {
   try {
     bodyText = await response.text();
   } catch (error) {
-    // A body-stream failure is a transport problem, not a malformed payload.
-    return clientError(isAbortError(error) ? 'aborted' : 'networkError');
+    // A body-stream failure is a transport problem, not a malformed payload. It is classified as
+    // an abort when the runtime error says so *or* the caller's signal has already fired — some
+    // runtimes surface a body-read cancellation as a generic error rather than an `AbortError`.
+    if (isAbortError(error) || signal?.aborted === true) {
+      return clientError('aborted');
+    }
+    return clientError('networkError');
   }
 
   let json: unknown;
@@ -162,9 +185,66 @@ async function readResponse(response: Response): Promise<WeatherApiResult> {
     : { kind: 'apiError', error: parsed.data };
 }
 
-/** Drop a single trailing slash so `${baseUrl}/weather` never produces a double slash. */
-function weatherEndpoint(baseUrl: string): string {
-  return `${baseUrl.replace(/\/+$/, '')}/weather`;
+/**
+ * Normalize and validate a caller-supplied `baseUrl` into the exact absolute `/weather` endpoint,
+ * or `null` when the configuration is unusable. This never throws and never reads the environment.
+ *
+ * The input is treated as untrusted (a runtime cast or a JavaScript caller can defeat the static
+ * `string` type), so the value is checked at runtime. Surrounding whitespace is trimmed rather
+ * than preserved, and the URL must be an absolute `http:`/`https:` origin (optionally with a base
+ * path) that carries no query, fragment, or embedded credentials. Exactly one `/weather` segment
+ * is appended regardless of a trailing slash. On any failure `null` is returned so the caller can
+ * surface `invalidClientConfiguration` — the offending value is never echoed back.
+ */
+function resolveWeatherEndpoint(rawBaseUrl: unknown): string | null {
+  if (typeof rawBaseUrl !== 'string') {
+    return null;
+  }
+  const trimmed = rawBaseUrl.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    // Malformed or non-absolute (schemeless / relative) URLs land here.
+    return null;
+  }
+
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    return null;
+  }
+  if (url.search !== '' || url.hash !== '') {
+    return null;
+  }
+  if (url.username !== '' || url.password !== '') {
+    return null;
+  }
+
+  // `origin` carries scheme + host + port (never credentials); the base path is preserved with
+  // any trailing slashes stripped so exactly one `/weather` segment is appended.
+  const basePath = url.pathname.replace(/\/+$/, '');
+  return `${url.origin}${basePath}/weather`;
+}
+
+/**
+ * Resolve the fetch implementation, or `undefined` when none is usable. A caller-provided
+ * `fetchImpl` must be a function at runtime (a runtime cast can supply a non-function); when it is
+ * omitted, the global `fetch` is used only if it is itself a function. A provided-but-invalid
+ * `fetchImpl` never silently falls back to the global.
+ */
+function resolveFetch(config: WeatherApiClientConfig): WeatherApiFetch | undefined {
+  const providedFetch: unknown = config.fetchImpl;
+  if (providedFetch !== undefined) {
+    return typeof providedFetch === 'function'
+      ? (providedFetch as WeatherApiFetch)
+      : undefined;
+  }
+  return typeof globalThis.fetch === 'function'
+    ? (globalThis.fetch as WeatherApiFetch)
+    : undefined;
 }
 
 /**
@@ -178,21 +258,14 @@ function weatherEndpoint(baseUrl: string): string {
 export function createWeatherApiClient(
   config: WeatherApiClientConfig,
 ): WeatherApiClient {
-  const resolvedFetch: WeatherApiFetch | undefined =
-    config.fetchImpl ??
-    (typeof globalThis.fetch === 'function'
-      ? (globalThis.fetch as WeatherApiFetch)
-      : undefined);
-
-  const hasValidBaseUrl =
-    typeof config.baseUrl === 'string' && config.baseUrl.trim().length > 0;
-
-  const isConfigured = hasValidBaseUrl && resolvedFetch !== undefined;
-  const endpoint = hasValidBaseUrl ? weatherEndpoint(config.baseUrl) : '';
+  // Resolve and validate both collaborators once, without throwing. Either being unusable leaves
+  // the client unconfigured; the failure is surfaced as a typed result on the first call.
+  const endpoint = resolveWeatherEndpoint(config.baseUrl);
+  const resolvedFetch = resolveFetch(config);
 
   return {
     async fetchWeather(request, options) {
-      if (!isConfigured || resolvedFetch === undefined) {
+      if (endpoint === null || resolvedFetch === undefined) {
         return clientError('invalidClientConfiguration');
       }
 
@@ -229,7 +302,7 @@ export function createWeatherApiClient(
         return clientError('networkError');
       }
 
-      return readResponse(response);
+      return readResponse(response, options?.signal);
     },
   };
 }

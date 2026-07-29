@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   createWeatherApiClient,
@@ -92,17 +92,48 @@ function expectCleanClientError(
   expect(serialized).not.toContain('example.test');
 }
 
+/** A `Response` whose body read rejects with `error`, used to exercise body-stream failures. */
+function bodyFailingResponse(
+  error: unknown,
+  contentType = 'application/json',
+): Response {
+  return {
+    headers: new Headers({ 'content-type': contentType }),
+    text: () => Promise.reject(error),
+  } as unknown as Response;
+}
+
+/** A `Response` that carries no `Content-Type` header at all (a null-body response has none). */
+function noContentTypeResponse(): Response {
+  return new Response(null, { status: 200 });
+}
+
+/**
+ * Assert that a given `baseUrl` (typed loosely, so a runtime cast can be exercised) leaves the
+ * client unconfigured: construction does not throw, `fetchWeather` resolves to a clean
+ * `invalidClientConfiguration`, and no fetch is ever attempted.
+ */
+async function expectInvalidConfiguration(baseUrl: unknown): Promise<void> {
+  const { fetchImpl, calls } = recordingFetch(() => jsonResponse(successResponseBody()));
+  let client: ReturnType<typeof createWeatherApiClient> | undefined;
+  expect(() => {
+    client = createWeatherApiClient({ baseUrl: baseUrl as string, fetchImpl });
+  }).not.toThrow();
+  const result = await client!.fetchWeather(validWeatherRequest());
+  expectCleanClientError(result, 'invalidClientConfiguration');
+  expect(calls.length).toBe(0);
+}
+
 // ---------------------------------------------------------------------------
 // Construction
 // ---------------------------------------------------------------------------
 
 describe('createWeatherApiClient — construction', () => {
   it('performs no network call and does not throw when constructed', () => {
-    const { calls } = recordingFetch(() => jsonResponse(successResponseBody()));
-    const client = createWeatherApiClient({
-      baseUrl: SYNTHETIC_BASE_URL,
-      fetchImpl: recordingFetch(() => jsonResponse(successResponseBody())).fetchImpl,
-    });
+    // The recorder injected as `fetchImpl` is the *same* one whose `calls` we assert, so this
+    // proves the actually-injected fetch is untouched at construction time.
+    const { fetchImpl, calls } = recordingFetch(() => jsonResponse(successResponseBody()));
+    const client = createWeatherApiClient({ baseUrl: SYNTHETIC_BASE_URL, fetchImpl });
     expect(client).toBeDefined();
     expect(calls.length).toBe(0);
   });
@@ -110,6 +141,123 @@ describe('createWeatherApiClient — construction', () => {
   it('rejects an empty baseUrl as an invalid-configuration client error, calling no fetch', async () => {
     const { fetchImpl, calls } = recordingFetch(() => jsonResponse(successResponseBody()));
     const client = createWeatherApiClient({ baseUrl: '   ', fetchImpl });
+    const result = await client.fetchWeather(validWeatherRequest());
+    expectCleanClientError(result, 'invalidClientConfiguration');
+    expect(calls.length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Configuration validation
+// ---------------------------------------------------------------------------
+
+describe('createWeatherApiClient — configuration validation', () => {
+  it('accepts a valid absolute https origin and posts to <origin>/weather', async () => {
+    const { fetchImpl, calls } = recordingFetch(() => jsonResponse(successResponseBody()));
+    const client = createWeatherApiClient({ baseUrl: 'https://example.test', fetchImpl });
+    const result = await client.fetchWeather(validWeatherRequest());
+    expect(result.kind).toBe('success');
+    expect(calls[0]!.input).toBe('https://example.test/weather');
+  });
+
+  it('accepts an origin with a trailing slash, appending /weather exactly once', async () => {
+    const { fetchImpl, calls } = recordingFetch(() => jsonResponse(successResponseBody()));
+    const client = createWeatherApiClient({ baseUrl: 'https://example.test/', fetchImpl });
+    await client.fetchWeather(validWeatherRequest());
+    expect(calls[0]!.input).toBe('https://example.test/weather');
+  });
+
+  it('preserves an optional base path', async () => {
+    const { fetchImpl, calls } = recordingFetch(() => jsonResponse(successResponseBody()));
+    const client = createWeatherApiClient({ baseUrl: 'https://example.test/api/v1', fetchImpl });
+    await client.fetchWeather(validWeatherRequest());
+    expect(calls[0]!.input).toBe('https://example.test/api/v1/weather');
+  });
+
+  it('preserves a base path that carries a trailing slash', async () => {
+    const { fetchImpl, calls } = recordingFetch(() => jsonResponse(successResponseBody()));
+    const client = createWeatherApiClient({ baseUrl: 'https://example.test/api/v1/', fetchImpl });
+    await client.fetchWeather(validWeatherRequest());
+    expect(calls[0]!.input).toBe('https://example.test/api/v1/weather');
+  });
+
+  it('trims surrounding whitespace and never preserves it in the endpoint', async () => {
+    const { fetchImpl, calls } = recordingFetch(() => jsonResponse(successResponseBody()));
+    const client = createWeatherApiClient({ baseUrl: '  https://example.test  ', fetchImpl });
+    const result = await client.fetchWeather(validWeatherRequest());
+    expect(result.kind).toBe('success');
+    expect(calls[0]!.input).toBe('https://example.test/weather');
+  });
+
+  it.each([
+    ['an empty string', ''],
+    ['a whitespace-only string', '   '],
+    ['a schemeless relative URL', 'example.test/weather'],
+    ['an absolute-path relative URL', '/weather'],
+    ['a malformed URL', 'http://%%%bad'],
+    ['an unsupported scheme', 'ftp://example.test'],
+    ['a URL with a query string', 'https://example.test?foo=bar'],
+    ['a URL with a fragment', 'https://example.test#section'],
+    ['a URL with embedded credentials', 'https://user:pass@example.test'],
+  ])('rejects %s as invalidClientConfiguration, calling no fetch', async (_label, baseUrl) => {
+    await expectInvalidConfiguration(baseUrl);
+  });
+
+  it.each([
+    ['a number', 123],
+    ['null', null],
+    ['undefined', undefined],
+    ['an object', {}],
+  ])('rejects a runtime non-string baseUrl (%s)', async (_label, baseUrl) => {
+    await expectInvalidConfiguration(baseUrl);
+  });
+
+  it.each([
+    ['a number', 42],
+    ['null', null],
+    ['an object', {}],
+    ['a string', 'not-a-function'],
+  ])(
+    'rejects a runtime non-function fetchImpl (%s) without falling back to global fetch',
+    async (_label, badFetch) => {
+      const client = createWeatherApiClient({
+        baseUrl: SYNTHETIC_BASE_URL,
+        fetchImpl: badFetch as unknown as WeatherApiFetch,
+      });
+      const result = await client.fetchWeather(validWeatherRequest());
+      expectCleanClientError(result, 'invalidClientConfiguration');
+    },
+  );
+
+  it('rejects when fetchImpl is omitted and no global fetch exists', async () => {
+    vi.stubGlobal('fetch', undefined);
+    try {
+      const client = createWeatherApiClient({ baseUrl: SYNTHETIC_BASE_URL });
+      const result = await client.fetchWeather(validWeatherRequest());
+      expectCleanClientError(result, 'invalidClientConfiguration');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('does not throw at construction for a runtime-invalid config, and fetchWeather resolves', async () => {
+    let client: ReturnType<typeof createWeatherApiClient> | undefined;
+    expect(() => {
+      client = createWeatherApiClient({
+        baseUrl: undefined as unknown as string,
+        fetchImpl: 123 as unknown as WeatherApiFetch,
+      });
+    }).not.toThrow();
+    await expect(client!.fetchWeather(validWeatherRequest())).resolves.toBeDefined();
+  });
+
+  it('never leaks the raw base URL or a secret marker in a configuration error', async () => {
+    const { fetchImpl, calls } = recordingFetch(() => jsonResponse(successResponseBody()));
+    // Embedded credentials make this an invalid config; the password carries the secret marker.
+    const client = createWeatherApiClient({
+      baseUrl: `https://user:${SECRET_MARKER}@example.test`,
+      fetchImpl,
+    });
     const result = await client.fetchWeather(validWeatherRequest());
     expectCleanClientError(result, 'invalidClientConfiguration');
     expect(calls.length).toBe(0);
@@ -314,6 +462,84 @@ describe('fetchWeather — transport failures', () => {
     const controller = new AbortController();
     await client.fetchWeather(validWeatherRequest(), { signal: controller.signal });
     expect(calls[0]!.init.signal).toBe(controller.signal);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Response Content-Type media type
+// ---------------------------------------------------------------------------
+
+describe('fetchWeather — Content-Type media type', () => {
+  it.each([
+    'application/json',
+    'application/json; charset=utf-8',
+    'APPLICATION/JSON',
+    '  application/json  ',
+    'application/json ; charset=utf-8',
+  ])('accepts the JSON media type %j', async (contentType) => {
+    const { fetchImpl } = recordingFetch(() =>
+      rawResponse(JSON.stringify(successResponseBody()), contentType),
+    );
+    const client = createWeatherApiClient({ baseUrl: SYNTHETIC_BASE_URL, fetchImpl });
+    const result = await client.fetchWeather(validWeatherRequest());
+    expect(result.kind).toBe('success');
+  });
+
+  it.each([
+    'text/plain',
+    'application/jsonp',
+    'application/json-extra',
+    'text/application/json',
+    'application/problem+json',
+    'application/ld+json',
+    '',
+  ])('rejects the non-JSON media type %j as nonJsonResponse', async (contentType) => {
+    const { fetchImpl } = recordingFetch(() =>
+      rawResponse(JSON.stringify(successResponseBody()), contentType),
+    );
+    const client = createWeatherApiClient({ baseUrl: SYNTHETIC_BASE_URL, fetchImpl });
+    expectCleanClientError(await client.fetchWeather(validWeatherRequest()), 'nonJsonResponse');
+  });
+
+  it('rejects a missing Content-Type header as nonJsonResponse', async () => {
+    const { fetchImpl } = recordingFetch(() => noContentTypeResponse());
+    const client = createWeatherApiClient({ baseUrl: SYNTHETIC_BASE_URL, fetchImpl });
+    expectCleanClientError(await client.fetchWeather(validWeatherRequest()), 'nonJsonResponse');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Response body-read failure classification
+// ---------------------------------------------------------------------------
+
+describe('fetchWeather — body-read failure classification', () => {
+  it('classifies a generic body-read rejection as aborted when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    const fetchImpl: WeatherApiFetch = () => {
+      // The signal is not aborted before fetch (so the pre-fetch short-circuit is skipped); it
+      // fires while the response is in hand, then the body read fails with a generic error.
+      controller.abort();
+      return Promise.resolve(bodyFailingResponse(new Error(SECRET_MARKER)));
+    };
+    const client = createWeatherApiClient({ baseUrl: SYNTHETIC_BASE_URL, fetchImpl });
+    const result = await client.fetchWeather(validWeatherRequest(), {
+      signal: controller.signal,
+    });
+    expectCleanClientError(result, 'aborted');
+  });
+
+  it('classifies a generic body-read rejection as networkError when the signal is not aborted', async () => {
+    const { fetchImpl } = recordingFetch(() => bodyFailingResponse(new Error(SECRET_MARKER)));
+    const client = createWeatherApiClient({ baseUrl: SYNTHETIC_BASE_URL, fetchImpl });
+    expectCleanClientError(await client.fetchWeather(validWeatherRequest()), 'networkError');
+  });
+
+  it('classifies a body-read AbortError as aborted even without an aborted signal', async () => {
+    const abortError = new Error(SECRET_MARKER);
+    abortError.name = 'AbortError';
+    const { fetchImpl } = recordingFetch(() => bodyFailingResponse(abortError));
+    const client = createWeatherApiClient({ baseUrl: SYNTHETIC_BASE_URL, fetchImpl });
+    expectCleanClientError(await client.fetchWeather(validWeatherRequest()), 'aborted');
   });
 });
 
