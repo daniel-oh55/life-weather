@@ -68,12 +68,12 @@ import type {
   KmaHourlyFallbackService,
   KmaHourlyFallbackServiceOptions,
   KmaHourlyFallbackServiceResult,
-} from './kma-hourly-fallback';
+} from './kma-hourly-fallback.js';
 import type {
   KmaLocationForecastGridConverter,
   KmaLocationScheduledHourlyForecastInput,
   KmaLocationScheduledHourlyForecastResult,
-} from './kma-location-scheduled-hourly-forecast';
+} from './kma-location-scheduled-hourly-forecast.js';
 
 /**
  * The caller-supplied input: a `product` plus a decimal-degree `latitude`/`longitude`. A deliberate

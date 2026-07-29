@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { readResponseTextWithLimit } from './read-response';
+import { readResponseTextWithLimit } from './read-response.js';
 
 const encoder = new TextEncoder();
 

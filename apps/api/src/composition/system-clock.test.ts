@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { KmaForecastRequestClock } from '../services';
-import { createKmaSystemClock } from './system-clock';
+import type { KmaForecastRequestClock } from '../services/index.js';
+import { createKmaSystemClock } from './system-clock.js';
 
 /**
  * Install a fresh `Date.now` spy for a single test. Each test owns its spy and restores it (both

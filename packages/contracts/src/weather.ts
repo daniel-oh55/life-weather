@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-import { currentAirQuality, dailyAirQualityForecast } from './air-quality';
-import { weatherAlert } from './alerts';
+import { currentAirQuality, dailyAirQualityForecast } from './air-quality.js';
+import { weatherAlert } from './alerts.js';
 import {
   isoDate,
   isoDateTime,
@@ -15,8 +15,8 @@ import {
   weatherDataSection,
   windDirectionDegrees,
   type WeatherDataSection,
-} from './common';
-import { weatherLocation } from './location';
+} from './common.js';
+import { weatherLocation } from './location.js';
 
 /**
  * Build a schema for a list of {@link weatherDataSection} values.

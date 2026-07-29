@@ -40,12 +40,12 @@
  * orchestration PR may act on. KST is treated as a fixed `UTC+09:00` with no daylight saving time.
  */
 
-import { KmaForecastProduct } from './condition';
-import { type KmaForecastBaseTime } from './issue-time';
+import { KmaForecastProduct } from './condition.js';
+import { type KmaForecastBaseTime } from './issue-time.js';
 import {
   selectLatestKmaForecastBaseTimeAfterAvailabilityDelay,
   type SelectLatestKmaForecastBaseTimeAfterAvailabilityDelayInput,
-} from './api-availability-time';
+} from './api-availability-time.js';
 
 const HOUR_IN_MILLISECONDS = 3_600_000;
 

@@ -3,33 +3,33 @@ export {
   normalizeKmaWeatherCondition,
   type KmaWeatherCondition,
   type NormalizeKmaWeatherConditionInput,
-} from './condition';
+} from './condition.js';
 export {
   parseKmaPrecipitationAmountMillimeters,
   parseKmaSnowfallAmountCentimeters,
-} from './amount';
+} from './amount.js';
 export {
   parseKmaPercentage,
   parseKmaTemperatureCelsius,
   parseKmaWindDirectionDegrees,
   parseKmaWindSpeedMetersPerSecond,
-} from './scalar';
+} from './scalar.js';
 export {
   selectLatestKmaForecastBaseTime,
   type KmaForecastBaseTime,
   type SelectLatestKmaForecastBaseTimeInput,
-} from './issue-time';
+} from './issue-time.js';
 export {
   selectLatestKmaForecastBaseTimeAfterAvailabilityDelay,
   type SelectLatestKmaForecastBaseTimeAfterAvailabilityDelayInput,
-} from './api-availability-time';
+} from './api-availability-time.js';
 export {
   selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay,
   type KmaForecastBaseTimeCandidates,
   type SelectKmaForecastBaseTimeCandidatesAfterAvailabilityDelayInput,
-} from './fallback-candidates';
+} from './fallback-candidates.js';
 export {
   convertKmaLatitudeLongitudeToGrid,
   type ConvertKmaLatitudeLongitudeToGridInput,
   type KmaForecastGridCoordinate,
-} from './grid';
+} from './grid.js';

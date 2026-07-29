@@ -40,7 +40,7 @@ import {
   type KmaForecastProviderError,
   type KmaForecastRequest,
   type KmaHourlyNormalizationIssue,
-} from '../providers/kma';
+} from '../providers/kma/index.js';
 
 /**
  * Per-call options. Structurally the same as the provider's options and forwarded unchanged, so the

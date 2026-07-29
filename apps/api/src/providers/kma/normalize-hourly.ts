@@ -45,9 +45,9 @@ import {
   getKmaForecastField,
   type KmaForecastFieldLookup,
   type KmaForecastSlot,
-} from './group-forecast-items';
-import type { KmaForecastProviderSuccess } from './provider';
-import { isCalendarDate, isClockTime } from './validation';
+} from './group-forecast-items.js';
+import type { KmaForecastProviderSuccess } from './provider.js';
+import { isCalendarDate, isClockTime } from './validation.js';
 
 /**
  * One deterministic normalization problem. `field` says *which* part failed and `reason` *why*:

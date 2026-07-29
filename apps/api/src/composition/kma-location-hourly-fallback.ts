@@ -43,15 +43,15 @@
 
 import { convertKmaLatitudeLongitudeToGrid } from '@life-weather/weather-core';
 
-import type { KmaProviderConfigError } from '../providers/kma';
+import type { KmaProviderConfigError } from '../providers/kma/index.js';
 import {
   createKmaLocationHourlyFallbackFacade,
   type KmaLocationHourlyFallbackFacade,
-} from '../services';
+} from '../services/index.js';
 import {
   createKmaHourlyFallbackCompositionFromEnv,
   type KmaHourlyFallbackCompositionDependencies,
-} from './kma-hourly-fallback';
+} from './kma-hourly-fallback.js';
 
 /**
  * The dependencies a caller may override for the composed location fallback pipeline. A deliberate

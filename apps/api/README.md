@@ -21,9 +21,12 @@ a project on first run; that step is intentionally deferred to a later PR.
 
 ## Current state
 
-- `GET /health` returns a deterministic health payload (unchanged). It remains the **only callable
-  production endpoint** — the PR #30 `POST /weather` route factory below exists as a mountable sub-app
-  and is exercised by tests, but is **not** mounted into `src/index.ts` startup yet.
+- `GET /health` returns a deterministic health payload (unchanged).
+- `POST /weather` is a **live production endpoint** as of PR #31: the PR #30 route factory is now mounted
+  into `src/index.ts` startup, wired to the production KMA location hourly-overview graph with a
+  server-owned `SHORT_FORECAST` product and a server-generated response `meta`. `KMA_SERVICE_KEY` is read
+  (server-only) and validated fail-fast at startup, but no external `fetch` runs until a real request
+  arrives. See [docs/weather-production-wiring.md](../../docs/weather-production-wiring.md).
 - **KMA raw-response boundary** — `src/providers/kma/` validates the raw 기상청 `getVilageFcst` /
   `getUltraSrtFcst` JSON at runtime with **Zod**, classifies it (success / upstream error /
   invalid response), and groups a validated page into per-time forecast slots with an explicit
@@ -459,12 +462,12 @@ a project on first run; that step is intentionally deferred to a later PR.
     no `Promise`, Provider, network, clock, environment, or `AbortSignal`; it runs the PR #22 selector
     for **nobody** (the caller does that first), handles **no** `LOCATION` branch, and builds no
     `current`/`daily`/air-quality/alerts data.
-  - **Production wiring not implemented.** The assembler is wired into **no** composition root or route.
-    The PR #24 application service (below) now narrows a location result's `LOCATION` branch, applies the
-    selector, resolves the selected source's provenance via an **injected** resolver, and calls this
-    assembler; the **production resolver** is now the PR #26
-    `createKmaLiveSelectedHourlySourceMetadataResolver` (below), while the **production composition**
-    remains a later PR. It changes no existing runtime and adds **no** new dependency.
+  - **Now in the production graph.** The PR #24 application service (below) narrows a location result's
+    `LOCATION` branch, applies the selector, resolves the selected source's provenance via an **injected**
+    resolver, and calls this assembler; the **production resolver** is the PR #26
+    `createKmaLiveSelectedHourlySourceMetadataResolver` (below), and the PR #27 production composition
+    assembles the whole graph behind the `POST /weather` production route (PR #31). It changes no existing
+    runtime and adds **no** new dependency.
 - **KMA location hourly `WeatherOverview` application service** — PR #24 adds
   `createKmaLocationHourlyOverviewService` (`src/services/`), the orchestration layer that connects the
   previous four hourly building blocks into a single call. See
@@ -507,11 +510,11 @@ a project on first run; that step is intentionally deferred to a later PR.
     are: **synchronous throw** — invalid `WeatherLocation`, facade synchronous throw; **returned-Promise
     rejection** — facade rejection, selector throw, resolver throw, assembler throw, and the selected-empty
     assembler `ZodError`.
-  - **Application service implemented; production resolver now implemented (PR #26); production
-    composition not.** It is wired into **no** composition root or route; the production metadata resolver
-    is the PR #26 `createKmaLiveSelectedHourlySourceMetadataResolver` (below), while the PR #24 production
-    composition (and the `/weather` route) remain later PRs. It changes no existing runtime and adds
-    **no** new dependency.
+  - **Application service, production resolver (PR #26), and production composition (PR #27) all
+    implemented.** The production metadata resolver is the PR #26
+    `createKmaLiveSelectedHourlySourceMetadataResolver` (below), and the PR #27 composition assembles this
+    service into the graph behind the `POST /weather` production route (PR #31). It changes no existing
+    runtime and adds **no** new dependency.
 - **KMA forecast sanitized issuance identity in the execution trace** — PR #25 adds the public type
   `KmaForecastIssuanceIdentity` (`src/services/kma-forecast-issuance-identity.ts`,
   `product`/`baseDate`/`baseTime` only) and preserves it inside the PR #19 execution trace, derived from
@@ -578,9 +581,9 @@ a project on first run; that step is intentionally deferred to a later PR.
     synchronous; inside the PR #24 `.then` handler the throw becomes the returned Promise's rejection.
     Output has exactly the four sorted own keys `fetchedAt`/`issuedAt`/`retrievalMode`/`sourceId`, is
     fresh per call, and leaks no transport/selection/location field.
-  - **Not implemented.** It is wired into **no** composition root or route; production composition and
-    cache are PR #27. It reads no env/network, opens no `fetch`/`AbortController`, and adds **no** new
-    dependency.
+  - **In the production graph; cache still later.** The PR #27 composition wires this resolver into the
+    graph behind the `POST /weather` production route (PR #31); a server-side cache is still a later PR. It
+    reads no env/network, opens no `fetch`/`AbortController`, and adds **no** new dependency.
 - **KMA location hourly overview production composition** — PR #27 adds
   `createKmaLocationHourlyOverviewCompositionFromEnv` (`src/composition/`), a **fifth** callable
   production root that assembles the PR #24 application service over a live graph beside (never
@@ -614,7 +617,8 @@ a project on first run; that step is intentionally deferred to a later PR.
     `overview`, never serialize the `selection`/execution trace directly (this PR adds no such mapper).
     The four existing roots and their contracts are **unchanged**; it consumes only the `providers/kma`
     (type), `services`, sibling composition, and `./system-clock` public surfaces and adds **no** new
-    dependency. This fifth root is **not** wired into `src/index.ts` or any route either.
+    dependency. This fifth root is the one wired into `src/index.ts` startup and mounted at the
+    `POST /weather` production route (PR #31); the other four roots remain unrouted.
 - **Mobile-safe weather response presenter** — PR #29 adds
   `presentKmaLocationHourlyOverviewResponseV1` (`src/presenters/`), the **pure, synchronous** boundary
   that maps the PR #24 internal application result to the mobile-facing `WeatherResponseV1` body. See
@@ -641,9 +645,10 @@ a project on first run; that step is intentionally deferred to a later PR.
     contracts response schema (a synchronous `ZodError` on an invalid `generatedAt`/`requestId`/
     overview — never caught or wrapped). It is pure (no clock/env/network/random/logging) and returns a
     fresh wrapper per call.
-  - **Not wired.** The presenter is **not** connected to any `/weather` route and `src/index.ts` is
-    unchanged. It decides no HTTP status/header/body-size and generates no clock/`requestId` — a future
-    route PR will call the presenter and map its body to a status.
+  - **Wired into `POST /weather` (PR #31).** The production `POST /weather` route calls this presenter to
+    turn a location hourly overview result into the `WeatherResponseV1` body, then maps that body to an
+    HTTP status. The presenter itself still decides no HTTP status/header/body-size and generates no
+    clock/`requestId` — those stay with the route and its production `meta` provider.
 - **Injectable `POST /weather` route factory** — PR #30 adds `createWeatherRoute` (`src/routes/`), the
   HTTP boundary that connects the request contract, application service, and PR #29 presenter. See
   [docs/weather-route.md](../../docs/weather-route.md). Highlights:
@@ -664,23 +669,30 @@ a project on first run; that step is intentionally deferred to a later PR.
     error code).
   - The service, presenter, server product, and `meta` provider (clock + `requestId`) are **injected**;
     the factory reads no `process.env`, `Date.now`, `randomUUID`, or `Math.random`, and adds no
-    logging — so it is testable independently of startup, and PR #31 supplies the production adapters.
+    logging — so it is testable independently of startup, and PR #31 supplied the production adapters
+    (now wired into `src/index.ts`; see below).
   - Request-layer errors are producer-validated `WeatherErrorResponseV1` bodies; Zod issues, raw error
     messages/stacks, and provider traces are never exposed. `UNSUPPORTED_MEDIA_TYPE` and
     `PAYLOAD_TOO_LARGE` were added **additively** to `ApiErrorCode` (`CONTRACT_VERSION` stays `1`).
-  - **Not mounted.** `src/index.ts` is unchanged and the factory is not wired into startup — that is
-    PR #31. It reads no env/service key and builds no production composition.
+  - **Now mounted (PR #31).** `src/index.ts` mounts this factory at `/weather` via the `createApiApp` app
+    factory and the `createProductionWeatherRouteDependencies` composition (see below); the factory
+    runtime itself is unchanged.
+- **Production wiring (PR #31).** `createApiApp` (`src/api-app.ts`) registers `GET /health` and mounts the
+  injected `/weather` sub-app; `createProductionWeatherRouteDependencies` (`src/composition/weather-route.ts`)
+  builds the PR #27 KMA production graph, the service→route adapter (raw `AbortSignal` forwarded by exact
+  reference, no new controller), the server-owned `PRODUCTION_WEATHER_PRODUCT` (`SHORT_FORECAST`), and the
+  production response `meta` provider (UTC `generatedAt` + a `crypto.randomUUID()` `requestId`, inbound
+  request-id headers ignored); and `src/index.ts` reads the server-only `KMA_SERVICE_KEY`, fail-fast throws
+  on a missing/invalid key, and default-exports the assembled Hono app. Startup issues **no** external
+  `fetch`. See [docs/weather-production-wiring.md](../../docs/weather-production-wiring.md).
 - **Still not implemented.** `current`/`daily`/air-quality/alerts `WeatherOverview` sections and their
   `SourceMetadata`; a `fallbackUsed` API field; current weather, daily forecast (incl. `TMN`/`TMX`),
-  feels-like computation; a common provider interface; **running any of the five production composition
-  roots at API app startup and mounting the `/weather` route factory there**; the production service
-  adapter / server-product policy / real clock / `requestId` generator that PR #31 will inject;
-  API-availability retry beyond the single previous-issuance fallback; and cache are **not** here —
-  those are later PRs. The PR #24 **application service**, the PR #26 **live resolver**, the PR #27
-  **production composition**, the PR #29 **response presenter**, and now the PR #30 **route factory** are
-  all implemented, but none of the **five** composition roots (grid scheduled, location scheduled, grid
-  fallback, location fallback, location hourly overview) is wired into `src/index.ts`, and the route
-  factory is not mounted there either (`/health` remains the only callable endpoint).
+  feels-like computation; a common provider interface; API-availability retry beyond the single
+  previous-issuance fallback; a server-side cache (so `retrievalMode` stays `LIVE`); and the mobile API
+  client are **not** here — those are later PRs. Of the **five** production composition roots (grid
+  scheduled, location scheduled, grid fallback, location fallback, location hourly overview), only the
+  location hourly overview root is wired into startup (through the `/weather` route); the other four remain
+  unrouted.
 
 ### Dependencies
 

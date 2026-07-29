@@ -3,11 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { hourlyForecast } from '@life-weather/contracts';
 import { KmaForecastProduct } from '@life-weather/weather-core';
 
-import type { KmaForecastRequestClock } from '../services';
+import type { KmaForecastRequestClock } from '../services/index.js';
 import {
   createKmaLocationScheduledHourlyCompositionFromEnv,
   type KmaLocationScheduledHourlyCompositionDependencies,
-} from './kma-location-scheduled-hourly';
+} from './kma-location-scheduled-hourly.js';
 
 /**
  * These tests assemble the **real** components — the PR #12 latitude/longitude → grid converter,

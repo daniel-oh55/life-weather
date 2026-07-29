@@ -6,16 +6,16 @@ import {
   type SelectKmaForecastBaseTimeCandidatesAfterAvailabilityDelayInput,
 } from '@life-weather/weather-core';
 
-import type { KmaForecastRequest } from '../providers/kma';
+import type { KmaForecastRequest } from '../providers/kma/index.js';
 import type {
   KmaForecastRequestClock,
   KmaForecastRequestFactoryInput,
-} from './kma-forecast-request';
+} from './kma-forecast-request.js';
 import {
   createKmaFallbackRequestPlanFactory,
   type KmaFallbackRequestPlanFactoryInput,
   type KmaForecastBaseTimeCandidatesSelector,
-} from './kma-fallback-request-plan';
+} from './kma-fallback-request-plan.js';
 
 const SHORT = KmaForecastProduct.SHORT_FORECAST;
 const ULTRA = KmaForecastProduct.ULTRA_SHORT_FORECAST;

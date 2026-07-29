@@ -17,7 +17,7 @@
 
 import { KmaForecastProduct } from '@life-weather/weather-core';
 
-import type { KmaForecastItem } from './raw-schema';
+import type { KmaForecastItem } from './raw-schema.js';
 
 /**
  * The scalar type of a present `fcstValue`. The official JSON always carries `fcstValue` as a

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { detectKmaGatewayError } from './gateway-error';
+import { detectKmaGatewayError } from './gateway-error.js';
 
 /** A 공공데이터포털 gateway error envelope with a given reason code and auth message. */
 function gatewayXml(reasonCode: string | null, authMsg: string): string {

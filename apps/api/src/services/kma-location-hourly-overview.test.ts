@@ -13,26 +13,26 @@ import { KmaForecastProduct } from '@life-weather/weather-core';
 import type {
   KmaForecastProviderError,
   KmaHourlyNormalizationIssue,
-} from '../providers/kma';
-import type { KmaForecastIssuanceIdentity } from './kma-forecast-issuance-identity';
-import type { KmaHourlyFallbackReason } from './kma-hourly-fallback-eligibility';
+} from '../providers/kma/index.js';
+import type { KmaForecastIssuanceIdentity } from './kma-forecast-issuance-identity.js';
+import type { KmaHourlyFallbackReason } from './kma-hourly-fallback-eligibility.js';
 import {
   selectKmaHourlyFallbackResult,
   type KmaHourlyFallbackSelection,
-} from './kma-hourly-fallback-selection';
-import type { KmaHourlyFallbackServiceResult } from './kma-hourly-fallback';
-import type { KmaHourlyForecastServiceResult } from './kma-hourly-forecast';
+} from './kma-hourly-fallback-selection.js';
+import type { KmaHourlyFallbackServiceResult } from './kma-hourly-fallback.js';
+import type { KmaHourlyForecastServiceResult } from './kma-hourly-forecast.js';
 import {
   assembleKmaHourlyWeatherOverview,
   type KmaHourlySourceMetadataInput,
   type KmaHourlyWeatherOverviewInput,
-} from './kma-hourly-weather-overview';
+} from './kma-hourly-weather-overview.js';
 import type {
   KmaLocationHourlyFallbackFacade,
   KmaLocationHourlyFallbackInput,
   KmaLocationHourlyFallbackOptions,
   KmaLocationHourlyFallbackResult,
-} from './kma-location-hourly-fallback';
+} from './kma-location-hourly-fallback.js';
 import {
   createKmaLocationHourlyOverviewService,
   type KmaLocationHourlyOverviewInput,
@@ -40,7 +40,7 @@ import {
   type KmaLocationHourlyOverviewResult,
   type KmaSelectedHourlySourceMetadataResolver,
   type KmaSelectedHourlySourceMetadataResolverInput,
-} from './kma-location-hourly-overview';
+} from './kma-location-hourly-overview.js';
 
 /**
  * These tests exercise the PR #24 application service in isolation. The two boundary collaborators —

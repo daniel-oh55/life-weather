@@ -54,11 +54,11 @@ import {
   type SelectKmaForecastBaseTimeCandidatesAfterAvailabilityDelayInput,
 } from '@life-weather/weather-core';
 
-import type { KmaForecastRequest } from '../providers/kma';
+import type { KmaForecastRequest } from '../providers/kma/index.js';
 import type {
   KmaForecastRequestClock,
   KmaForecastRequestFactoryInput,
-} from './kma-forecast-request';
+} from './kma-forecast-request.js';
 
 /**
  * The pluggable candidate-selection policy: given a `{ product, referenceEpochMilliseconds }` input,

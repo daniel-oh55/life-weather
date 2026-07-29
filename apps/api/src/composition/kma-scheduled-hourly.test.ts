@@ -3,11 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { hourlyForecast } from '@life-weather/contracts';
 import { KmaForecastProduct } from '@life-weather/weather-core';
 
-import type { KmaForecastRequestClock } from '../services';
+import type { KmaForecastRequestClock } from '../services/index.js';
 import {
   createKmaScheduledHourlyCompositionFromEnv,
   type KmaScheduledHourlyCompositionDependencies,
-} from './kma-scheduled-hourly';
+} from './kma-scheduled-hourly.js';
 
 /**
  * These tests assemble the **real** components — the PR #5 provider-from-env, the PR #7 hourly

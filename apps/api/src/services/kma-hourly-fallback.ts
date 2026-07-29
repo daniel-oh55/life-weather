@@ -80,22 +80,22 @@
  * `docs/kma-hourly-fallback.md`.
  */
 
-import type { KmaForecastRequest } from '../providers/kma';
+import type { KmaForecastRequest } from '../providers/kma/index.js';
 import type {
   KmaFallbackRequestPlanFactory,
   KmaFallbackRequestPlanFactoryInput,
-} from './kma-fallback-request-plan';
-import type { KmaForecastIssuanceIdentity } from './kma-forecast-issuance-identity';
+} from './kma-fallback-request-plan.js';
+import type { KmaForecastIssuanceIdentity } from './kma-forecast-issuance-identity.js';
 import {
   classifyKmaHourlyFallbackEligibility,
   type KmaHourlyFallbackEligibility,
   type KmaHourlyFallbackReason,
-} from './kma-hourly-fallback-eligibility';
+} from './kma-hourly-fallback-eligibility.js';
 import type {
   KmaHourlyForecastService,
   KmaHourlyForecastServiceOptions,
   KmaHourlyForecastServiceResult,
-} from './kma-hourly-forecast';
+} from './kma-hourly-forecast.js';
 
 /**
  * The pluggable fallback-eligibility policy: given **one** {@link KmaHourlyForecastServiceResult}, it

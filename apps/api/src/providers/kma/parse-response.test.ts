@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseKmaForecastResponse } from './parse-response';
+import { parseKmaForecastResponse } from './parse-response.js';
 
 function validItem() {
   return {

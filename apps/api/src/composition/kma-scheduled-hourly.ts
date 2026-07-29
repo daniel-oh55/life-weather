@@ -40,15 +40,15 @@ import { selectLatestKmaForecastBaseTimeAfterAvailabilityDelay } from '@life-wea
 import {
   createKmaForecastProviderFromEnv,
   type KmaProviderConfigError,
-} from '../providers/kma';
+} from '../providers/kma/index.js';
 import {
   createKmaForecastRequestFactory,
   createKmaHourlyForecastService,
   createKmaScheduledHourlyForecastFacade,
   type KmaForecastRequestClock,
   type KmaScheduledHourlyForecastFacade,
-} from '../services';
-import { createKmaSystemClock } from './system-clock';
+} from '../services/index.js';
+import { createKmaSystemClock } from './system-clock.js';
 
 /**
  * The dependencies a caller may override for the composed pipeline. Both are optional and, when
@@ -126,7 +126,7 @@ export function createKmaScheduledHourlyCompositionFromEnv(
 
   // Step 2: a configuration failure is returned as a value, with the provider's own error reference
   // passed through unchanged — no clock read, no collaborator construction, no network.
-  if (!providerResult.ok) {
+  if (providerResult.ok === false) {
     return {
       ok: false,
       error: providerResult.error,

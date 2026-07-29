@@ -10,17 +10,17 @@ import {
 import type {
   KmaForecastProviderError,
   KmaHourlyNormalizationIssue,
-} from '../providers/kma';
+} from '../providers/kma/index.js';
 import type {
   KmaScheduledHourlyForecastFacade,
   KmaScheduledHourlyForecastInput,
   KmaScheduledHourlyForecastOptions,
   KmaScheduledHourlyForecastResult,
-} from './kma-scheduled-hourly-forecast';
+} from './kma-scheduled-hourly-forecast.js';
 import {
   createKmaLocationScheduledHourlyForecastFacade,
   type KmaLocationScheduledHourlyForecastInput,
-} from './kma-location-scheduled-hourly-forecast';
+} from './kma-location-scheduled-hourly-forecast.js';
 
 /**
  * These tests exercise the location facade in isolation: the grid converter and the scheduled

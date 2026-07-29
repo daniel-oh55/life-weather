@@ -8,9 +8,12 @@ existing pieces at the `/weather` endpoint:
 - the PR #29 `presentKmaLocationHourlyOverviewResponseV1` response presenter,
 - and the existing `WeatherResponseV1` / `WeatherSuccessResponseV1` / `WeatherErrorResponseV1` envelopes.
 
-It ships **only** the route factory and its HTTP-boundary policy. It is **not** mounted into
-`apps/api/src/index.ts`, builds no production composition, reads no environment, and generates no clock or
-`requestId` — the production adapters and the real startup mount are **PR #31**.
+It ships **only** the route factory and its HTTP-boundary policy. The factory itself builds no production
+composition, reads no environment, and generates no clock or `requestId` — the production adapters and the
+real startup mount were **PR #31**, which now mounts this factory at `/weather` in `apps/api/src/index.ts`,
+so `POST /weather` is a live production endpoint alongside `GET /health` (see
+[weather-production-wiring.md](./weather-production-wiring.md)). The factory runtime described here is
+unchanged by that wiring.
 
 ## What the factory is
 
@@ -264,17 +267,27 @@ returned with `c.json`, so its `Content-Type` is `application/json`; `requestId`
 body's `meta`. This makes the factory testable independently of startup — the tests inject typed fakes (no
 `as any`) for the service, presenter, and `meta` provider.
 
-## Not in this PR
+## Not in this factory (delivered by PR #31 or still open)
 
-- Mounting the route into `apps/api/src/index.ts` (startup wiring) — **PR #31**.
-- The production service adapter binding `KmaLocationHourlyOverviewService` to `WeatherRouteExecuteOverview`.
-- The real server-side product policy, the real clock, and the real `requestId` generator.
-- Reading `KMA_SERVICE_KEY` / `process.env`, building any production composition.
+The following are **not** part of the route factory runtime. The first group was delivered by PR #31's
+startup wiring (see [weather-production-wiring.md](./weather-production-wiring.md)):
+
+- Mounting the route into `apps/api/src/index.ts` — **done in PR #31**.
+- The production service adapter binding `KmaLocationHourlyOverviewService` to `WeatherRouteExecuteOverview`
+  — **done in PR #31**.
+- The real server-side product policy (`SHORT_FORECAST`), the real clock, and the real `requestId`
+  generator — **done in PR #31**.
+- Reading `KMA_SERVICE_KEY` / `process.env` and building the production composition — **done in PR #31**.
+
+Still open (later PRs):
+
 - Cache, stale fallback, rate-limiting, auth, CORS, compression, response headers, telemetry, request
   duration, OpenAPI/Swagger, and the mobile client.
 
-## Next PR
+## Startup wiring (PR #31)
 
-**PR #31 startup wiring** will provide the production service adapter, the real server-owned product
-policy, the real clock and `requestId` generator, and mount `createWeatherRoute(...)` into
-`apps/api/src/index.ts`, plus production integration tests.
+**PR #31** provided the production service adapter, the server-owned `SHORT_FORECAST` product policy, the
+real UTC clock and `crypto.randomUUID()` `requestId` generator, and mounted `createWeatherRoute(...)` into
+`apps/api/src/index.ts` (via a `createApiApp` app factory and a `createProductionWeatherRouteDependencies`
+composition), plus production integration tests. See
+[weather-production-wiring.md](./weather-production-wiring.md).

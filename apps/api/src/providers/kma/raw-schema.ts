@@ -32,7 +32,7 @@
 
 import { z } from 'zod';
 
-import { isCalendarDate, isClockTime } from './validation';
+import { isCalendarDate, isClockTime } from './validation.js';
 
 /**
  * The official success `resultCode` (NORMAL_SERVICE). Every other code — including `03`

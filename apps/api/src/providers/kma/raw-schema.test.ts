@@ -6,7 +6,7 @@ import {
   kmaForecastItemSchema,
   kmaForecastSuccessResponseSchema,
   kmaResponseHeaderSchema,
-} from './raw-schema';
+} from './raw-schema.js';
 
 /**
  * A valid 단기예보 (getVilageFcst) item. Category TMP is provided "실수로" (real number) but is

@@ -8,8 +8,10 @@
   },
   "scripts": {
     "dev": "vercel dev",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "typecheck": "pnpm -w run build:api-runtime-packages && pnpm run typecheck:workspace",
+    "typecheck:workspace": "tsc --noEmit",
+    "test": "pnpm -w run build:api-runtime-packages && pnpm run test:workspace",
+    "test:workspace": "vitest run"
   },
   "dependencies": {
     "@life-weather/contracts": "workspace:*",

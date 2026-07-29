@@ -37,15 +37,15 @@
 
 import { convertKmaLatitudeLongitudeToGrid } from '@life-weather/weather-core';
 
-import type { KmaProviderConfigError } from '../providers/kma';
+import type { KmaProviderConfigError } from '../providers/kma/index.js';
 import {
   createKmaLocationScheduledHourlyForecastFacade,
   type KmaLocationScheduledHourlyForecastFacade,
-} from '../services';
+} from '../services/index.js';
 import {
   createKmaScheduledHourlyCompositionFromEnv,
   type KmaScheduledHourlyCompositionDependencies,
-} from './kma-scheduled-hourly';
+} from './kma-scheduled-hourly.js';
 
 /**
  * The dependencies a caller may override for the composed location pipeline. Reused verbatim from

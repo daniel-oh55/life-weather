@@ -105,17 +105,17 @@ import {
 import {
   selectKmaHourlyFallbackResult,
   type KmaHourlyFallbackSelection,
-} from './kma-hourly-fallback-selection';
+} from './kma-hourly-fallback-selection.js';
 import {
   assembleKmaHourlyWeatherOverview,
   type KmaHourlySourceMetadataInput,
-} from './kma-hourly-weather-overview';
+} from './kma-hourly-weather-overview.js';
 import type {
   KmaLocationHourlyFallbackFacade,
   KmaLocationHourlyFallbackInput,
   KmaLocationHourlyFallbackOptions,
   KmaLocationHourlyFallbackResult,
-} from './kma-location-hourly-fallback';
+} from './kma-location-hourly-fallback.js';
 
 /**
  * The caller-supplied input: a `product` plus a full contracts {@link WeatherLocation}. The `product`

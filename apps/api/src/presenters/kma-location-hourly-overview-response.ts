@@ -54,9 +54,11 @@
  * ### What it is not
  *
  * It decides **no** HTTP status, `Content-Type`, header, or body-size limit; registers **no** route; does
- * **no** startup wiring; and generates neither the clock (`generatedAt`) nor the `requestId` — those are
- * a later route PR's concern. A future `/weather` route will call this presenter with a caller-supplied
- * `generatedAt`/`requestId` and map the returned body to an HTTP status. See
+ * **no** startup wiring; and generates neither the clock (`generatedAt`) nor the `requestId` — those stay
+ * with the route and its production composition. The production `POST /weather` route calls this presenter
+ * with a caller-supplied `generatedAt`/`requestId` to turn a location hourly overview result into a
+ * `WeatherResponseV1` body, then maps that body to an HTTP status. The presenter itself reads no
+ * environment/network and never exposes a raw provider error, stack, cause, or provider URL/query. See
  * `docs/weather-response-presenter.md`.
  */
 
@@ -68,7 +70,7 @@ import {
   type WeatherResponseV1,
 } from '@life-weather/contracts';
 
-import type { KmaLocationHourlyOverviewResult } from '../services';
+import type { KmaLocationHourlyOverviewResult } from '../services/index.js';
 
 /**
  * The subset of {@link ApiMetaV1} a caller supplies to the presenter: `generatedAt` and `requestId`
@@ -119,7 +121,7 @@ export function presentKmaLocationHourlyOverviewResponseV1(
 ): WeatherResponseV1 {
   // Success: the overview is the ONLY data source. `result.selection` (and its execution trace,
   // issuance identity, and fallback detail) is never read — it stops at this boundary.
-  if (result.ok) {
+  if (result.ok === true) {
     return weatherSuccessResponseV1.parse({
       ok: true,
       meta: {

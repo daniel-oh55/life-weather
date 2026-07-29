@@ -7,17 +7,17 @@ import type {
   KmaForecastProviderError,
   KmaForecastRequest,
   KmaHourlyNormalizationIssue,
-} from '../providers/kma';
-import type { KmaForecastRequestFactory } from './kma-forecast-request';
+} from '../providers/kma/index.js';
+import type { KmaForecastRequestFactory } from './kma-forecast-request.js';
 import type {
   KmaHourlyForecastService,
   KmaHourlyForecastServiceOptions,
   KmaHourlyForecastServiceResult,
-} from './kma-hourly-forecast';
+} from './kma-hourly-forecast.js';
 import {
   createKmaScheduledHourlyForecastFacade,
   type KmaScheduledHourlyForecastInput,
-} from './kma-scheduled-hourly-forecast';
+} from './kma-scheduled-hourly-forecast.js';
 
 const SHORT = KmaForecastProduct.SHORT_FORECAST;
 

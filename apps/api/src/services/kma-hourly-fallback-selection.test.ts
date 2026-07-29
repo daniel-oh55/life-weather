@@ -6,16 +6,16 @@ import { KmaForecastProduct } from '@life-weather/weather-core';
 import type {
   KmaForecastProviderError,
   KmaHourlyNormalizationIssue,
-} from '../providers/kma';
-import type { KmaForecastIssuanceIdentity } from './kma-forecast-issuance-identity';
-import type { KmaHourlyFallbackReason } from './kma-hourly-fallback-eligibility';
+} from '../providers/kma/index.js';
+import type { KmaForecastIssuanceIdentity } from './kma-forecast-issuance-identity.js';
+import type { KmaHourlyFallbackReason } from './kma-hourly-fallback-eligibility.js';
 import {
   selectKmaHourlyFallbackResult,
   type KmaHourlyFallbackSelection,
   type KmaHourlyFallbackSelectionSource,
-} from './kma-hourly-fallback-selection';
-import type { KmaHourlyFallbackServiceResult } from './kma-hourly-fallback';
-import type { KmaHourlyForecastServiceResult } from './kma-hourly-forecast';
+} from './kma-hourly-fallback-selection.js';
+import type { KmaHourlyFallbackServiceResult } from './kma-hourly-fallback.js';
+import type { KmaHourlyForecastServiceResult } from './kma-hourly-forecast.js';
 
 // ---------------------------------------------------------------------------
 // Key contracts — every selection branch has the identical own key set, and a

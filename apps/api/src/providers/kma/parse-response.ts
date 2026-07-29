@@ -35,7 +35,7 @@ import {
   kmaForecastSuccessResponseSchema,
   kmaResponseEnvelopeSchema,
   type KmaForecastItem,
-} from './raw-schema';
+} from './raw-schema.js';
 
 /**
  * A single sanitized validation problem. Only the location (`path`) and a type-level `message`
