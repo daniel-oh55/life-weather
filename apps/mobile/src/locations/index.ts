@@ -5,8 +5,10 @@
  * contract-safe `WeatherRequestV1` via {@link createWeatherRequestFromSavedLocation}. The
  * collection layer manages many records as one canonical, validated value
  * ({@link mobileSavedLocationCollection}) with pure add / remove / reorder / set-current
- * operations. A future storage adapter consumes the collection schema as its persistence boundary.
- * Storage, permission, and screen wiring are out of scope for this module.
+ * operations. The persistence layer wraps that collection in a versioned V1 envelope and an
+ * encode / decode codec, and load / save / clear it over an injected, provider-neutral key-value
+ * storage port — without importing any concrete native store. Binding a real store, permission,
+ * and screen wiring are out of scope for this module.
  */
 
 export {
@@ -30,3 +32,21 @@ export {
   type SavedLocationCollectionErrorKind,
   type SavedLocationCollectionResult,
 } from './mobile-saved-location-collection';
+
+export {
+  SAVED_LOCATION_PERSISTENCE_VERSION,
+  SAVED_LOCATION_PERSISTENCE_KEY,
+  mobileSavedLocationPersistenceEnvelopeV1,
+  encodeSavedLocationCollection,
+  decodeSavedLocationCollection,
+  createSavedLocationPersistence,
+  type MobileSavedLocationPersistenceEnvelopeV1,
+  type SavedLocationKeyValueStorage,
+  type SavedLocationPersistenceErrorKind,
+  type SavedLocationPersistenceEncodeResult,
+  type SavedLocationPersistenceDecodeResult,
+  type SavedLocationPersistenceLoadResult,
+  type SavedLocationPersistenceSaveResult,
+  type SavedLocationPersistenceClearResult,
+  type SavedLocationPersistence,
+} from './mobile-saved-location-persistence';

@@ -30,11 +30,19 @@
   설정/해제를 수행하는 **순수 operation**을 제공합니다. 모든 operation은 collection 입력을 먼저
   검증해 잘못된 collection이면 다른 인자보다 우선해 `INVALID_COLLECTION`을 반환하고, throw 없이 고정된
   비노출 오류(`kind`만)를 돌려주며, 입력을 mutate하지 않고 성공 시 fresh canonical collection(모든
-  record와 nested `kmaGrid` 새 object, `sortOrder` `0..n-1` 재작성)을 반환합니다. 이 경계는 실제
-  저장소 adapter·직렬화·마이그레이션·위치 권한·현재 위치 조회·화면 연결·실제 호출을 다루지 않으며,
-  persistence는 이 collection schema를 boundary로 삼는 후속 PR 범위입니다. 자세한 내용은
-  [mobile-saved-location.md](./mobile-saved-location.md)와
-  [mobile-saved-location-collection.md](./mobile-saved-location-collection.md) 참고.
+  record와 nested `kmaGrid` 새 object, `sortOrder` `0..n-1` 재작성)을 반환합니다. **persistence
+  계층**은 이 collection schema를 boundary로 재사용해, collection을 버전된 strict **V1
+  envelope**(`{ version: 1, locations }`, 안정적인 storage key `@life-weather/mobile/saved-locations`와
+  분리)로 감싸는 encode/decode codec과, 최소 **key-value port**(`getItem`/`setItem`/`removeItem`)를
+  주입받는 load/save/clear adapter를 제공합니다 — missing key는 성공한 빈 collection, 손상 데이터와
+  미지원 정수 버전은 fail closed(자동 삭제·repair·migration 없음), invalid collection은 write 자체를
+  차단해 기존 저장값을 지키고, sync throw·Promise rejection을 고정된 비노출 storage 오류로 분류하며,
+  성공 output은 항상 fresh입니다. 다만 이 경계는 어떤 concrete native storage package도 import·설치하지
+  않으므로, 실제 기기 저장소 binding·migration 실행·위치 권한·현재 위치 조회·화면 연결·실제 호출은
+  여전히 후속 PR 범위입니다. 자세한 내용은
+  [mobile-saved-location.md](./mobile-saved-location.md),
+  [mobile-saved-location-collection.md](./mobile-saved-location-collection.md)와
+  [mobile-saved-location-persistence.md](./mobile-saved-location-persistence.md) 참고.
 - `apps/api` — Hono 기반 백엔드. 외부 공공데이터 API 호출, API 키 보관, 응답 정규화를 담당할
   위치입니다. **현재 상태**: `GET /health`에 더해, PR #4에서 기상청(KMA) **원본 응답 경계**
   (`src/providers/kma`)를 구현했습니다 — 단기·초단기예보 원본 JSON의 Zod 런타임 검증, 성공·
@@ -304,7 +312,11 @@ dependency**(`^4.1.11`, contracts와 동일 버전 계열)로 선언했습니다
 변경은 `apps/mobile/package.json`의 direct `zod` 항목과 그에 필요한 최소 `pnpm-lock.yaml` importer
 변경뿐이며, 다른 dependency·package manager·lockfile format·build-first scripts는 바뀌지 않았습니다.
 saved-location 경계 역시 `@life-weather/contracts` compiled `dist`만 소비하므로 동일한 build-first
-계약을 따르고, `contracts → apps/mobile`·`apps/mobile → apps/api` 역방향은 그대로 없습니다.
+계약을 따르고, `contracts → apps/mobile`·`apps/mobile → apps/api` 역방향은 그대로 없습니다. 이후
+추가된 saved-location **persistence 경계**는 기존 collection module과 single-record 타입만 재사용하고
+주입된 key-value port에만 의존하므로, **신규 dependency도, 신규 native storage package도, lockfile
+변경도 추가하지 않습니다** — 실제 기기 저장소 package binding은 이 provider-neutral 경계를 구현·주입하는
+별도의 후속 작업입니다.
 
 `weather-core`는 런타임에 zod에도 contracts에도 의존하지 않습니다. PR #3에서 상태 정규화의
 반환 타입이 contracts의 `WeatherCondition`에 할당 가능한지를 **컴파일 타임 타입 테스트**로만

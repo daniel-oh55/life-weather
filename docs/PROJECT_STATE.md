@@ -34,11 +34,16 @@
   호출은 미구현)
 - location permission/storage model (기기 저장 지역 로컬 경계 `apps/mobile/src/locations`는 구현됨 —
   지역 한 건의 공유 `weatherLocation` 확장 strict schema(로컬 전용 `kmaGrid`/`isCurrent`/`sortOrder`)와
-  explicit `WeatherRequestV1` 변환 경계에 더해, 여러 지역을 canonical collection으로 다루는 순수
-  경계까지: collection schema 불변조건(ID 유일성, 현재 위치 0~1개, `sortOrder === array index`, 빈
-  배열 허용)과 추가·삭제·재정렬·현재 위치 설정/해제 순수 operation(collection 우선 검증, throw 없는
-  고정 비노출 오류, 입력 불변, fresh canonical output). 실제 저장소 adapter·직렬화·마이그레이션·위치
-  권한·현재 위치 조회·화면 연결은 여전히 미구현)
+  explicit `WeatherRequestV1` 변환 경계, 여러 지역을 canonical collection으로 다루는 순수 경계
+  (collection schema 불변조건(ID 유일성, 현재 위치 0~1개, `sortOrder === array index`, 빈 배열 허용)과
+  추가·삭제·재정렬·현재 위치 설정/해제 순수 operation; collection 우선 검증, throw 없는 고정 비노출
+  오류, 입력 불변, fresh canonical output), 그리고 그 collection을 위한 provider-neutral persistence
+  경계까지: 안정적인 storage key와 분리된 versioned **V1 envelope**·collection encode/decode codec,
+  최소 key-value port(`getItem`/`setItem`/`removeItem`)를 주입받는 load/save/clear(missing key는
+  성공한 빈 collection, 손상 데이터·미지원 정수 버전은 fail-closed, invalid collection은 write 차단,
+  sync throw·async rejection을 고정 비노출 storage 오류로 분류, fresh output). 다만 실제 AsyncStorage
+  등 concrete native storage dependency·binding, migration 실행, 위치 권한·현재 위치 조회·화면 연결은
+  여전히 미구현)
 - 디자인 시스템과 주요 화면
 - Android widget
 - AdMob
