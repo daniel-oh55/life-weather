@@ -186,6 +186,22 @@ async function readResponse(
 }
 
 /**
+ * Whether a string carries any ASCII whitespace or control character (code point `<= 0x20`, which
+ * also covers the space, or the `0x7f` DEL). Checked without a regex to stay clear of the
+ * `no-control-regex` lint rule. Any such character remaining after trimming is *internal* and
+ * would let the URL parser rewrite the endpoint, so it is rejected upstream.
+ */
+function hasInternalWhitespaceOrControl(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x20 || code === 0x7f) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Normalize and validate a caller-supplied `baseUrl` into the exact absolute `/weather` endpoint,
  * or `null` when the configuration is unusable. This never throws and never reads the environment.
  *
@@ -195,6 +211,13 @@ async function readResponse(
  * path) that carries no query, fragment, or embedded credentials. Exactly one `/weather` segment
  * is appended regardless of a trailing slash. On any failure `null` is returned so the caller can
  * surface `invalidClientConfiguration` — the offending value is never echoed back.
+ *
+ * The URL parser is used only for the final structural check, never to normalize the input: it can
+ * silently invent a scheme slash, flip a backslash to a slash, or collapse `.`/`..` (including the
+ * percent-encoded `%2e` forms) into a *different* endpoint. So the raw syntax that the parser could
+ * rewrite — a non-exact `http(s)://` prefix, any raw `?`/`#`/`\`, internal whitespace, and any dot
+ * segment — is rejected *before* `new URL()`, and the parser's `pathname` is then required to equal
+ * the raw path so no silent normalization can slip through.
  */
 function resolveWeatherEndpoint(rawBaseUrl: unknown): string | null {
   if (typeof rawBaseUrl !== 'string') {
@@ -204,6 +227,31 @@ function resolveWeatherEndpoint(rawBaseUrl: unknown): string | null {
   if (trimmed.length === 0) {
     return null;
   }
+
+  // --- Raw syntax pre-validation, before the URL parser can normalize anything ---
+
+  // Require an exact `http://` or `https://` prefix (scheme case-insensitive, per the URL parser
+  // which lower-cases it). This rejects a missing slash (`https:/`, `https:`) or an extra one
+  // (`https:///`) that the parser would otherwise reinterpret into a different authority/path.
+  const schemeMatch = /^https?:\/\/(.*)$/i.exec(trimmed);
+  if (schemeMatch === null) {
+    return null;
+  }
+  const authorityAndPath = schemeMatch[1]!;
+
+  // Reject any raw query/fragment delimiter (empty or not) and any backslash: the parser would
+  // strip an empty `?`/`#`, split off a query/fragment, or turn `\` into `/`.
+  if (/[?#\\]/.test(trimmed)) {
+    return null;
+  }
+  // Reject internal whitespace or ASCII control characters, which the parser would drop or encode.
+  if (hasInternalWhitespaceOrControl(trimmed)) {
+    return null;
+  }
+
+  // The raw path is everything from the first `/` after the authority; no `/` means no path.
+  const firstSlash = authorityAndPath.indexOf('/');
+  const rawPath = firstSlash === -1 ? '' : authorityAndPath.slice(firstSlash);
 
   let url: URL;
   try {
@@ -216,10 +264,21 @@ function resolveWeatherEndpoint(rawBaseUrl: unknown): string | null {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     return null;
   }
+  if (url.hostname === '') {
+    return null;
+  }
   if (url.search !== '' || url.hash !== '') {
     return null;
   }
   if (url.username !== '' || url.password !== '') {
+    return null;
+  }
+
+  // The only normalization allowed is the parser supplying `/` for an absent path. For every other
+  // input the parser's `pathname` must equal the raw path verbatim; a mismatch means the parser
+  // rewrote the endpoint (collapsed a dot segment, decoded `%2e`, added a slash) and is rejected.
+  const expectedPathname = rawPath === '' ? '/' : rawPath;
+  if (url.pathname !== expectedPathname) {
     return null;
   }
 

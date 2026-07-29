@@ -265,6 +265,110 @@ describe('createWeatherApiClient — configuration validation', () => {
 });
 
 // ---------------------------------------------------------------------------
+// URL raw-syntax validation
+//
+// The URL parser must not be allowed to normalize an untrusted `baseUrl` into a *different*
+// endpoint: a missing scheme slash, an empty `?`/`#`, a backslash, or a literal/`%2e` dot segment
+// each get rewritten by `new URL()`. Every such input is rejected before any fetch, and legitimate
+// origins (uppercase, ports, base paths, multiple trailing slashes, non-dot `%2e` bytes) still
+// resolve. Assertions reuse `expectInvalidConfiguration`, which already proves fetch is never
+// called and the error carries no URL or secret.
+// ---------------------------------------------------------------------------
+
+/** Assert a `baseUrl` resolves and POSTs to exactly `expectedUrl` (proving no unwanted rewrite). */
+async function expectResolvedEndpoint(baseUrl: string, expectedUrl: string): Promise<void> {
+  const { fetchImpl, calls } = recordingFetch(() => jsonResponse(successResponseBody()));
+  const client = createWeatherApiClient({ baseUrl, fetchImpl });
+  const result = await client.fetchWeather(validWeatherRequest());
+  expect(result.kind).toBe('success');
+  expect(calls[0]!.input).toBe(expectedUrl);
+}
+
+describe('createWeatherApiClient — URL scheme and slash syntax', () => {
+  it.each([
+    ['a single-slash https scheme', 'https:/example.test'],
+    ['a single-slash http scheme', 'http:/example.test'],
+    ['a slashless https scheme', 'https:example.test'],
+    ['a triple-slash scheme', 'https:///example.test'],
+    ['a quadruple-slash scheme', 'https:////example.test'],
+  ])('rejects %s, calling no fetch', async (_label, baseUrl) => {
+    await expectInvalidConfiguration(baseUrl);
+  });
+});
+
+describe('createWeatherApiClient — empty query and fragment delimiters', () => {
+  it.each([
+    ['an empty query on a path', 'https://example.test/path?'],
+    ['an empty fragment on a path', 'https://example.test/path#'],
+    ['an empty query on the root', 'https://example.test/?'],
+    ['an empty fragment on the root', 'https://example.test/#'],
+    // A non-empty query/fragment must stay rejected too (the existing contract).
+    ['a non-empty query', 'https://example.test/path?foo=bar'],
+    ['a non-empty fragment', 'https://example.test/path#section'],
+  ])('rejects %s, calling no fetch', async (_label, baseUrl) => {
+    await expectInvalidConfiguration(baseUrl);
+  });
+});
+
+describe('createWeatherApiClient — backslash paths', () => {
+  it.each([
+    // TypeScript string escapes: each `\\` is one literal backslash in the value.
+    ['a backslash in the path', 'https://example.test/a\\b'],
+    ['a backslash right after the host', 'https://example.test\\api'],
+    ['a backslash dot-dot sequence', 'https://example.test/a\\..\\b'],
+  ])('rejects %s, calling no fetch', async (_label, baseUrl) => {
+    await expectInvalidConfiguration(baseUrl);
+  });
+});
+
+describe('createWeatherApiClient — literal dot segments', () => {
+  it.each([
+    ['a single-dot segment mid-path', 'https://example.test/a/./b'],
+    ['a double-dot segment mid-path', 'https://example.test/a/../b'],
+    ['a leading single-dot segment', 'https://example.test/./api'],
+    ['a leading double-dot segment', 'https://example.test/../api'],
+    ['a trailing single-dot segment', 'https://example.test/a/.'],
+    ['a trailing double-dot segment', 'https://example.test/a/..'],
+  ])('rejects %s, calling no fetch', async (_label, baseUrl) => {
+    await expectInvalidConfiguration(baseUrl);
+  });
+});
+
+describe('createWeatherApiClient — percent-encoded dot segments', () => {
+  it.each([
+    ['a lower-case %2e segment', 'https://example.test/a/%2e/b'],
+    ['an upper-case %2E segment', 'https://example.test/a/%2E/b'],
+    ['a lower-case %2e%2e segment', 'https://example.test/a/%2e%2e/b'],
+    ['an upper-case %2E%2E segment', 'https://example.test/a/%2E%2E/b'],
+    ['a .%2e mixed dot-dot segment', 'https://example.test/a/.%2e/b'],
+    ['a %2e. mixed dot-dot segment', 'https://example.test/a/%2e./b'],
+  ])('rejects %s, calling no fetch', async (_label, baseUrl) => {
+    await expectInvalidConfiguration(baseUrl);
+  });
+});
+
+describe('createWeatherApiClient — legitimate origins still resolve', () => {
+  it.each([
+    ['an origin only', 'https://example.test', 'https://example.test/weather'],
+    ['an explicit port', 'https://example.test:8443/api', 'https://example.test:8443/api/weather'],
+    ['a base path', 'https://example.test/api/v1', 'https://example.test/api/v1/weather'],
+    [
+      'multiple trailing slashes',
+      'https://example.test/api/v1///',
+      'https://example.test/api/v1/weather',
+    ],
+    ['an uppercase scheme and host', 'HTTPS://EXAMPLE.TEST', 'https://example.test/weather'],
+    ['surrounding whitespace', '  https://example.test  ', 'https://example.test/weather'],
+    // A `%2e`/`%20` byte that is not a standalone dot segment must survive verbatim.
+    ['a non-dot encoded space', 'https://example.test/api%20v1', 'https://example.test/api%20v1/weather'],
+    ['a %2e inside a segment', 'https://example.test/api%2ev1', 'https://example.test/api%2ev1/weather'],
+    ['a %2e-prefixed segment', 'https://example.test/%2econfig', 'https://example.test/%2econfig/weather'],
+  ])('resolves %s to the expected /weather endpoint', async (_label, baseUrl, expectedUrl) => {
+    await expectResolvedEndpoint(baseUrl, expectedUrl);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Outbound request
 // ---------------------------------------------------------------------------
 

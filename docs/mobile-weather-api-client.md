@@ -55,10 +55,28 @@ runtime-invalid 설정에도 throw하지 않습니다. 설정이 사용 불가�
 
 `baseUrl` 정책:
 
-- 앞뒤 whitespace는 trim(무시)하며 endpoint에 raw whitespace를 보존하지 않습니다.
-- 절대 `http:`/`https:` URL만 허용합니다(다른 scheme·malformed·상대 경로 거부).
-- query·fragment·embedded credentials(`user:pass@`)가 포함된 URL은 거부합니다.
-- optional base path는 보존하고, trailing slash 유무와 무관하게 정확히 한 번 `/weather`를 추가합니다.
+URL parser(`new URL()`)는 raw 입력을 조용히 정규화해 **다른 endpoint**로 바꿀 수 있으므로(빠진 scheme
+slash 보완, backslash→slash 변환, `.`/`..`·`%2e` dot segment 제거 등), parser는 최종 구조 검증에만
+사용하고 parser가 재작성할 수 있는 raw syntax는 **parser 호출 전에** 거부합니다.
+
+- 앞뒤 whitespace는 trim(무시)하며 endpoint에 raw whitespace를 보존하지 않습니다. trim 후 남은 internal
+  whitespace나 ASCII control character는 거부합니다.
+- 정확히 `http://` 또는 `https://`(scheme는 대소문자 무시)로 시작해야 합니다. slash가 부족하거나
+  (`https:/`, `https:`) 과도한(`https:///`, `https:////`) 형태, 다른 scheme·malformed·상대 경로는 거부합니다.
+- raw `?`·`#`는 내용 유무와 무관하게 거부합니다. 빈 delimiter(`?`, `#`)만 있어도 거부합니다.
+- raw backslash(`\`)를 포함하면 거부합니다(parser가 slash로 바꾸기 때문).
+- endpoint 구조를 바꾸는 dot segment를 거부합니다. literal `.`·`..`뿐 아니라 parser가 dot segment로
+  취급하는 percent-encoded 형태(`%2e`·`%2E`·`%2e%2e`·`.%2e`·`%2e.` 등 대소문자 혼합 포함)도 거부합니다.
+  단, 독립 dot segment가 아닌 `%2e`(예: `/api%2ev1`, `/%2econfig`)나 non-dot encoded path(예:
+  `/api%20v1`)는 그대로 허용합니다.
+- embedded credentials(`user:pass@`)가 포함된 URL은 거부합니다.
+- parser normalization 방지: raw syntax 선검증 후 `new URL()`로 parse하고, path가 없던 경우의 `/` 보완만
+  허용한 뒤 parser가 반환한 `url.pathname`이 raw path와 동일한지 확인합니다. 다르면(= parser가 endpoint를
+  재작성했으면) 거부합니다.
+- 의도된 path 조정은 앞뒤 whitespace trim과 trailing slash 제거뿐입니다. optional base path는 보존하고,
+  trailing slash 유무·개수와 무관하게 정확히 한 번 `/weather`를 추가합니다.
+- invalid 설정은 fetch를 0회 호출하고, 첫 `fetchWeather`에서 URL·secret을 노출하지 않는 safe typed
+  error(`invalidClientConfiguration`)만 반환합니다.
 
 `fetchImpl` 정책: caller가 제공하면 runtime에서도 함수인지 확인하고(비함수면 global fetch로 fallback하지
 않고 invalid 설정), 생략된 경우에만 함수인 global `fetch`를 사용합니다.
