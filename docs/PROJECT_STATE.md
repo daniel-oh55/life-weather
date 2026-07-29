@@ -32,7 +32,10 @@
 - mobile API client의 화면 연결 (contract-safe `POST /weather` client boundary
   `apps/mobile/src/weather-api`는 구현됨 — 요청·응답 계약 소비와 typed 오류 경계까지; 화면 연결·실제
   호출은 미구현)
-- location permission/storage model
+- location permission/storage model (기기 저장 지역 한 건의 로컬 모델과 공유 `WeatherRequestV1`
+  변환 경계 `apps/mobile/src/locations`는 구현됨 — 공유 `weatherLocation` 확장 strict schema,
+  로컬 전용 `kmaGrid`/`isCurrent`/`sortOrder`, explicit request mapping까지; 실제 저장소·collection·
+  위치 권한·현재 위치 조회·화면 연결은 미구현)
 - 디자인 시스템과 주요 화면
 - Android widget
 - AdMob
