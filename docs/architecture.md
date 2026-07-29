@@ -18,7 +18,7 @@
   없습니다. 이 client는 아직 어떤 화면에도 연결되지 않았습니다(screen 연결·실제 호출·좌표/저장소는
   후속 PR). 자세한 내용은 [mobile-weather-api-client.md](./mobile-weather-api-client.md) 참고.
   이에 더해 기기 로컬 **저장 지역(saved-location) 경계**(`src/locations`)가 추가됐으며, 책임이 다른
-  두 계층으로 구성됩니다. **single-record 계층**은 공유 `weatherLocation`을 **확장**한 strict
+  세 계층으로 구성됩니다. **single-record 계층**은 공유 `weatherLocation`을 **확장**한 strict
   `mobileSavedLocation` schema(로컬 전용 `kmaGrid`/`isCurrent`/`sortOrder` 필드를 additive하게 더하고
   공유 필드 규칙은 그대로 상속)와, 저장 지역을 공유 `WeatherRequestV1`으로 **명시적으로 매핑**하는
   순수 함수(`createWeatherRequestFromSavedLocation`)를 제공합니다. 함수는 unknown 입력을 `safeParse`로
