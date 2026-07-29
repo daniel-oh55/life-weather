@@ -93,3 +93,9 @@ pnpm check        # 공유 dist를 한 번만 빌드 → verify → lint → typ
 - 실제 운영 Vercel 배포/도메인 연결, 실제 EAS 빌드, Android package name, 개인정보 처리방침
 
 자세한 내용은 [`docs/product-scope.md`](docs/product-scope.md), [`docs/architecture.md`](docs/architecture.md), [`docs/development.md`](docs/development.md)를 참고하세요.
+
+## 저장소 운영 문서
+
+- [AI 운영 정책](AGENTS.md)
+- [AI 작업 흐름](docs/AI_WORKFLOW.md)
+- [현재 프로젝트 상태](docs/PROJECT_STATE.md)

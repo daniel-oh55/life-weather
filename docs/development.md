@@ -55,8 +55,12 @@ pnpm dev:api
 pnpm lint
 pnpm typecheck
 pnpm test
-pnpm check   # lint → typecheck → test
+pnpm check   # shared runtime build → verify → lint → typecheck:workspace → test:workspace
 ```
+
+public `pnpm typecheck`와 `pnpm test`는 shared runtime package를 먼저 빌드하는 build-first
+명령입니다. `pnpm check`는 shared runtime build를 한 번만 수행한 뒤 workspace 전용 검사를
+순서대로 실행합니다.
 
 ## 환경변수 관리
 
@@ -71,3 +75,11 @@ pnpm check   # lint → typecheck → test
 - 비밀정보: `.env`, `.env.local`, `.env.*.local`
 - 로컬 도구 상태: `.vercel/`, `.expo/`
 - 빌드 산출물과 테스트 커버리지 리포트
+
+`dist/`는 gitignored build artifact입니다. 직접 수정하거나 commit하지 마세요.
+
+## AI 작업과 PR 흐름
+
+AI 작업 규칙은 [`../AGENTS.md`](../AGENTS.md)와
+[`AI_WORKFLOW.md`](AI_WORKFLOW.md)를 따릅니다. 작업 branch에서 변경하고 Draft PR을 연 뒤
+review를 거쳐야 하며, Ready 전환과 merge는 Owner가 결정합니다.
