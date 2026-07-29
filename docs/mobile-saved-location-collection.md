@@ -155,8 +155,13 @@ current인 상태의 재설정과, 이미 current가 없을 때의 null 해제�
 
 ## 향후 소비
 
-이후 location store / storage adapter가 이 `mobileSavedLocationCollection` schema를 **persistence
-boundary**로 사용해 저장 전·후에 collection 불변조건을 강제하고, 화면 연결 시 개별 저장 지역을
-[single-record 경계](./mobile-saved-location.md)의 `createWeatherRequestFromSavedLocation`으로
-contract-safe `WeatherRequestV1`으로 변환한 뒤 [모바일 weather API
-client](./mobile-weather-api-client.md)에 전달합니다.
+이 collection schema는 이미 [persistence 경계](./mobile-saved-location-persistence.md)(PR #41)가
+**persistence boundary**로 사용합니다 — collection을 버전된 V1 envelope로 감싸 encode/decode하고,
+저장 전에 이 schema로 검증해 일관성이 깨진 collection이 기기에 저장되지 않게 합니다. 다만 그 경계는
+provider-neutral key-value port에만 의존하며, **실제 storage provider binding은 여전히 후속
+작업**입니다. collection operation 자체의 책임(추가·삭제·재정렬·현재 위치 설정/해제와 불변조건)은
+persistence 도입으로 바뀌지 않습니다.
+
+화면 연결 시에는 개별 저장 지역을 [single-record 경계](./mobile-saved-location.md)의
+`createWeatherRequestFromSavedLocation`으로 contract-safe `WeatherRequestV1`으로 변환한 뒤 [모바일
+weather API client](./mobile-weather-api-client.md)에 전달합니다.
