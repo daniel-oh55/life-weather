@@ -1,9 +1,13 @@
 # 모바일 저장 지역 경계
 
-이 문서는 `apps/mobile/src/locations`의 **모바일 저장 지역(saved-location) 경계**를 설명합니다.
-이 경계는 기기에 저장될 지역 한 건의 런타임 schema와, 저장 지역을 공유 `WeatherRequestV1`으로
-안전하게 변환하는 순수 함수만 다룹니다. 실제 저장소·위치 권한·현재 위치 조회·화면 연결·실제 API
-호출은 다루지 않습니다.
+이 문서는 `apps/mobile/src/locations`의 **모바일 저장 지역(saved-location) 경계** 중 지역 **한 건**을
+설명합니다. 이 경계는 기기에 저장될 지역 한 건의 런타임 schema와, 저장 지역을 공유
+`WeatherRequestV1`으로 안전하게 변환하는 순수 함수만 다룹니다. 실제 저장소·위치 권한·현재 위치
+조회·화면 연결·실제 API 호출은 다루지 않습니다.
+
+여러 지역을 canonical collection으로 관리하는 순수 경계(추가·삭제·재정렬·현재 위치 설정/해제와
+그 불변조건)는 [저장 지역 collection 경계](./mobile-saved-location-collection.md)에서 별도로
+설명합니다. 이 문서의 single-record schema는 그 collection 경계가 element schema로 재사용합니다.
 
 ## 목적과 경계
 
@@ -84,11 +88,12 @@ type SavedLocationWeatherRequestResult =
 
 ## 이 PR에서 하지 않는 것
 
-이 경계는 모델과 변환 함수만 제공합니다. 다음은 후속 PR 범위입니다.
+이 경계는 지역 한 건의 모델과 변환 함수만 제공합니다. 여러 지역 collection, add/delete/reorder,
+중복 ID 처리, `sortOrder` 재인덱싱, 현재 위치 record 유일성 정책은 이제 별도의 순수 경계인
+[저장 지역 collection 경계](./mobile-saved-location-collection.md)에서 구현됐습니다(schema와 순수
+operation 한정). 다음은 여전히 후속 PR 범위입니다.
 
-- AsyncStorage 등 저장소 adapter, 새 storage dependency
-- 여러 지역 collection, add/delete/reorder, 중복 ID 처리, `sortOrder` 재인덱싱
-- 현재 위치 record 유일성 정책
+- AsyncStorage 등 저장소 adapter, 새 storage dependency, 직렬화·마이그레이션·persisted read/write
 - 위치 권한, GPS/Fused Location, geocoding·지역 검색, 현재 위치 조회
 - 화면·navigation 연결, weather client 실제 호출
 

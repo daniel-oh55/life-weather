@@ -17,15 +17,24 @@
   주입받아 construction·import 시 network·환경 접근이 없고, retry/timeout/cache/auth/logging과 실제 URL은
   없습니다. 이 client는 아직 어떤 화면에도 연결되지 않았습니다(screen 연결·실제 호출·좌표/저장소는
   후속 PR). 자세한 내용은 [mobile-weather-api-client.md](./mobile-weather-api-client.md) 참고.
-  이에 더해 기기 로컬 **저장 지역(saved-location) 경계**(`src/locations`)가 추가됐습니다 — 공유
-  `weatherLocation`을 **확장**한 strict `mobileSavedLocation` schema(로컬 전용 `kmaGrid`/`isCurrent`/
-  `sortOrder` 필드를 additive하게 더하고 공유 필드 규칙은 그대로 상속)와, 저장 지역을 공유
-  `WeatherRequestV1`으로 **명시적으로 매핑**하는 순수 함수(`createWeatherRequestFromSavedLocation`)를
-  제공합니다. 함수는 unknown 입력을 `safeParse`로 검증해 throw 없이 3-way 없는 `ok`/고정
-  `INVALID_SAVED_LOCATION` result를 반환하고, 공유 9개 필드만 하나씩 매핑해(spread 금지) 로컬 전용·
-  Provider-native(`nx`/`ny`) 필드가 요청에 새어 나가지 않게 합니다. 이 경계는 실제 저장소·위치 권한·
-  현재 위치 조회·화면 연결·실제 호출을 다루지 않습니다(후속 PR). 자세한 내용은
-  [mobile-saved-location.md](./mobile-saved-location.md) 참고.
+  이에 더해 기기 로컬 **저장 지역(saved-location) 경계**(`src/locations`)가 추가됐으며, 책임이 다른
+  두 계층으로 구성됩니다. **single-record 계층**은 공유 `weatherLocation`을 **확장**한 strict
+  `mobileSavedLocation` schema(로컬 전용 `kmaGrid`/`isCurrent`/`sortOrder` 필드를 additive하게 더하고
+  공유 필드 규칙은 그대로 상속)와, 저장 지역을 공유 `WeatherRequestV1`으로 **명시적으로 매핑**하는
+  순수 함수(`createWeatherRequestFromSavedLocation`)를 제공합니다. 함수는 unknown 입력을 `safeParse`로
+  검증해 throw 없이 `ok`/고정 `INVALID_SAVED_LOCATION` result를 반환하고, 공유 9개 필드만 하나씩
+  매핑해(spread 금지) 로컬 전용·Provider-native(`nx`/`ny`) 필드가 요청에 새어 나가지 않게 합니다.
+  **collection 계층**은 이 single-record schema를 element로 **재사용**해 여러 저장 지역을 하나의
+  canonical 값으로 관리합니다 — 세 불변조건(ID 유일성, 현재 위치 0~1개, `sortOrder === array index`)을
+  강제하는 `mobileSavedLocationCollection` schema(빈 배열 허용)와, 지역 추가·삭제·재정렬·현재 위치
+  설정/해제를 수행하는 **순수 operation**을 제공합니다. 모든 operation은 collection 입력을 먼저
+  검증해 잘못된 collection이면 다른 인자보다 우선해 `INVALID_COLLECTION`을 반환하고, throw 없이 고정된
+  비노출 오류(`kind`만)를 돌려주며, 입력을 mutate하지 않고 성공 시 fresh canonical collection(모든
+  record와 nested `kmaGrid` 새 object, `sortOrder` `0..n-1` 재작성)을 반환합니다. 이 경계는 실제
+  저장소 adapter·직렬화·마이그레이션·위치 권한·현재 위치 조회·화면 연결·실제 호출을 다루지 않으며,
+  persistence는 이 collection schema를 boundary로 삼는 후속 PR 범위입니다. 자세한 내용은
+  [mobile-saved-location.md](./mobile-saved-location.md)와
+  [mobile-saved-location-collection.md](./mobile-saved-location-collection.md) 참고.
 - `apps/api` — Hono 기반 백엔드. 외부 공공데이터 API 호출, API 키 보관, 응답 정규화를 담당할
   위치입니다. **현재 상태**: `GET /health`에 더해, PR #4에서 기상청(KMA) **원본 응답 경계**
   (`src/providers/kma`)를 구현했습니다 — 단기·초단기예보 원본 JSON의 Zod 런타임 검증, 성공·
