@@ -12,8 +12,14 @@
  * This barrel stays a **pure, provider-neutral** surface: the concrete AsyncStorage production
  * binding lives in a separate module (`./mobile-saved-location-async-storage`) and is deliberately
  * **not** re-exported here, so Node-based unit tests and pure domain consumers never transitively
- * load the native module. A runtime consumer imports that binding directly. App-start hydration,
- * React state, screen wiring, and location permission remain out of scope for this module.
+ * load the native module. A runtime consumer imports that binding directly.
+ *
+ * On top of persistence, the **hydration manager** layer
+ * ({@link ./mobile-saved-location-hydration-manager}) reads that persistence boundary and exposes a
+ * small `NOT_STARTED` / `LOADING` / `EMPTY` / `READY` / `ERROR` state machine with single-flight
+ * concurrent hydration, idempotent success, and retryable failure. It stays provider-neutral too and
+ * is exported from this same pure barrel. React state/hooks/context, screen wiring, and location
+ * permission remain out of scope for this module.
  */
 
 export {
@@ -55,3 +61,10 @@ export {
   type SavedLocationPersistenceClearResult,
   type SavedLocationPersistence,
 } from './mobile-saved-location-persistence';
+
+export {
+  createSavedLocationHydrationManager,
+  type SavedLocationHydrationErrorKind,
+  type SavedLocationHydrationState,
+  type SavedLocationHydrationManager,
+} from './mobile-saved-location-hydration-manager';
