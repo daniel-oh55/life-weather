@@ -29,6 +29,74 @@
 - ChatGPT는 scope, risk, acceptance criteria, review와 Owner gate를 조정합니다.
 - Owner만 PR의 Ready 전환, merge, deploy와 외부 콘솔 작업을 결정합니다.
 
+## 모델·추론·토큰 예산 운영
+
+정확성, 보안과 기존 계약을 희생하지 않는 범위에서 모델 호출, 입력 context와 출력 길이를 최소화합니다.
+
+### 기본 원칙
+
+* 한 PR에는 primary implementer를 한 명만 지정합니다. 동일 작업을 Codex와 Claude Code가 중복 구현하지 않습니다.
+* 모델은 저장소 전체나 과거 채팅을 매번 다시 읽지 않습니다. `AGENTS.md`, `docs/PROJECT_STATE.md`, 현재 PR diff와 작업에 직접 관련된 파일만 우선 확인합니다.
+* canonical 문서에 이미 있는 정책은 지시문에 전문을 복사하지 않고 문서 경로와 이번 작업에서 중요한 예외만 명시합니다.
+* scope 밖 개선, 선제적 리팩터링, 새 dependency와 “함께 하면 좋은 작업”을 추가하지 않습니다.
+* 저장소 조회로 해결할 수 있는 질문은 Owner에게 다시 묻지 않습니다.
+
+### 모델과 추론 수준 기본값
+
+* **Claude Code primary implementation**
+
+  * 기본: 사용 가능한 최신 `sonnet` alias, 보통/default 사고 수준.
+  * LOW 문서·기계적 수정: low.
+  * MEDIUM 일반 기능·테스트·UI: medium.
+  * HIGH contract·위치·provider·native·보안·동시성: high.
+  * `opus`는 Sonnet으로 해결하기 어려운 복잡한 설계, 경쟁 상태 또는 근본원인 분석의 계획 단계에만 사용하고, 구현은 가능하면 Sonnet으로 수행합니다.
+* **Codex independent review**
+
+  * LOW focused diff: low.
+  * MEDIUM 일반 회귀 검토: medium.
+  * HIGH 보안·contract·data-loss·배포 경계: high.
+  * xhigh는 high 검토가 반복 실패했거나 원인이 매우 복잡할 때만 예외적으로 사용합니다.
+* **별도 Claude 설계 검증**
+
+  * 기본 Sonnet/medium.
+  * 중대한 아키텍처 선택, 상충하는 근거 또는 irreversible decision에만 Opus/high를 사용합니다.
+
+가용 모델명이 변경되면 같은 비용·성능 역할의 최신 모델로 대체하되 위험도 기준은 유지합니다.
+
+### 입력과 출력 예산
+
+구현·검토 지시문은 다음 항목만 포함합니다.
+
+* 목표와 필요한 배경
+* exact base, branch와 risk
+* 구현 범위와 제외 범위
+* 예상 변경 위치
+* 완료 조건
+* 위험도에 맞는 최소 검사
+* Owner gate
+* 간결한 완료 보고 형식
+
+완료 보고는 다음만 남깁니다.
+
+* branch와 exact HEAD
+* changed files와 핵심 변경
+* targeted checks와 CI
+* 보호 영역·비밀·운영 값의 무변경 여부
+* PR Draft/Open 상태
+* findings와 남은 Owner action
+
+전체 명령 로그, 읽은 파일의 장문 요약, 기존 PR 역사와 지시문 반복은 보고하지 않습니다.
+
+### 위험도별 검증 예산
+
+* **LOW**: 관련 diff, `git diff --check`, 필요한 targeted check와 기존 CI 확인. 독립 검토는 원칙적으로 생략합니다.
+* **MEDIUM**: 영향 영역 lint/typecheck/test와 회귀 검토. 구체적 위험이 있을 때만 focused independent review를 추가합니다.
+* **HIGH**: 관련 전체 검사와 `pnpm check`, GitHub CI 및 independent read-only review가 필수입니다.
+* 기존 repository CI 계약이 위 기준보다 엄격하면 기존 계약을 따릅니다.
+* finding 보정 후에는 corrected diff를 먼저 focused review하고, 코드가 바뀌지 않은 문서 보정 때문에 전체 분석을 처음부터 반복하지 않습니다.
+
+ChatGPT가 Claude Code, Codex 또는 Claude용 지시문을 만들 때 첫 부분에 `권장 모델`과 `reasoning/thinking level`을 한 줄로 명시합니다.
+
 ## 위험 등급
 
 ### LOW
