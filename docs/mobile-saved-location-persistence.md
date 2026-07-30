@@ -31,8 +31,11 @@ interface SavedLocationKeyValueStorage {
 
 - AsyncStorage·SecureStore 등 **native package 타입을 import하지 않습니다.**
 - `clear()`(store 전체 비우기)·batch·key enumeration은 port에 포함하지 않습니다.
-- 실제 store instance는 module import·factory 생성만으로 만들어지지 않습니다. 실제 기기 store를 이
-  port로 구현해 주입하는 작업은 후속 PR입니다.
+- provider-neutral persistence module 자체는 실제 기기 store를 만들거나 import하지 않습니다. 실제
+  기기 store 주입은 별도 concrete binding
+  `apps/mobile/src/locations/mobile-saved-location-async-storage.ts`에 구현되어 있으며,
+  `mobileSavedLocationPersistence`를 제공합니다. 이 binding의 module import와 instance 생성만으로는
+  storage I/O가 발생하지 않습니다.
 - 테스트는 이 interface를 구현한 in-memory fake 또는 call-recording spy로 검증합니다.
 
 ## 안정적인 storage key와 버전 분리
