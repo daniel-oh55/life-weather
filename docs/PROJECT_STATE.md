@@ -41,9 +41,13 @@
   경계까지: 안정적인 storage key와 분리된 versioned **V1 envelope**·collection encode/decode codec,
   최소 key-value port(`getItem`/`setItem`/`removeItem`)를 주입받는 load/save/clear(missing key는
   성공한 빈 collection, 손상 데이터·미지원 정수 버전은 fail-closed, invalid collection은 write 차단,
-  sync throw·async rejection을 고정 비노출 storage 오류로 분류, fresh output). 다만 실제 AsyncStorage
-  등 concrete native storage dependency·binding, migration 실행, 위치 권한·현재 위치 조회·화면 연결은
-  여전히 미구현)
+  sync throw·async rejection을 고정 비노출 storage 오류로 분류, fresh output). 이 persistence 경계는
+  이제 실제 AsyncStorage(`@react-native-async-storage/async-storage` 2.2.0)에 연결하는 concrete
+  production binding까지 구현됐습니다 — 실제 AsyncStorage dependency: 구현됨, concrete binding
+  (`mobile-saved-location-async-storage.ts`, `getItem`/`setItem`/`removeItem` 3-메서드 위임, pure
+  barrel 미export): 구현됨. 반면 hydration: 미구현, state manager: 미구현, migration execution:
+  미구현, 위치 권한: 미구현, 지역 관리 UI: 미구현이고, development client rebuild 및 실제 기기 QA:
+  미수행입니다)
 - 디자인 시스템과 주요 화면
 - Android widget
 - AdMob

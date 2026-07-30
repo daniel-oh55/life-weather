@@ -37,9 +37,19 @@
   주입받는 load/save/clear adapter를 제공합니다 — missing key는 성공한 빈 collection, 손상 데이터와
   미지원 정수 버전은 fail closed(자동 삭제·repair·migration 없음), invalid collection은 write 자체를
   차단해 기존 저장값을 지키고, sync throw·Promise rejection을 고정된 비노출 storage 오류로 분류하며,
-  성공 output은 항상 fresh입니다. 다만 이 경계는 어떤 concrete native storage package도 import·설치하지
-  않으므로, 실제 기기 저장소 binding·migration 실행·위치 권한·현재 위치 조회·화면 연결·실제 호출은
-  여전히 후속 PR 범위입니다. 자세한 내용은
+  성공 output은 항상 fresh입니다. 이 persistence 경계 위에 **concrete AsyncStorage production
+  binding 계층**(`mobile-saved-location-async-storage.ts`)이 추가됐습니다 — 실제
+  `@react-native-async-storage/async-storage`(2.2.0)의 `getItem`/`setItem`/`removeItem` **세
+  메서드만** provider-neutral port로 위임하고 기존 `createSavedLocationPersistence()`로 production
+  instance `mobileSavedLocationPersistence`를 만듭니다. binding은 storage key를 다시 쓰지 않고,
+  오류를 `try/catch`로 변환하지 않으며(동기 throw·Promise rejection을 그대로 port에 전달), `clear()`
+  같은 광범위 API를 쓰지 않고, import·instance 생성만으로는 storage I/O를 수행하지 않습니다. 결정적으로
+  이 concrete binding은 **pure barrel `src/locations/index.ts`에서 export하지 않으므로**, pure domain
+  consumer와 Node 기반 unit test가 native module을 전이적으로 load하지 않습니다(runtime consumer는 binding
+  파일을 직접 import). 따라서 저장 지역 계층은 (1) single-record → (2) canonical collection → (3)
+  provider-neutral persistence codec/port → (4) concrete AsyncStorage production binding의 네 계층으로
+  구성되며, (5) app-start hydration·state manager·화면(UI)·navigation·migration 실행·위치 권한·현재
+  위치 조회·실제 호출과 development client 재빌드·실제 기기 QA는 여전히 후속 PR 범위입니다. 자세한 내용은
   [mobile-saved-location.md](./mobile-saved-location.md),
   [mobile-saved-location-collection.md](./mobile-saved-location-collection.md)와
   [mobile-saved-location-persistence.md](./mobile-saved-location-persistence.md) 참고.
@@ -313,10 +323,17 @@ dependency**(`^4.1.11`, contracts와 동일 버전 계열)로 선언했습니다
 변경뿐이며, 다른 dependency·package manager·lockfile format·build-first scripts는 바뀌지 않았습니다.
 saved-location 경계 역시 `@life-weather/contracts` compiled `dist`만 소비하므로 동일한 build-first
 계약을 따르고, `contracts → apps/mobile`·`apps/mobile → apps/api` 역방향은 그대로 없습니다. 이후
-추가된 saved-location **persistence 경계**는 기존 collection module과 single-record 타입만 재사용하고
-주입된 key-value port에만 의존하므로, **신규 dependency도, 신규 native storage package도, lockfile
-변경도 추가하지 않습니다** — 실제 기기 저장소 package binding은 이 provider-neutral 경계를 구현·주입하는
-별도의 후속 작업입니다.
+추가된 saved-location **persistence codec 경계**는 기존 collection module과 single-record 타입만
+재사용하고 주입된 key-value port에만 의존하므로, 그 자체로는 신규 dependency도 native storage package도
+추가하지 않습니다. 그 위의 **concrete AsyncStorage production binding**은 이 provider-neutral 경계를
+실제 기기 저장소에 연결하기 위해 mobile workspace에 **`@react-native-async-storage/async-storage`
+(2.2.0) 하나만** direct dependency로 추가합니다(Expo CLI `expo install`로 설치, Expo SDK 57 호환
+버전 선택). 이 변경은 `apps/mobile/package.json`의 dependency 한 항목과 그에 필요한 최소
+`pnpm-lock.yaml` importer 변경(+ transitive `merge-options`·`is-plain-obj`)뿐이며, 다른 dependency·
+package manager·lockfile format·build-first scripts·app config는 바뀌지 않았습니다. binding은 native
+runtime을 필요로 하지만 pure barrel(`index.ts`)에서 export되지 않으므로, 이 native dependency는 pure
+domain module과 Node 기반 unit test로 전이되지 않습니다(`apps/mobile → contracts` 방향과
+`contracts → apps/mobile`·`apps/mobile → apps/api` 역방향 부재는 그대로 유지).
 
 `weather-core`는 런타임에 zod에도 contracts에도 의존하지 않습니다. PR #3에서 상태 정규화의
 반환 타입이 contracts의 `WeatherCondition`에 할당 가능한지를 **컴파일 타임 타입 테스트**로만
