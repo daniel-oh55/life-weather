@@ -329,6 +329,50 @@ describe('createSavedLocationHydrationManager — concurrency', () => {
     expect(manager.getState().status).toBe('READY');
   });
 
+  // 13b — a synchronous load() throw must not leave a stale in-flight promise behind: the next
+  // hydrate() from ERROR has to start a genuinely new cycle (fresh LOADING, fresh promise, a second
+  // load() call), and a subsequent call after terminal success must not call load() a third time.
+  it('allows a retry after a synchronous load() throw, and does not leave a stale in-flight promise', async () => {
+    let attempt = 0;
+    const loadCalls: number[] = [];
+    const save = vi.fn(async () => ({ ok: true as const }));
+    const clear = vi.fn(async () => ({ ok: true as const }));
+    const persistence: SavedLocationPersistence = {
+      load: (): Promise<SavedLocationPersistenceLoadResult> => {
+        attempt += 1;
+        loadCalls.push(attempt);
+        if (attempt === 1) {
+          throw new Error(SECRET_MARKER);
+        }
+        return Promise.resolve({ ok: true, locations: [] });
+      },
+      save,
+      clear,
+    };
+    const manager = createSavedLocationHydrationManager(persistence);
+
+    const first = manager.hydrate();
+    await expect(first).resolves.toBeUndefined();
+    expect(manager.getState()).toEqual({
+      status: 'ERROR',
+      error: { kind: 'STORAGE_READ_FAILED' },
+    });
+
+    const second = manager.hydrate();
+    // The LOADING transition is synchronous, and the second promise is a fresh reference — proof
+    // the manager did not reuse a stale, already-settled in-flight promise from the first attempt.
+    expect(manager.getState()).toEqual({ status: 'LOADING' });
+    expect(second).not.toBe(first);
+
+    await second;
+
+    expect(loadCalls).toEqual([1, 2]);
+    expect(manager.getState()).toEqual({ status: 'EMPTY' });
+
+    await manager.hydrate();
+    expect(loadCalls).toEqual([1, 2]);
+  });
+
   it('allows a retry after ERROR to reach EMPTY as a terminal success state', async () => {
     let attempt = 0;
     const { persistence, loadCalls } = fakePersistence(async () => {

@@ -113,21 +113,30 @@ export function createSavedLocationHydrationManager(
   let internal: InternalState = { status: 'NOT_STARTED' };
   let inFlight: Promise<void> | null = null;
 
-  async function runHydration(): Promise<void> {
-    try {
-      const result = await persistence.load();
-      if (!result.ok) {
-        internal = { status: 'ERROR', kind: result.error.kind };
-      } else if (result.locations.length === 0) {
-        internal = { status: 'EMPTY' };
-      } else {
-        internal = { status: 'READY', locations: result.locations.map(cloneSavedLocationSnapshot) };
-      }
-    } catch {
-      internal = { status: 'ERROR', kind: 'STORAGE_READ_FAILED' };
-    } finally {
-      inFlight = null;
-    }
+  // Deferring the `persistence.load()` call itself to a microtask (rather than calling it directly
+  // in this function body) ensures `hydrate()`'s `inFlight = runHydration()` assignment always
+  // completes before this settles — including when `load()` throws synchronously. Without the
+  // deferral, a synchronous throw would run this whole function (through the `finally`) before
+  // `runHydration()` returns, so the caller's assignment would overwrite `inFlight = null` with a
+  // stale already-settled promise, and the next `hydrate()` from `ERROR` would never call `load()`.
+  function runHydration(): Promise<void> {
+    return Promise.resolve()
+      .then(() => persistence.load())
+      .then((result) => {
+        if (!result.ok) {
+          internal = { status: 'ERROR', kind: result.error.kind };
+        } else if (result.locations.length === 0) {
+          internal = { status: 'EMPTY' };
+        } else {
+          internal = { status: 'READY', locations: result.locations.map(cloneSavedLocationSnapshot) };
+        }
+      })
+      .catch(() => {
+        internal = { status: 'ERROR', kind: 'STORAGE_READ_FAILED' };
+      })
+      .finally(() => {
+        inFlight = null;
+      });
   }
 
   return {
