@@ -48,7 +48,10 @@ describe('pure barrel isolation', () => {
     });
 
     try {
-      await expect(import('./index')).resolves.toBeDefined();
+      const barrel = await import('./index');
+      // The barrel also exports the store factory now — proves that addition alone does not pull
+      // in the native module either.
+      expect(typeof barrel.createSavedLocationHydrationStore).toBe('function');
     } finally {
       vi.doMock('@react-native-async-storage/async-storage', () => ({
         default: asyncStorageMock,
@@ -89,6 +92,39 @@ describe('production module import', () => {
 
     expect(first.mobileSavedLocationHydrationManager).toBe(second.mobileSavedLocationHydrationManager);
   });
+
+  it('exposes a store whose initial snapshot is NOT_STARTED, stable by reference, deep-frozen, and performs no storage I/O', async () => {
+    const { mobileSavedLocationHydrationStore } = await import(
+      './mobile-saved-location-hydration-production'
+    );
+
+    const snapshot = mobileSavedLocationHydrationStore.getSnapshot();
+    expect(snapshot).toEqual({ status: 'NOT_STARTED' });
+    expect(mobileSavedLocationHydrationStore.getSnapshot()).toBe(snapshot);
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(asyncStorageMock.getItem).toHaveBeenCalledTimes(0);
+    expect(asyncStorageMock.setItem).toHaveBeenCalledTimes(0);
+    expect(asyncStorageMock.removeItem).toHaveBeenCalledTimes(0);
+  });
+
+  it('exposes the same store instance across repeated imports of the same module instance', async () => {
+    const first = await import('./mobile-saved-location-hydration-production');
+    const second = await import('./mobile-saved-location-hydration-production');
+
+    expect(first.mobileSavedLocationHydrationStore).toBe(second.mobileSavedLocationHydrationStore);
+  });
+
+  it('builds the store over the same manager instance (one production graph)', async () => {
+    const { mobileSavedLocationHydrationManager, mobileSavedLocationHydrationStore } = await import(
+      './mobile-saved-location-hydration-production'
+    );
+
+    await mobileSavedLocationHydrationStore.hydrate();
+
+    // If the store were built over a different manager instance, this would still read
+    // NOT_STARTED — proving the store observed the exact same manager this module also exports.
+    expect(mobileSavedLocationHydrationManager.getState()).toEqual({ status: 'EMPTY' });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -111,6 +147,80 @@ describe('manual hydrate()', () => {
     expect(asyncStorageMock.getItem).toHaveBeenCalledWith(SAVED_LOCATION_PERSISTENCE_KEY);
     expect(asyncStorageMock.setItem).toHaveBeenCalledTimes(0);
     expect(asyncStorageMock.removeItem).toHaveBeenCalledTimes(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Store hydrate() delegation: the store reads the exact stable key exactly once via the same
+// production persistence, returns the manager's own join promise by reference, notifies through
+// LOADING then the terminal status with an already-updated snapshot, and a repeated success call
+// re-reads nothing and notifies nothing further.
+// ---------------------------------------------------------------------------
+
+describe('store hydrate()', () => {
+  it('reads the exact stable key exactly once and reaches EMPTY on a missing key', async () => {
+    asyncStorageMock.getItem.mockResolvedValue(null);
+    const { SAVED_LOCATION_PERSISTENCE_KEY } = await import('./index');
+    const { mobileSavedLocationHydrationStore } = await import(
+      './mobile-saved-location-hydration-production'
+    );
+
+    await mobileSavedLocationHydrationStore.hydrate();
+
+    expect(mobileSavedLocationHydrationStore.getSnapshot()).toEqual({ status: 'EMPTY' });
+    expect(asyncStorageMock.getItem).toHaveBeenCalledTimes(1);
+    expect(asyncStorageMock.getItem).toHaveBeenCalledWith(SAVED_LOCATION_PERSISTENCE_KEY);
+    expect(asyncStorageMock.setItem).toHaveBeenCalledTimes(0);
+    expect(asyncStorageMock.removeItem).toHaveBeenCalledTimes(0);
+  });
+
+  it('returns the exact manager join promise by reference', async () => {
+    asyncStorageMock.getItem.mockResolvedValue(null);
+    const { mobileSavedLocationHydrationManager, mobileSavedLocationHydrationStore } = await import(
+      './mobile-saved-location-hydration-production'
+    );
+    const hydrateSpy = vi.spyOn(mobileSavedLocationHydrationManager, 'hydrate');
+
+    const storePromise = mobileSavedLocationHydrationStore.hydrate();
+    const managerPromise = hydrateSpy.mock.results[0]?.value as Promise<void> | undefined;
+
+    expect(managerPromise).toBeDefined();
+    expect(storePromise).toBe(managerPromise);
+
+    await storePromise;
+  });
+
+  it('notifies LOADING then EMPTY, in order, with getSnapshot() already reflecting the new state at each notification', async () => {
+    asyncStorageMock.getItem.mockResolvedValue(null);
+    const { mobileSavedLocationHydrationStore } = await import(
+      './mobile-saved-location-hydration-production'
+    );
+    const observedStatuses: string[] = [];
+    mobileSavedLocationHydrationStore.subscribe(() => {
+      observedStatuses.push(mobileSavedLocationHydrationStore.getSnapshot().status);
+    });
+
+    await mobileSavedLocationHydrationStore.hydrate();
+
+    expect(observedStatuses).toEqual(['LOADING', 'EMPTY']);
+  });
+
+  it('does not re-read storage or notify again on a repeated success hydrate() call', async () => {
+    asyncStorageMock.getItem.mockResolvedValue(null);
+    const { mobileSavedLocationHydrationStore } = await import(
+      './mobile-saved-location-hydration-production'
+    );
+    const listener = vi.fn();
+
+    await mobileSavedLocationHydrationStore.hydrate();
+    mobileSavedLocationHydrationStore.subscribe(listener);
+    const snapshotAfterFirst = mobileSavedLocationHydrationStore.getSnapshot();
+
+    await mobileSavedLocationHydrationStore.hydrate();
+
+    expect(asyncStorageMock.getItem).toHaveBeenCalledTimes(1);
+    expect(mobileSavedLocationHydrationStore.getSnapshot()).toBe(snapshotAfterFirst);
+    expect(listener).toHaveBeenCalledTimes(0);
   });
 });
 
@@ -155,6 +265,48 @@ describe('no logging of raw stored values or native errors', () => {
     const state = mobileSavedLocationHydrationManager.getState();
     expect(state).toEqual({ status: 'ERROR', error: { kind: 'STORAGE_READ_FAILED' } });
     expect(JSON.stringify(state)).not.toContain(SECRET_MARKER);
+    expect(consoleLog).not.toHaveBeenCalled();
+    expect(consoleWarn).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(consoleInfo).not.toHaveBeenCalled();
+  });
+
+  it('exposes only the fixed ERROR kind through the store on a malformed stored value, and logs nothing', async () => {
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleInfo = vi.spyOn(console, 'info').mockImplementation(() => {});
+    asyncStorageMock.getItem.mockResolvedValue(`{not json ${SECRET_MARKER}`);
+
+    const { mobileSavedLocationHydrationStore } = await import(
+      './mobile-saved-location-hydration-production'
+    );
+    await mobileSavedLocationHydrationStore.hydrate();
+
+    const snapshot = mobileSavedLocationHydrationStore.getSnapshot();
+    expect(snapshot).toEqual({ status: 'ERROR', error: { kind: 'INVALID_STORED_LOCATIONS' } });
+    expect(JSON.stringify(snapshot)).not.toContain(SECRET_MARKER);
+    expect(consoleLog).not.toHaveBeenCalled();
+    expect(consoleWarn).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(consoleInfo).not.toHaveBeenCalled();
+  });
+
+  it('exposes only the fixed ERROR kind through the store on a native getItem rejection, and logs nothing', async () => {
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleInfo = vi.spyOn(console, 'info').mockImplementation(() => {});
+    asyncStorageMock.getItem.mockRejectedValue(new Error(SECRET_MARKER));
+
+    const { mobileSavedLocationHydrationStore } = await import(
+      './mobile-saved-location-hydration-production'
+    );
+    await mobileSavedLocationHydrationStore.hydrate();
+
+    const snapshot = mobileSavedLocationHydrationStore.getSnapshot();
+    expect(snapshot).toEqual({ status: 'ERROR', error: { kind: 'STORAGE_READ_FAILED' } });
+    expect(JSON.stringify(snapshot)).not.toContain(SECRET_MARKER);
     expect(consoleLog).not.toHaveBeenCalled();
     expect(consoleWarn).not.toHaveBeenCalled();
     expect(consoleError).not.toHaveBeenCalled();

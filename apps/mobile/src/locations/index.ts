@@ -17,9 +17,12 @@
  * On top of persistence, the **hydration manager** layer
  * ({@link ./mobile-saved-location-hydration-manager}) reads that persistence boundary and exposes a
  * small `NOT_STARTED` / `LOADING` / `EMPTY` / `READY` / `ERROR` state machine with single-flight
- * concurrent hydration, idempotent success, and retryable failure. It stays provider-neutral too and
- * is exported from this same pure barrel. React state/hooks/context, screen wiring, and location
- * permission remain out of scope for this module.
+ * concurrent hydration, idempotent success, and retryable failure. On top of that, the **observable
+ * hydration store** ({@link ./mobile-saved-location-hydration-store}) wraps the manager with a
+ * stable, deep-frozen cached snapshot and a subscribe/notify contract intended for a future React
+ * `useSyncExternalStore` consumer. Both layers stay provider-neutral and are exported from this same
+ * pure barrel. React state/hooks/context, screen wiring, and location permission remain out of scope
+ * for this module.
  */
 
 export {
@@ -68,3 +71,9 @@ export {
   type SavedLocationHydrationState,
   type SavedLocationHydrationManager,
 } from './mobile-saved-location-hydration-manager';
+
+export {
+  createSavedLocationHydrationStore,
+  type SavedLocationHydrationStore,
+  type SavedLocationHydrationStoreListener,
+} from './mobile-saved-location-hydration-store';

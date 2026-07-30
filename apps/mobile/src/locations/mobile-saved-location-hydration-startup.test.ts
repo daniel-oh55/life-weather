@@ -3,24 +3,30 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // ---------------------------------------------------------------------------
 // The production composition (`mobile-saved-location-hydration-production`) is mocked so these
 // tests exercise only the one-shot guard in `mobile-saved-location-hydration-startup`, never the
-// real AsyncStorage-backed manager. `vi.hoisted` lifts this mock function above the `vi.mock`
-// factory, which Vitest hoists above these imports.
+// real AsyncStorage-backed manager or store. The mock deliberately exposes **only** the store's
+// surface (`hydrate`/`getSnapshot`/`subscribe`) and no `mobileSavedLocationHydrationManager` export
+// at all — if the startup module were changed to import the lower-level manager directly instead of
+// the store, that import would resolve to `undefined` and every test below would fail immediately.
+// `vi.hoisted` lifts these mock functions above the `vi.mock` factory, which Vitest hoists above
+// these imports.
 // ---------------------------------------------------------------------------
 
 const hydrateMock = vi.hoisted(() => vi.fn());
-const getStateMock = vi.hoisted(() => vi.fn());
+const getSnapshotMock = vi.hoisted(() => vi.fn());
+const subscribeMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./mobile-saved-location-hydration-production', () => ({
-  mobileSavedLocationHydrationManager: {
+  mobileSavedLocationHydrationStore: {
     hydrate: hydrateMock,
-    getState: getStateMock,
+    getSnapshot: getSnapshotMock,
+    subscribe: subscribeMock,
   },
 }));
 
 beforeEach(() => {
   vi.resetModules();
   vi.resetAllMocks();
-  getStateMock.mockReturnValue({ status: 'NOT_STARTED' });
+  getSnapshotMock.mockReturnValue({ status: 'NOT_STARTED' });
 });
 
 afterEach(() => {
@@ -41,13 +47,13 @@ describe('module import', () => {
 
 // ---------------------------------------------------------------------------
 // 2/3 — the first start call invokes hydrate() exactly once and returns the exact promise the
-// manager returned.
+// store returned.
 // ---------------------------------------------------------------------------
 
 describe('first start() call', () => {
-  it('calls hydrate() exactly once and returns the manager promise by reference', async () => {
-    const managerPromise = Promise.resolve();
-    hydrateMock.mockReturnValue(managerPromise);
+  it('calls hydrate() exactly once and returns the store promise by reference', async () => {
+    const storePromise = Promise.resolve();
+    hydrateMock.mockReturnValue(storePromise);
     const { startMobileSavedLocationHydrationOnce } = await import(
       './mobile-saved-location-hydration-startup'
     );
@@ -55,7 +61,7 @@ describe('first start() call', () => {
     const result = startMobileSavedLocationHydrationOnce();
 
     expect(hydrateMock).toHaveBeenCalledTimes(1);
-    expect(result).toBe(managerPromise);
+    expect(result).toBe(storePromise);
 
     await result;
   });
@@ -63,7 +69,7 @@ describe('first start() call', () => {
 
 // ---------------------------------------------------------------------------
 // 4/5 — concurrent / repeated calls while the first hydration is still pending all return the
-// same promise reference, and the manager is called exactly once.
+// same promise reference, and the store is called exactly once.
 // ---------------------------------------------------------------------------
 
 describe('concurrent / repeated calls while pending', () => {
@@ -92,13 +98,13 @@ describe('concurrent / repeated calls while pending', () => {
 
 // ---------------------------------------------------------------------------
 // 6 — repeated calls after the first promise has settled still return the same reference and
-// still call the manager only once.
+// still call the store only once.
 // ---------------------------------------------------------------------------
 
 describe('repeated calls after settlement', () => {
   it('returns the same promise reference and calls hydrate() only once after completion', async () => {
-    const managerPromise = Promise.resolve();
-    hydrateMock.mockReturnValue(managerPromise);
+    const storePromise = Promise.resolve();
+    hydrateMock.mockReturnValue(storePromise);
     const { startMobileSavedLocationHydrationOnce } = await import(
       './mobile-saved-location-hydration-startup'
     );
@@ -116,14 +122,14 @@ describe('repeated calls after settlement', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 7 — no automatic retry after the first hydration settles with the manager reporting ERROR.
+// 7 — no automatic retry after the first hydration settles with the store reporting ERROR.
 // ---------------------------------------------------------------------------
 
 describe('no automatic retry after ERROR', () => {
-  it('does not call hydrate() again after the manager settles into ERROR', async () => {
-    const managerPromise = Promise.resolve();
-    hydrateMock.mockReturnValue(managerPromise);
-    getStateMock.mockReturnValue({ status: 'ERROR', error: { kind: 'STORAGE_READ_FAILED' } });
+  it('does not call hydrate() again after the store settles into ERROR', async () => {
+    const storePromise = Promise.resolve();
+    hydrateMock.mockReturnValue(storePromise);
+    getSnapshotMock.mockReturnValue({ status: 'ERROR', error: { kind: 'STORAGE_READ_FAILED' } });
     const { startMobileSavedLocationHydrationOnce } = await import(
       './mobile-saved-location-hydration-startup'
     );
