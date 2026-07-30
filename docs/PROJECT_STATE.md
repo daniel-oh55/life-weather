@@ -51,9 +51,13 @@
   idempotent·실패 후 retry·고정 비노출 오류)도 구현됐습니다. 이 AsyncStorage binding과 hydration
   manager의 production composition(`mobile-saved-location-hydration-production.ts`,
   `mobileSavedLocationHydrationManager`, pure barrel 미export, import 시 storage I/O·`hydrate()`
-  호출 없음)도 구현됐습니다. 반면 app-start `hydrate()` 호출: 미구현, React state/UI 연결: 미구현,
-  migration execution: 미구현, 위치 권한: 미구현, 지역 관리 UI: 미구현이고, development client
-  rebuild 및 실제 기기 QA: 미수행입니다)
+  호출 없음)도 구현됐습니다. 이 composition을 앱 시작 시 한 번만 호출하는 one-shot startup boundary
+  (`mobile-saved-location-hydration-startup.ts`, `startMobileSavedLocationHydrationOnce`)와 root
+  layout mount effect wiring(`apps/mobile/src/app/_layout.tsx`)도 구현됐습니다 — 반복·동시 effect
+  실행에도 실제 manager `hydrate()`와 그에 따른 storage read는 정확히 한 번만 일어나고, 첫 결과가
+  `ERROR`여도 자동 재시도하지 않으며, `<Stack />` 렌더링과 navigation은 차단하지 않습니다. 반면
+  React state/UI 연결: 미구현, migration execution: 미구현, 위치 권한: 미구현, 지역 관리 UI:
+  미구현이고, development client rebuild 및 실제 기기 QA: 미수행입니다)
 - 디자인 시스템과 주요 화면
 - Android widget
 - AdMob
