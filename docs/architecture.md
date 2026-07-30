@@ -46,13 +46,25 @@
   같은 광범위 API를 쓰지 않고, import·instance 생성만으로는 storage I/O를 수행하지 않습니다. 결정적으로
   이 concrete binding은 **pure barrel `src/locations/index.ts`에서 export하지 않으므로**, pure domain
   consumer와 Node 기반 unit test가 native module을 전이적으로 load하지 않습니다(runtime consumer는 binding
-  파일을 직접 import). 따라서 저장 지역 계층은 (1) single-record → (2) canonical collection → (3)
-  provider-neutral persistence codec/port → (4) concrete AsyncStorage production binding의 네 계층으로
-  구성되며, (5) app-start hydration·state manager·화면(UI)·navigation·migration 실행·위치 권한·현재
-  위치 조회·실제 호출과 development client 재빌드·실제 기기 QA는 여전히 후속 PR 범위입니다. 자세한 내용은
+  파일을 직접 import). 이 persistence 경계 위에 **provider-neutral hydration manager 계층**
+  (`mobile-saved-location-hydration-manager.ts`, `createSavedLocationHydrationManager`)이 추가됐습니다 —
+  주입된 `SavedLocationPersistence`의 `load()`만 호출해 `NOT_STARTED`/`LOADING`/`EMPTY`/`READY`/`ERROR`
+  discriminated union 상태를 관리합니다. 생성·import 시 storage I/O가 없고, `hydrate()`는 동기적으로
+  `LOADING`으로 전환한 뒤 `load()`를 정확히 한 번 호출하며, 진행 중 겹치는 호출은 같은 in-flight Promise를
+  공유해 사이클당 `load()` 호출이 정확히 한 번으로 유지됩니다. `READY`/`EMPTY` 도달 이후의 반복 `hydrate()`는
+  idempotent no-op이고 `ERROR` 이후에는 retry가 허용되며, 주입된 `load()`의 동기 throw·Promise rejection은
+  모두 고정된 비노출 `STORAGE_READ_FAILED`로 변환됩니다(reject하지 않는 Promise). `getState()`는 매 호출마다
+  새 최상위 객체(및 `READY.locations`의 새 배열·record·non-null `kmaGrid`)를 반환해 내부 mutable 참조를
+  노출하지 않습니다. 이 manager 역시 pure barrel에서 export되며, `save`/`clear`는 호출하지 않고 AsyncStorage
+  binding·React state·화면(UI)·navigation을 import하지 않습니다. 따라서 저장 지역 계층은 (1) single-record
+  → (2) canonical collection → (3) provider-neutral persistence codec/port → (4) concrete AsyncStorage
+  production binding → (5) provider-neutral hydration manager의 다섯 계층으로 구성되며, (6) 이 binding과
+  manager의 composition·React state/context·화면(UI)·navigation·migration 실행·위치 권한·현재 위치 조회·
+  실제 호출과 development client 재빌드·실제 기기 QA는 여전히 후속 PR 범위입니다. 자세한 내용은
   [mobile-saved-location.md](./mobile-saved-location.md),
-  [mobile-saved-location-collection.md](./mobile-saved-location-collection.md)와
-  [mobile-saved-location-persistence.md](./mobile-saved-location-persistence.md) 참고.
+  [mobile-saved-location-collection.md](./mobile-saved-location-collection.md),
+  [mobile-saved-location-persistence.md](./mobile-saved-location-persistence.md)와
+  [mobile-saved-location-hydration.md](./mobile-saved-location-hydration.md) 참고.
 - `apps/api` — Hono 기반 백엔드. 외부 공공데이터 API 호출, API 키 보관, 응답 정규화를 담당할
   위치입니다. **현재 상태**: `GET /health`에 더해, PR #4에서 기상청(KMA) **원본 응답 경계**
   (`src/providers/kma`)를 구현했습니다 — 단기·초단기예보 원본 JSON의 Zod 런타임 검증, 성공·
@@ -334,6 +346,11 @@ package manager·lockfile format·build-first scripts·app config는 바뀌지 �
 runtime을 필요로 하지만 pure barrel(`index.ts`)에서 export되지 않으므로, 이 native dependency는 pure
 domain module과 Node 기반 unit test로 전이되지 않습니다(`apps/mobile → contracts` 방향과
 `contracts → apps/mobile`·`apps/mobile → apps/api` 역방향 부재는 그대로 유지).
+
+그 위의 **hydration manager 계층**(`mobile-saved-location-hydration-manager.ts`)은 **신규 dependency를
+추가하지 않습니다.** 같은 `src/locations` 디렉터리의 saved-location 타입과 `SavedLocationPersistence`
+타입만 import하므로(`locations → locations`, type-only 포함) `apps/mobile`의 기존 의존 방향을 그대로
+유지하고, AsyncStorage나 그 어떤 native module도 import하지 않습니다(pure barrel export 유지).
 
 `weather-core`는 런타임에 zod에도 contracts에도 의존하지 않습니다. PR #3에서 상태 정규화의
 반환 타입이 contracts의 `WeatherCondition`에 할당 가능한지를 **컴파일 타임 타입 테스트**로만
