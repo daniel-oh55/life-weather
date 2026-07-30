@@ -670,9 +670,11 @@ describe('createSavedLocationHydrationStore — terminal listener throw isolatio
       pending.resolve();
 
       await expect(result).resolves.toBeUndefined();
-      // Flush additional microtasks so a would-be unhandled rejection has a chance to surface.
-      await Promise.resolve();
-      await Promise.resolve();
+      // Wait a full event-loop turn so a would-be unhandled rejection has a chance to surface;
+      // Node emits 'unhandledRejection' on a later turn, not within the microtask queue.
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
 
       expect(store.getSnapshot()).toEqual({ status: 'EMPTY' });
       expect(throwsOnTerminal).toHaveBeenCalledTimes(2);
