@@ -563,3 +563,301 @@ describe('createSavedLocationHydrationStore — no logging', () => {
     expect(consoleInfo).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// 25-28 — listener exception isolation: a LOADING listener throw must not corrupt the hydration
+// lifecycle, must not propagate out of hydrate(), must not block other listeners, and the settled
+// terminal state (including a subsequent explicit retry) must still be reachable afterward.
+// ---------------------------------------------------------------------------
+
+describe('createSavedLocationHydrationStore — LOADING listener throw isolation', () => {
+  it('isolates a throwing LOADING listener: other listeners still run, hydrate() does not throw, the exact manager promise is returned, and a later explicit retry still works', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const { manager, setState, hydrateMock } = fakeManager({ status: 'NOT_STARTED' });
+    const firstPending = deferred<void>();
+    hydrateMock.mockImplementationOnce(() => {
+      setState({ status: 'LOADING' });
+      return firstPending.promise;
+    });
+    const store = createSavedLocationHydrationStore(manager);
+    const throwingListener = vi.fn(() => {
+      throw new Error('synthetic LOADING listener failure');
+    });
+    const otherListener = vi.fn();
+    store.subscribe(throwingListener);
+    store.subscribe(otherListener);
+
+    let returned: Promise<void> | undefined;
+    expect(() => {
+      returned = store.hydrate();
+    }).not.toThrow();
+
+    expect(returned).toBe(firstPending.promise);
+    expect(throwingListener).toHaveBeenCalledTimes(1);
+    expect(otherListener).toHaveBeenCalledTimes(1);
+    expect(store.getSnapshot()).toEqual({ status: 'LOADING' });
+
+    setState({ status: 'ERROR', error: { kind: 'STORAGE_READ_FAILED' } });
+    firstPending.resolve();
+    await returned;
+
+    expect(store.getSnapshot()).toEqual({ status: 'ERROR', error: { kind: 'STORAGE_READ_FAILED' } });
+    expect(throwingListener).toHaveBeenCalledTimes(2);
+    expect(otherListener).toHaveBeenCalledTimes(2);
+
+    // Explicit retry from the terminal ERROR must reach the manager again with a fresh promise —
+    // proving `pendingPromise` was cleared, not left stale by the earlier listener throw.
+    const secondPending = deferred<void>();
+    hydrateMock.mockImplementationOnce(() => {
+      setState({ status: 'LOADING' });
+      return secondPending.promise;
+    });
+    const retryPromise = store.hydrate();
+
+    expect(hydrateMock).toHaveBeenCalledTimes(2);
+    expect(retryPromise).toBe(secondPending.promise);
+    expect(retryPromise).not.toBe(returned);
+
+    setState({ status: 'EMPTY' });
+    secondPending.resolve();
+    await retryPromise;
+
+    expect(store.getSnapshot()).toEqual({ status: 'EMPTY' });
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(consoleWarn).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 29 — a terminal (EMPTY/ERROR) listener throw must not block later listeners in the same
+// notification, must not leak as an unhandled rejection from the internal settlement observer, and
+// must not disturb the store's public promise identity or a later hydrate() cycle.
+// ---------------------------------------------------------------------------
+
+describe('createSavedLocationHydrationStore — terminal listener throw isolation', () => {
+  it('isolates a listener that only throws on the terminal EMPTY notification, with no unhandled rejection', async () => {
+    const rejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => rejections.push(reason);
+    process.on('unhandledRejection', onUnhandledRejection);
+
+    try {
+      const { manager, setState, hydrateMock } = fakeManager({ status: 'NOT_STARTED' });
+      const pending = deferred<void>();
+      hydrateMock.mockImplementation(() => {
+        setState({ status: 'LOADING' });
+        return pending.promise;
+      });
+      const store = createSavedLocationHydrationStore(manager);
+
+      let calls = 0;
+      const throwsOnTerminal = vi.fn(() => {
+        calls += 1;
+        if (calls > 1) {
+          throw new Error('synthetic terminal listener failure');
+        }
+      });
+      const otherListener = vi.fn();
+      store.subscribe(throwsOnTerminal);
+      store.subscribe(otherListener);
+
+      const result = store.hydrate();
+      expect(throwsOnTerminal).toHaveBeenCalledTimes(1);
+      expect(otherListener).toHaveBeenCalledTimes(1);
+
+      setState({ status: 'EMPTY' });
+      pending.resolve();
+
+      await expect(result).resolves.toBeUndefined();
+      // Flush additional microtasks so a would-be unhandled rejection has a chance to surface.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(store.getSnapshot()).toEqual({ status: 'EMPTY' });
+      expect(throwsOnTerminal).toHaveBeenCalledTimes(2);
+      // The other, non-throwing listener still receives the terminal notification.
+      expect(otherListener).toHaveBeenCalledTimes(2);
+      expect(result).toBe(pending.promise);
+      expect(rejections).toHaveLength(0);
+
+      // The lifecycle still works afterward: a no-op hydrate() from the now-settled EMPTY state.
+      hydrateMock.mockResolvedValue(undefined);
+      await store.hydrate();
+      expect(hydrateMock).toHaveBeenCalledTimes(2);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 30 — an ERROR terminal listener that immediately calls store.hydrate() again must have its new
+// retry promise survive the first settlement observer's cleanup: the second cycle's pendingPromise
+// must remain tracked, not wiped out by the first observer continuing after the listener returns.
+// ---------------------------------------------------------------------------
+
+describe('createSavedLocationHydrationStore — terminal ERROR immediate retry race', () => {
+  it('preserves a retry Promise started synchronously from within an ERROR terminal listener', async () => {
+    const { manager, setState, hydrateMock } = fakeManager({ status: 'NOT_STARTED' });
+    const firstPending = deferred<void>();
+    const secondPending = deferred<void>();
+    hydrateMock
+      .mockImplementationOnce(() => {
+        setState({ status: 'LOADING' });
+        return firstPending.promise;
+      })
+      .mockImplementationOnce(() => {
+        setState({ status: 'LOADING' });
+        return secondPending.promise;
+      });
+
+    const store = createSavedLocationHydrationStore(manager);
+    let retryPromise: Promise<void> | undefined;
+    store.subscribe(() => {
+      const snapshot = store.getSnapshot();
+      if (snapshot.status === 'ERROR') {
+        retryPromise = store.hydrate();
+      }
+    });
+
+    const firstPromise = store.hydrate();
+    expect(hydrateMock).toHaveBeenCalledTimes(1);
+
+    setState({ status: 'ERROR', error: { kind: 'STORAGE_READ_FAILED' } });
+    firstPending.resolve();
+    await firstPromise;
+
+    // The ERROR listener above synchronously started a second cycle during settlement.
+    expect(hydrateMock).toHaveBeenCalledTimes(2);
+    expect(retryPromise).toBe(secondPending.promise);
+    expect(retryPromise).not.toBe(firstPromise);
+    expect(store.getSnapshot()).toEqual({ status: 'LOADING' });
+
+    // A caller observing hydrate() afterward must see the exact same tracked retry promise — proving
+    // the first observer's own cleanup did not null out the second cycle's `pendingPromise`.
+    expect(store.hydrate()).toBe(retryPromise);
+    expect(hydrateMock).toHaveBeenCalledTimes(2);
+
+    setState({ status: 'EMPTY' });
+    secondPending.resolve();
+    await retryPromise;
+
+    expect(store.getSnapshot()).toEqual({ status: 'EMPTY' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 31 — the ERROR snapshot's nested error object is deep-frozen too, not just the top-level object.
+// ---------------------------------------------------------------------------
+
+describe('createSavedLocationHydrationStore — ERROR deep-freeze', () => {
+  it('deep-freezes the ERROR snapshot and its nested error object, and mutation throws', () => {
+    const { manager } = fakeManager({ status: 'ERROR', error: { kind: 'STORAGE_READ_FAILED' } });
+    const store = createSavedLocationHydrationStore(manager);
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.status).toBe('ERROR');
+    if (snapshot.status !== 'ERROR') return;
+
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(Object.isFrozen(snapshot.error)).toBe(true);
+    expect(() => {
+      // @ts-expect-error mutating a readonly, frozen field to prove the freeze holds at runtime, not
+      // only at the type level.
+      snapshot.error.kind = 'INVALID_STORED_LOCATIONS';
+    }).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 32 — semantic comparator focused coverage: order, nullable admin fields, kmaGrid null <-> value,
+// and kmaGrid field changes each count as a real transition; a value-identical fresh graph does not.
+// ---------------------------------------------------------------------------
+
+describe('createSavedLocationHydrationStore — semantic comparator focused coverage', () => {
+  const baseLocations = [record('a'), record('b', { isCurrent: true, sortOrder: 1 })];
+
+  async function expectNotification(
+    initial: SavedLocationHydrationState,
+    next: SavedLocationHydrationState,
+    shouldNotify: boolean,
+  ): Promise<void> {
+    const { manager, setState, hydrateMock } = fakeManager(initial);
+    hydrateMock.mockImplementation(() => {
+      setState(next);
+      return Promise.resolve();
+    });
+    const store = createSavedLocationHydrationStore(manager);
+    const listener = vi.fn();
+    store.subscribe(listener);
+
+    await store.hydrate();
+
+    expect(listener).toHaveBeenCalledTimes(shouldNotify ? 1 : 0);
+  }
+
+  it('treats a changed READY location order as a real transition', async () => {
+    await expectNotification(
+      { status: 'READY', locations: baseLocations },
+      { status: 'READY', locations: [baseLocations[1], baseLocations[0]] },
+      true,
+    );
+  });
+
+  it('treats a changed adminArea1 as a real transition', async () => {
+    await expectNotification(
+      { status: 'READY', locations: baseLocations },
+      { status: 'READY', locations: [record('a', { adminArea1: 'Changed Province' }), baseLocations[1]] },
+      true,
+    );
+  });
+
+  it('treats a nullable field flipping null -> string as a real transition', async () => {
+    await expectNotification(
+      { status: 'READY', locations: baseLocations },
+      { status: 'READY', locations: [record('a', { adminArea3: 'No Longer Null' }), baseLocations[1]] },
+      true,
+    );
+  });
+
+  it('treats a nullable field flipping string -> null as a real transition', async () => {
+    await expectNotification(
+      { status: 'READY', locations: baseLocations },
+      { status: 'READY', locations: [record('a', { adminArea2: null }), baseLocations[1]] },
+      true,
+    );
+  });
+
+  it('treats kmaGrid flipping null -> a value as a real transition', async () => {
+    await expectNotification(
+      { status: 'READY', locations: [record('a', { kmaGrid: null }), baseLocations[1]] },
+      { status: 'READY', locations: [record('a'), baseLocations[1]] },
+      true,
+    );
+  });
+
+  it('treats a changed kmaGrid.nx as a real transition', async () => {
+    await expectNotification(
+      { status: 'READY', locations: baseLocations },
+      { status: 'READY', locations: [record('a', { kmaGrid: { nx: 61, ny: 127 } }), baseLocations[1]] },
+      true,
+    );
+  });
+
+  it('treats a changed kmaGrid.ny as a real transition', async () => {
+    await expectNotification(
+      { status: 'READY', locations: baseLocations },
+      { status: 'READY', locations: [record('a', { kmaGrid: { nx: 60, ny: 128 } }), baseLocations[1]] },
+      true,
+    );
+  });
+
+  it('does not notify for a value-identical fresh READY graph', async () => {
+    await expectNotification(
+      { status: 'READY', locations: baseLocations },
+      { status: 'READY', locations: [record('a'), record('b', { isCurrent: true, sortOrder: 1 })] },
+      false,
+    );
+  });
+});

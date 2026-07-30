@@ -148,11 +148,19 @@ export function createSavedLocationHydrationStore(
   let pendingPromise: Promise<void> | null = null;
   const listeners = new Set<SavedLocationHydrationStoreListener>();
 
+  // Each listener is isolated in its own try/catch: one subscriber throwing must not stop the
+  // remaining subscribers from observing the transition, and must not corrupt the hydration
+  // lifecycle. A subscriber's error is never stored, exposed, or logged, and never converted into
+  // a hydration ERROR state or an automatic retry.
   function notifyListeners(): void {
     // Iterate a snapshot copy: a listener may unsubscribe or trigger a reentrant hydrate() during
     // notification, and neither may disturb this iteration or the live `listeners` Set.
     for (const listener of Array.from(listeners)) {
-      listener();
+      try {
+        listener();
+      } catch {
+        // Swallowed intentionally — see the function-level note above.
+      }
     }
   }
 
@@ -183,14 +191,18 @@ export function createSavedLocationHydrationStore(
 
       const promise = manager.hydrate();
       pendingPromise = promise;
-      checkForTransition();
 
+      // Attach the settlement observer before the LOADING notification below: an observer
+      // installed only after that notification would never run if a LOADING listener threw, which
+      // would leave the cached snapshot stuck at LOADING and `pendingPromise` stale forever.
       promise.then(() => {
         if (pendingPromise === promise) {
           pendingPromise = null;
         }
         checkForTransition();
       });
+
+      checkForTransition();
 
       return promise;
     },
