@@ -171,7 +171,44 @@ AsyncStorage production binding(`mobileSavedLocationPersistence`)은 계속 이 
   export하지 않습니다** — AsyncStorage binding과 같은 이유로, native module을 transitively 끌어오기
   때문입니다. Node 기반 unit test와 pure domain consumer는 이 barrel을 통해 native module을 절대
   load하지 않으며, runtime consumer는 이 production module을 **직접** import합니다.
-- app-start에서 `hydrate()`를 호출하는 wiring, React state/context/hook/UI 연결은 여전히
-  **미구현**입니다.
+- app-start에서 `hydrate()`를 호출하는 wiring은 아래 [app-start hydration](#app-start-hydration)
+  절에서 설명하는 one-shot startup boundary로 **구현됐습니다**. React state/context/hook/UI 연결은
+  여전히 **미구현**입니다.
+- 이 변경은 native dependency나 native config를 추가하지 않았으므로, development client 재빌드나
+  실제 기기 QA는 이번 PR에서도 수행하지 않았습니다.
+
+## app-start hydration
+
+production composition을 실제 앱 시작 시 호출하는 **one-shot startup boundary**가 추가됐습니다.
+
+- **module 경로**: `apps/mobile/src/locations/mobile-saved-location-hydration-startup.ts`.
+- **export 이름**: `startMobileSavedLocationHydrationOnce`.
+- 이 module은 production composition(`mobileSavedLocationHydrationManager`,
+  `./mobile-saved-location-hydration-production`)만 import합니다.
+- root layout(`apps/mobile/src/app/_layout.tsx`)이 mount effect(`useEffect(() => { void
+  startMobileSavedLocationHydrationOnce(); }, [])`)에서 이 함수를 호출합니다.
+- `startMobileSavedLocationHydrationOnce()`는 module scope에 첫 호출의 manager Promise를 저장하는
+  one-shot guard입니다 — 첫 호출에서만 실제 `mobileSavedLocationHydrationManager.hydrate()`를
+  호출하고, 이후의 모든 호출(동시 호출, pending 중 반복 호출, 완료 이후 반복 호출)은 항상 그
+  **동일한 첫 Promise reference**를 반환합니다.
+- React Strict Mode, remount 또는 root effect의 반복 실행으로 이 함수가 여러 번 호출되더라도, 실제
+  manager `hydrate()` 호출과 그에 따른 storage read는 앱 runtime당(module lifetime당) **정확히
+  한 번**만 일어납니다.
+- 첫 hydration 결과가 `EMPTY`/`READY`/`ERROR` 무엇이든, 이 startup boundary는 **자동 재시도를 하지
+  않습니다** — manager의 기존 `hydrate()` 계약(`ERROR` 이후 retry 허용)은 그대로 유지되지만, 그
+  retry를 시작하는 것은 이 startup module의 책임이 아니며 향후 명시적 사용자 retry는 manager의
+  `hydrate()`를 직접 호출하는 별도 후속 범위입니다.
+- module import만으로는 `hydrate()`를 호출하지 않고, storage I/O도 발생하지 않습니다.
+- storage key, envelope version, 오류 kind, collection·retry 정책을 재정의하지 않고, `catch`,
+  logging, telemetry, timer, backoff가 없으며 environment/clock/random/network에 접근하지 않고
+  React를 import하지 않습니다.
+- root layout의 mount effect는 hydration 완료를 기다리지 않고 navigation을 차단하지 않습니다 —
+  `<Stack />` 렌더링은 그대로 유지되고, `EMPTY`/`READY`/`ERROR`에 따른 화면 분기·loading/error UI·
+  splash screen 제어·effect cleanup은 없습니다.
+- React state/hooks/context/`useSyncExternalStore` 구독, 화면에 저장 지역 표시, 사용자 retry UI는
+  여전히 **미구현**입니다.
+- 이 startup module과 root layout wiring 모두 pure barrel
+  (`apps/mobile/src/locations/index.ts`)에서 export되지 않습니다 — root layout은 startup module을
+  직접 import하고, startup module은 production composition을 직접 import합니다.
 - 이 변경은 native dependency나 native config를 추가하지 않았으므로, development client 재빌드나
   실제 기기 QA는 이번 PR에서도 수행하지 않았습니다.
