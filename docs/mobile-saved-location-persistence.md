@@ -187,8 +187,8 @@ provider-neutral persistence 경계는 **정책만** 소유하고, 실제 기기
   (동기 throw·Promise rejection을 그대로 port에 전달해 기존 경계가 `STORAGE_READ_FAILED`/
   `STORAGE_WRITE_FAILED`/`STORAGE_CLEAR_FAILED`로 분류), logging·telemetry도 하지 않습니다.
 - binding은 `clear()`·`getAllKeys()`·`multiGet`/`multiSet`/`multiRemove`·`mergeItem` 같은 **광범위
-  API를 사용하지 않습니다.** 특히 store 전체를 지우는 `clear()`는 다른 앱 저장값까지 제거할 수 있어
-  금지입니다.
+  API를 사용하지 않습니다.** 특히 store 전체를 지우는 `clear()`는 이 앱의 AsyncStorage에서 다른
+  기능이 소유한 저장값까지 제거할 수 있어 금지입니다.
 
 ### pure barrel이 native binding을 export하지 않는 이유
 
