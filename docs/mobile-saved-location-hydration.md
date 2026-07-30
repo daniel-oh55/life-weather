@@ -135,8 +135,6 @@ AsyncStorage production binding(`mobileSavedLocationPersistence`)은 계속 이 
 
 ## 이 경계에서 하지 않는 것(후속 범위)
 
-- production singleton 조립이나 AsyncStorage composition — 이 manager는 `SavedLocationPersistence`를
-  주입받을 뿐, 어떤 concrete persistence instance도 스스로 만들지 않습니다.
 - app root wiring, React hook/context/provider, `useSyncExternalStore` 등 referential-stability나
   subscription 계약.
 - 지역 추가·삭제·재정렬 UI, mutation 후 자동 저장.
@@ -145,3 +143,35 @@ AsyncStorage production binding(`mobileSavedLocationPersistence`)은 계속 이 
 - migration 실행, corrupt data repair/delete.
 - 위치 권한, GPS, weather API 호출.
 - native build, 실제 기기 QA.
+
+## production composition
+
+`mobile-saved-location-async-storage.ts`(concrete AsyncStorage binding)와 이 manager를 실제로
+조립하는 module이 추가됐습니다.
+
+- **module 경로**: `apps/mobile/src/locations/mobile-saved-location-hydration-production.ts`.
+- 이 module은 위 두 기존 경계만 import합니다 — `mobileSavedLocationPersistence`
+  (`./mobile-saved-location-async-storage`)와 `createSavedLocationHydrationManager`
+  (`./mobile-saved-location-hydration-manager`).
+- production persistence instance를 manager factory에 **정확히 한 번** 주입합니다.
+
+  ```ts
+  export const mobileSavedLocationHydrationManager: SavedLocationHydrationManager =
+    createSavedLocationHydrationManager(mobileSavedLocationPersistence);
+  ```
+
+- **export 이름**: `mobileSavedLocationHydrationManager` — module scope singleton입니다.
+- module import나 이 singleton을 참조하는 것만으로는 `hydrate()`를 호출하지 않고 어떤 storage
+  I/O(`getItem`/`setItem`/`removeItem`)도 발생하지 않습니다 — 두 collaborator 생성 자체가
+  side-effect-free이므로, export된 manager는 `hydrate()`를 호출하기 전까지 항상 `NOT_STARTED`입니다.
+- storage key, envelope version, 오류 kind, collection 정책은 이 module에서 **재정의하지 않고**
+  기존 두 경계가 그대로 소유합니다. `try/catch`, retry, logging, telemetry, environment/clock/
+  random/network 접근이 없습니다.
+- 이 production composition module은 **pure barrel `apps/mobile/src/locations/index.ts`에서
+  export하지 않습니다** — AsyncStorage binding과 같은 이유로, native module을 transitively 끌어오기
+  때문입니다. Node 기반 unit test와 pure domain consumer는 이 barrel을 통해 native module을 절대
+  load하지 않으며, runtime consumer는 이 production module을 **직접** import합니다.
+- app-start에서 `hydrate()`를 호출하는 wiring, React state/context/hook/UI 연결은 여전히
+  **미구현**입니다.
+- 이 변경은 native dependency나 native config를 추가하지 않았으므로, development client 재빌드나
+  실제 기기 QA는 이번 PR에서도 수행하지 않았습니다.
