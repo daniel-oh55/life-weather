@@ -48,9 +48,12 @@
   barrel 미export): 구현됨. 이 persistence를 주입받아 hydration 진행 상태를
   `NOT_STARTED`/`LOADING`/`EMPTY`/`READY`/`ERROR`로 노출하는 provider-neutral hydration manager
   (`mobile-saved-location-hydration-manager.ts`, pure barrel export, 단일 in-flight 호출·성공 후
-  idempotent·실패 후 retry·고정 비노출 오류)도 구현됐습니다. 반면 AsyncStorage binding과 이 manager의
-  composition: 미구현, React state/UI 연결: 미구현, migration execution: 미구현, 위치 권한: 미구현,
-  지역 관리 UI: 미구현이고, development client rebuild 및 실제 기기 QA: 미수행입니다)
+  idempotent·실패 후 retry·고정 비노출 오류)도 구현됐습니다. 이 AsyncStorage binding과 hydration
+  manager의 production composition(`mobile-saved-location-hydration-production.ts`,
+  `mobileSavedLocationHydrationManager`, pure barrel 미export, import 시 storage I/O·`hydrate()`
+  호출 없음)도 구현됐습니다. 반면 app-start `hydrate()` 호출: 미구현, React state/UI 연결: 미구현,
+  migration execution: 미구현, 위치 권한: 미구현, 지역 관리 UI: 미구현이고, development client
+  rebuild 및 실제 기기 QA: 미수행입니다)
 - 디자인 시스템과 주요 화면
 - Android widget
 - AdMob

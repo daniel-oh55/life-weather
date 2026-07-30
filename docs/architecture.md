@@ -56,11 +56,19 @@
   모두 고정된 비노출 `STORAGE_READ_FAILED`로 변환됩니다(reject하지 않는 Promise). `getState()`는 매 호출마다
   새 최상위 객체(및 `READY.locations`의 새 배열·record·non-null `kmaGrid`)를 반환해 내부 mutable 참조를
   노출하지 않습니다. 이 manager 역시 pure barrel에서 export되며, `save`/`clear`는 호출하지 않고 AsyncStorage
-  binding·React state·화면(UI)·navigation을 import하지 않습니다. 따라서 저장 지역 계층은 (1) single-record
+  binding·React state·화면(UI)·navigation을 import하지 않습니다. 이 binding과 manager를 실제로 잇는
+  **production composition 계층**(`mobile-saved-location-hydration-production.ts`,
+  `mobileSavedLocationHydrationManager`)도 추가됐습니다 — 기존 두 경계(production persistence
+  instance·hydration manager factory)만 import해 factory에 persistence를 정확히 한 번 주입하는 module
+  scope singleton이며, storage key·envelope version·오류 kind·collection 정책을 다시 정의하지 않고,
+  import나 singleton 참조만으로는 storage I/O도 `hydrate()` 호출도 없습니다. AsyncStorage binding과
+  같은 이유로 pure barrel에서는 export되지 않아 native module을 전이적으로 끌어오지 않으며, runtime
+  consumer는 이 module을 직접 import합니다. 따라서 저장 지역 계층은 (1) single-record
   → (2) canonical collection → (3) provider-neutral persistence codec/port → (4) concrete AsyncStorage
-  production binding → (5) provider-neutral hydration manager의 다섯 계층으로 구성되며, (6) 이 binding과
-  manager의 composition·React state/context·화면(UI)·navigation·migration 실행·위치 권한·현재 위치 조회·
-  실제 호출과 development client 재빌드·실제 기기 QA는 여전히 후속 PR 범위입니다. 자세한 내용은
+  production binding → (5) provider-neutral hydration manager → (6) 이 binding과 manager의 production
+  composition의 여섯 계층으로 구성되며, (7) app-start `hydrate()` 호출·React state/context·화면(UI)·
+  navigation·migration 실행·위치 권한·현재 위치 조회·실제 호출과 development client 재빌드·실제 기기
+  QA는 여전히 후속 PR 범위입니다. 자세한 내용은
   [mobile-saved-location.md](./mobile-saved-location.md),
   [mobile-saved-location-collection.md](./mobile-saved-location-collection.md),
   [mobile-saved-location-persistence.md](./mobile-saved-location-persistence.md)와
@@ -351,6 +359,14 @@ domain module과 Node 기반 unit test로 전이되지 않습니다(`apps/mobile
 추가하지 않습니다.** 같은 `src/locations` 디렉터리의 saved-location 타입과 `SavedLocationPersistence`
 타입만 import하므로(`locations → locations`, type-only 포함) `apps/mobile`의 기존 의존 방향을 그대로
 유지하고, AsyncStorage나 그 어떤 native module도 import하지 않습니다(pure barrel export 유지).
+
+그 위의 **hydration production composition 계층**(`mobile-saved-location-hydration-production.ts`)도
+**신규 dependency를 추가하지 않습니다.** 같은 `src/locations` 디렉터리의 기존 두 module —
+AsyncStorage binding(`mobile-saved-location-async-storage`)과 hydration manager
+factory(`mobile-saved-location-hydration-manager`) — 만 import해 둘을 연결할 뿐이므로
+(`locations → locations`), 새 npm package나 새 package-level 의존 방향을 만들지 않습니다.
+AsyncStorage binding을 통해 native module을 전이적으로 가지므로 이 module 역시 pure barrel에서는
+export되지 않습니다.
 
 `weather-core`는 런타임에 zod에도 contracts에도 의존하지 않습니다. PR #3에서 상태 정규화의
 반환 타입이 contracts의 `WeatherCondition`에 할당 가능한지를 **컴파일 타임 타입 테스트**로만
