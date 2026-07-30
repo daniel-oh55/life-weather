@@ -3,8 +3,10 @@
 이 문서는 `apps/mobile/src/locations`의 **저장 지역 persistence 경계**를 설명합니다. 이 경계는
 [collection 경계](./mobile-saved-location-collection.md)(PR #40)가 만든 canonical collection을
 **하나의 저장 문자열로 encode/decode**하고, 주입된 최소 key-value port를 통해 load·save·clear하는
-책임만 가집니다. 실제 기기 저장소(AsyncStorage/SecureStore/SQLite/MMKV 등) binding, migration
-실행, 화면·상태·권한 연결은 이 PR의 범위가 아니며 후속 PR로 남습니다.
+책임만 가집니다. 이 codec 경계 자체는 어떤 concrete native store도 import하지 않습니다 — 실제
+AsyncStorage 연결은 별도 module이 담당하며(아래 [concrete AsyncStorage production
+binding](#concrete-asyncstorage-production-binding) 참고), migration 실행, 화면·상태·권한 연결은
+여전히 후속 PR로 남습니다.
 
 ## 목적
 
@@ -166,11 +168,58 @@ logging하거나 telemetry로 전송하지 않으며, 호출마다 **fresh resul
 JSON 직렬화는 persistence codec의 목적이므로 이 경계 안에서 사용하지만, collection 연산의 clone
 helper를 대체하거나 바꾸지 않습니다.
 
+## concrete AsyncStorage production binding
+
+provider-neutral persistence 경계는 **정책만** 소유하고, 실제 기기 저장소 연결은 별도 module이
+담당합니다.
+
+- **concrete provider**: `@react-native-async-storage/async-storage` **2.2.0**(Expo SDK 57 호환,
+  `pnpm exec expo install`로 설치).
+- **binding 파일**: `apps/mobile/src/locations/mobile-saved-location-async-storage.ts`.
+- 이 binding은 AsyncStorage의 `getItem`/`setItem`/`removeItem` **세 메서드만** 위 key-value port로
+  위임하고, 기존 `createSavedLocationPersistence()`로 production instance
+  `mobileSavedLocationPersistence`를 만듭니다.
+
+### pure persistence와 concrete binding의 경계
+
+- 안정적인 storage key, V1 envelope, encode/decode codec, 고정 오류 kind는 **모두 persistence
+  경계**가 소유합니다. binding은 key literal을 다시 쓰지 않고, `try/catch`로 오류를 변환하지 않으며
+  (동기 throw·Promise rejection을 그대로 port에 전달해 기존 경계가 `STORAGE_READ_FAILED`/
+  `STORAGE_WRITE_FAILED`/`STORAGE_CLEAR_FAILED`로 분류), logging·telemetry도 하지 않습니다.
+- binding은 `clear()`·`getAllKeys()`·`multiGet`/`multiSet`/`multiRemove`·`mergeItem` 같은 **광범위
+  API를 사용하지 않습니다.** 특히 store 전체를 지우는 `clear()`는 이 앱의 AsyncStorage에서 다른
+  기능이 소유한 저장값까지 제거할 수 있어 금지입니다.
+
+### pure barrel이 native binding을 export하지 않는 이유
+
+`mobileSavedLocationPersistence`는 pure barrel `apps/mobile/src/locations/index.ts`에서 **export하지
+않습니다.** 기존 single-record·collection·persistence 테스트와 pure domain consumer가 native module을
+전이적으로 load하지 않도록 하기 위함이며, Node 기반 unit test에도 native runtime dependency가 새지
+않습니다. runtime consumer는 binding 파일을 **직접** import합니다.
+
+### 저장 특성과 보안
+
+- AsyncStorage는 **asynchronous·persistent·unencrypted** key-value storage입니다. OS-level app
+  sandbox를 저장소 암호화와 혼동하지 않으며, encryption은 이 PR 범위가 아닙니다.
+- 이 key에는 **저장 지역 collection만** 기록합니다. API key·token·password·authentication secret은
+  저장하지 않습니다. raw 오류·저장값을 logging하지 않습니다.
+- 저장 지역명·좌표는 개인정보로 취급합니다(문서에 실제 값·예시를 기록하지 않습니다).
+- module import·instance 참조만으로는 어떤 storage I/O도 수행하지 않습니다(`getItem`/`setItem`/
+  `removeItem` 0회, hydration·migration·삭제·network·환경변수 접근 없음). provider object와
+  persistence instance 생성만 import 시 일어납니다.
+
+### 아직 하지 않은 것(후속 범위)
+
+- app-start hydration, React state/context, 지역 관리 화면·navigation, 자동 저장 orchestration,
+  migration 실행, 위치 권한.
+- 이 dependency는 native module을 포함하므로, 현재 기기에 설치된 development client는 **재빌드 전까지**
+  새 native module을 포함하지 않습니다. 이 PR은 development build·EAS build·native prebuild를
+  실행하지 않았고, 실제 Galaxy 기기 runtime QA는 아직 수행하지 않았습니다.
+
 ## 이 PR에서 하지 않는 것
 
-- 실제 native storage binding(`@react-native-async-storage/async-storage`·`expo-secure-store`·
-  `expo-sqlite`·MMKV 등), production store instance, dependency·lockfile 변경, app config plugin,
-  native build.
+- production store instance를 넘어선 그 밖의 native storage binding(`expo-secure-store`·
+  `expo-sqlite`·MMKV 등), app config plugin, native build.
 - storage encryption·key 관리, backup/restore.
 - migration 실행·legacy key 검색·corrupt data 자동 repair/삭제.
 - concurrent write queue·transaction·compare-and-swap, collection 최대 개수 정책.

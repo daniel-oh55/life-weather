@@ -7,8 +7,13 @@
  * ({@link mobileSavedLocationCollection}) with pure add / remove / reorder / set-current
  * operations. The persistence layer wraps that collection in a versioned V1 envelope and an
  * encode / decode codec, and load / save / clear it over an injected, provider-neutral key-value
- * storage port — without importing any concrete native store. Binding a real store, permission,
- * and screen wiring are out of scope for this module.
+ * storage port — without importing any concrete native store.
+ *
+ * This barrel stays a **pure, provider-neutral** surface: the concrete AsyncStorage production
+ * binding lives in a separate module (`./mobile-saved-location-async-storage`) and is deliberately
+ * **not** re-exported here, so Node-based unit tests and pure domain consumers never transitively
+ * load the native module. A runtime consumer imports that binding directly. App-start hydration,
+ * React state, screen wiring, and location permission remain out of scope for this module.
  */
 
 export {
