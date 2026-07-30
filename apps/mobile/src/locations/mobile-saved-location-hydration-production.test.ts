@@ -1,15 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SAVED_LOCATION_PERSISTENCE_KEY } from './index';
-
 // ---------------------------------------------------------------------------
-// Mocked AsyncStorage. The native module is never loaded or touched by the pure barrel — the mock
-// factory itself records every time the module is *resolved* (not just called), so the barrel
-// isolation test below can prove the native module was never transitively loaded, not merely that
-// its methods went uncalled. `vi.hoisted` and `vi.mock` are hoisted above these imports by Vitest.
+// Mocked AsyncStorage. The native module is never loaded or touched by the pure barrel — the
+// `pure barrel isolation` test below swaps this mock factory for one that throws, so it proves the
+// native module was never transitively loaded, not merely that its methods went uncalled.
+// `vi.hoisted` and `vi.mock` are hoisted above these imports by Vitest.
 // ---------------------------------------------------------------------------
-
-const nativeModuleLoadSpy = vi.hoisted(() => vi.fn());
 
 const asyncStorageMock = vi.hoisted(() => ({
   getItem: vi.fn(),
@@ -17,10 +13,9 @@ const asyncStorageMock = vi.hoisted(() => ({
   removeItem: vi.fn(),
 }));
 
-vi.mock('@react-native-async-storage/async-storage', () => {
-  nativeModuleLoadSpy();
-  return { default: asyncStorageMock };
-});
+vi.mock('@react-native-async-storage/async-storage', () => ({
+  default: asyncStorageMock,
+}));
 
 /** A marker asserted absent from state and console output — proves no raw value/error leaks out. */
 const SECRET_MARKER = 'SYNTHETIC_HYDRATION_PRODUCTION_SECRET_MUST_NOT_LEAK';
@@ -28,7 +23,6 @@ const SECRET_MARKER = 'SYNTHETIC_HYDRATION_PRODUCTION_SECRET_MUST_NOT_LEAK';
 beforeEach(() => {
   vi.resetModules();
   vi.resetAllMocks();
-  nativeModuleLoadSpy.mockClear();
   asyncStorageMock.getItem.mockResolvedValue(null);
   asyncStorageMock.setItem.mockResolvedValue(undefined);
   asyncStorageMock.removeItem.mockResolvedValue(undefined);
@@ -40,29 +34,27 @@ afterEach(() => {
 
 // ---------------------------------------------------------------------------
 // 10 — importing the pure barrel (`./index`) never transitively loads the native AsyncStorage
-// module. This must run before any other test in this file imports the production module: the
-// mock factory only fires on a module's *first* resolution in this test run (a later
-// `vi.resetModules()` clears this file's own module cache but does not force Vitest to re-invoke
-// an already-resolved manual mock factory), so this check only proves anything as the first
-// resolution attempt.
+// module. Verified order-independently: the mock factory for the native module is swapped to one
+// that throws for the duration of this test only, so this proves isolation regardless of what
+// other tests in this file have already resolved, and regardless of run order.
 // ---------------------------------------------------------------------------
 
-describe('pure barrel isolation (must run first — see comment above)', () => {
-  it('does not transitively load the native AsyncStorage module when importing the pure barrel', async () => {
-    await import('./index');
+describe('pure barrel isolation', () => {
+  it('does not transitively load native AsyncStorage from the pure barrel', async () => {
+    vi.resetModules();
 
-    expect(nativeModuleLoadSpy).not.toHaveBeenCalled();
-    expect(asyncStorageMock.getItem).toHaveBeenCalledTimes(0);
-    expect(asyncStorageMock.setItem).toHaveBeenCalledTimes(0);
-    expect(asyncStorageMock.removeItem).toHaveBeenCalledTimes(0);
-  });
+    vi.doMock('@react-native-async-storage/async-storage', () => {
+      throw new Error('native AsyncStorage must not be loaded by the pure barrel');
+    });
 
-  // Positive control, run immediately after: proves the load spy actually detects a native-module
-  // load on its first real resolution, so the isolation assertion above is not vacuously true.
-  it('sanity check: importing the production module does load the native AsyncStorage module', async () => {
-    await import('./mobile-saved-location-hydration-production');
-
-    expect(nativeModuleLoadSpy).toHaveBeenCalledTimes(1);
+    try {
+      await expect(import('./index')).resolves.toBeDefined();
+    } finally {
+      vi.doMock('@react-native-async-storage/async-storage', () => ({
+        default: asyncStorageMock,
+      }));
+      vi.resetModules();
+    }
   });
 });
 
@@ -107,6 +99,7 @@ describe('production module import', () => {
 describe('manual hydrate()', () => {
   it('reads the exact stable key exactly once via the production persistence and reaches EMPTY on a missing key', async () => {
     asyncStorageMock.getItem.mockResolvedValue(null);
+    const { SAVED_LOCATION_PERSISTENCE_KEY } = await import('./index');
     const { mobileSavedLocationHydrationManager } = await import(
       './mobile-saved-location-hydration-production'
     );
