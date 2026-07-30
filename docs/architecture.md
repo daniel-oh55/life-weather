@@ -95,14 +95,23 @@
   일어나고, 기존 `<Stack />` 렌더링과 navigation은 이 hydration 완료 여부와 무관하게 그대로
   유지됩니다. 첫 hydration 결과가 `EMPTY`/`READY`/`ERROR` 무엇이든 이 startup boundary는 자동
   재시도를 하지 않습니다 — 향후 명시적 retry는 이 store의 `hydrate()`를 직접 호출해야 subscription
-  일관성이 유지됩니다. 따라서 저장 지역 계층은 (1) single-record → (2) canonical collection →
-  (3) provider-neutral persistence codec/port → (4) concrete AsyncStorage production binding →
-  (5) provider-neutral hydration manager → (6) 그 manager를 감싸는 provider-neutral observable
-  hydration store → (7) 이 manager와 store의 production composition → (8) 이 composition의 store를
-  앱 시작 시 한 번만 호출하는 startup boundary의 여덟 계층으로 구성되며, (9) React
-  `useSyncExternalStore` hook·React state/context·화면(UI)·지역 mutation/save·migration 실행·위치
-  권한·현재 위치 조회·실제 호출과 development client 재빌드·실제 기기 QA는 여전히 후속 PR
-  범위입니다. 자세한 내용은
+  일관성이 유지됩니다. 이 production store를 실제로 구독하는 **React
+  `useSyncExternalStore` hook 계층**(`use-mobile-saved-location-hydration.ts`,
+  `useMobileSavedLocationHydration`)이 추가됐습니다 — production composition의 store만 import해,
+  module scope에 정확히 한 번 정의한 안정적인 subscribe/getSnapshot callback(client와 server
+  getter는 동일한 reference)을 `useSyncExternalStore`에 전달하고, 그 반환값으로 store의 exact
+  cached snapshot 참조를 그대로 반환합니다(복사·매핑·재검증 없음). hook은 `hydrate()`를 호출하지
+  않고, root startup one-shot 정책이나 `ERROR` retry 정책을 재정의하지 않으며, hook의 import나 호출
+  만으로는 storage I/O가 발생하지 않습니다. 이 hook 역시 production composition을 직접 import하므로
+  pure barrel에서는 export되지 않습니다. 따라서 저장 지역 계층은 (1) single-record → (2) canonical
+  collection → (3) provider-neutral persistence codec/port → (4) concrete AsyncStorage production
+  binding → (5) provider-neutral hydration manager → (6) 그 manager를 감싸는 provider-neutral
+  observable hydration store → (7) 이 manager와 store의 production composition → (8) 이
+  composition의 store를 앱 시작 시 한 번만 호출하는 startup boundary → (9) 이 store를 구독하는
+  React `useSyncExternalStore` hook의 아홉 계층으로 구성되며, (10) 이 hook을 소비하는 화면·React
+  Context/Provider·상태별 UI·explicit retry UI·지역 mutation/save·migration 실행·위치 권한·현재
+  위치 조회·실제 호출과 development client 재빌드·실제 기기 QA는 여전히 후속 PR 범위입니다. 자세한
+  내용은
   [mobile-saved-location.md](./mobile-saved-location.md),
   [mobile-saved-location-collection.md](./mobile-saved-location-collection.md),
   [mobile-saved-location-persistence.md](./mobile-saved-location-persistence.md)와
@@ -418,6 +427,14 @@ module 자체는 바뀌지 않았으므로 의존 방향은 그대로입니다. 
 (`apps/mobile/src/app/_layout.tsx`)은 기존 `react`(`useEffect`)와 `expo-router`(`Stack`) 의존만
 그대로 사용하고 신규 dependency를 추가하지 않으며, 이 startup module을 직접 import합니다(pure
 barrel `./index`를 거치지 않음).
+
+그 위의 **React `useSyncExternalStore` hook 계층**(`use-mobile-saved-location-hydration.ts`)도
+**신규 dependency를 추가하지 않습니다.** 이미 `apps/mobile`의 기존 의존인 `react`의
+`useSyncExternalStore`와, 같은 `src/locations` 디렉터리의 hydration manager 상태 타입·production
+composition의 store singleton만 import하므로(`locations → locations`, `apps/mobile → react`는
+기존 의존 유지), 새 npm package나 새 package-level 의존 방향을 만들지 않습니다. production
+composition을 통해 native AsyncStorage module을 전이적으로 가지므로, 이 module 역시 pure
+barrel에서는 export되지 않습니다.
 
 `weather-core`는 런타임에 zod에도 contracts에도 의존하지 않습니다. PR #3에서 상태 정규화의
 반환 타입이 contracts의 `WeatherCondition`에 할당 가능한지를 **컴파일 타임 타입 테스트**로만
