@@ -56,30 +56,53 @@
   모두 고정된 비노출 `STORAGE_READ_FAILED`로 변환됩니다(reject하지 않는 Promise). `getState()`는 매 호출마다
   새 최상위 객체(및 `READY.locations`의 새 배열·record·non-null `kmaGrid`)를 반환해 내부 mutable 참조를
   노출하지 않습니다. 이 manager 역시 pure barrel에서 export되며, `save`/`clear`는 호출하지 않고 AsyncStorage
-  binding·React state·화면(UI)·navigation을 import하지 않습니다. 이 binding과 manager를 실제로 잇는
-  **production composition 계층**(`mobile-saved-location-hydration-production.ts`,
-  `mobileSavedLocationHydrationManager`)도 추가됐습니다 — 기존 두 경계(production persistence
-  instance·hydration manager factory)만 import해 factory에 persistence를 정확히 한 번 주입하는 module
-  scope singleton이며, storage key·envelope version·오류 kind·collection 정책을 다시 정의하지 않고,
-  import나 singleton 참조만으로는 storage I/O도 `hydrate()` 호출도 없습니다. AsyncStorage binding과
-  같은 이유로 pure barrel에서는 export되지 않아 native module을 전이적으로 끌어오지 않으며, runtime
-  consumer는 이 module을 직접 import합니다. 이 composition을 실제 앱 시작 시 호출하는 **one-shot
-  startup boundary 계층**(`mobile-saved-location-hydration-startup.ts`,
+  binding·React state·화면(UI)·navigation을 import하지 않습니다. 그 위에 이 manager를 감싸는
+  **provider-neutral observable hydration store 계층**(`mobile-saved-location-hydration-store.ts`,
+  `createSavedLocationHydrationStore`)이 추가됐습니다 — 향후 React `useSyncExternalStore`가 안전하게
+  소비할 수 있도록 `getSnapshot()`/`subscribe()`/`hydrate()` 세 계약만 제공합니다. `getSnapshot()`은
+  생성 시 manager의 현재 상태를 한 번 읽어 캐싱한 뒤, 실제 semantic state transition 전까지 항상 동일
+  object reference를 반환하는 stable하고 deep-frozen(최상위 객체·`ERROR.error`·`READY.locations`
+  배열·각 record·각 non-null `kmaGrid`)snapshot입니다. 상태 비교는 manager가 매 호출마다 새 객체를
+  반환하므로 참조가 아니라 `status`·`error.kind`·`READY.locations`의 field-by-field 값으로 판정하는
+  내부 semantic equality helper로 이뤄집니다(`JSON.stringify`나 새 dependency 없음). `subscribe(listener)`는
+  등록 즉시 호출되지 않고 실제 transition에만 호출되며, 반환된 unsubscribe는 여러 번 호출해도 안전하고,
+  notification은 listener Set의 snapshot 복사본을 순회해 notification 도중의 unsubscribe나 reentrant
+  `hydrate()` 호출에도 iteration이 깨지지 않습니다. `hydrate()`는 manager의 `hydrate()`를 호출하고 그
+  exact Promise reference를 그대로 반환하며, in-flight promise를 store 내부에 tracking해 concurrent 호출과
+  LOADING notification 도중의 reentrant 호출 모두 manager 호출·settlement observer·notification을
+  중복시키지 않고(그 tracked promise 참조는 terminal 처리 직전에 비워, terminal listener가 즉시 새 retry를
+  시작해도 그 새 참조를 덮어쓰지 않습니다), READY/EMPTY의 no-op hydrate나 ERROR 이후의 explicit retry
+  cycle도 manager의 기존 계약을 그대로 통과시킵니다. store 자신은 timer/backoff/자동 retry/logging이
+  없고, React·Expo·AsyncStorage·production composition·API client·environment를 import하지 않는 pure
+  boundary이며, provider-neutral하므로 이 manager와 같은 pure barrel에서 export됩니다. 이 manager와
+  store를 실제로 잇는 **production composition 계층**(`mobile-saved-location-hydration-production.ts`,
+  `mobileSavedLocationHydrationManager`·`mobileSavedLocationHydrationStore`)도 추가됐습니다 — 기존
+  persistence instance·hydration manager factory·store factory 세 경계만 import해, persistence를
+  manager factory에, 그 manager를 store factory에 각각 정확히 한 번 주입하는 module scope singleton
+  두 개이며, storage key·envelope version·오류 kind·collection 정책·snapshot/notification 계약을 다시
+  정의하지 않고, import나 두 singleton 참조만으로는 storage I/O도 `hydrate()` 호출도 없습니다. AsyncStorage
+  binding과 같은 이유로 pure barrel에서는 export되지 않아 native module을 전이적으로 끌어오지 않으며,
+  runtime consumer는 이 module을 직접 import합니다. 이 composition의 **store**의 `hydrate()`를 실제 앱
+  시작 시 호출하는 **one-shot startup boundary 계층**(`mobile-saved-location-hydration-startup.ts`,
   `startMobileSavedLocationHydrationOnce`)이 추가됐습니다 — production composition만 import해,
-  첫 호출에서만 실제 manager `hydrate()`를 호출하고 그 Promise를 module scope에 저장하며, 이후의
-  모든 동시·반복·완료 후 호출은 항상 그 동일한 첫 Promise reference를 반환합니다. 이 module 역시
-  native module을 전이적으로 가지므로 pure barrel에서는 export되지 않습니다. root
+  첫 호출에서만 실제 store `hydrate()`를 호출하고 그 Promise를 module scope에 저장하며, 이후의
+  모든 동시·반복·완료 후 호출은 항상 그 동일한 첫 Promise reference를 반환합니다. store를 경유하므로
+  이 startup 호출을 관찰하는 subscriber는 `LOADING`과 terminal 상태 전환을 모두 볼 수 있습니다. 이
+  module 역시 native module을 전이적으로 가지므로 pure barrel에서는 export되지 않습니다. root
   layout(`apps/mobile/src/app/_layout.tsx`)이 mount effect에서 이 startup 함수를 호출하도록
   배선됐습니다 — effect는 React Strict Mode나 반복 실행에도 안전하게 여러 번 호출될 수 있지만,
   startup boundary의 one-shot guard 덕분에 실제 storage read는 앱 runtime당 정확히 한 번만
   일어나고, 기존 `<Stack />` 렌더링과 navigation은 이 hydration 완료 여부와 무관하게 그대로
   유지됩니다. 첫 hydration 결과가 `EMPTY`/`READY`/`ERROR` 무엇이든 이 startup boundary는 자동
-  재시도를 하지 않습니다. 따라서 저장 지역 계층은 (1) single-record → (2) canonical collection →
+  재시도를 하지 않습니다 — 향후 명시적 retry는 이 store의 `hydrate()`를 직접 호출해야 subscription
+  일관성이 유지됩니다. 따라서 저장 지역 계층은 (1) single-record → (2) canonical collection →
   (3) provider-neutral persistence codec/port → (4) concrete AsyncStorage production binding →
-  (5) provider-neutral hydration manager → (6) 이 binding과 manager의 production composition →
-  (7) 이 composition을 앱 시작 시 한 번만 호출하는 startup boundary의 일곱 계층으로 구성되며,
-  (8) React state/context/`useSyncExternalStore`·화면(UI)·migration 실행·위치 권한·현재 위치 조회·
-  실제 호출과 development client 재빌드·실제 기기 QA는 여전히 후속 PR 범위입니다. 자세한 내용은
+  (5) provider-neutral hydration manager → (6) 그 manager를 감싸는 provider-neutral observable
+  hydration store → (7) 이 manager와 store의 production composition → (8) 이 composition의 store를
+  앱 시작 시 한 번만 호출하는 startup boundary의 여덟 계층으로 구성되며, (9) React
+  `useSyncExternalStore` hook·React state/context·화면(UI)·지역 mutation/save·migration 실행·위치
+  권한·현재 위치 조회·실제 호출과 development client 재빌드·실제 기기 QA는 여전히 후속 PR
+  범위입니다. 자세한 내용은
   [mobile-saved-location.md](./mobile-saved-location.md),
   [mobile-saved-location-collection.md](./mobile-saved-location-collection.md),
   [mobile-saved-location-persistence.md](./mobile-saved-location-persistence.md)와
@@ -371,10 +394,17 @@ domain module과 Node 기반 unit test로 전이되지 않습니다(`apps/mobile
 타입만 import하므로(`locations → locations`, type-only 포함) `apps/mobile`의 기존 의존 방향을 그대로
 유지하고, AsyncStorage나 그 어떤 native module도 import하지 않습니다(pure barrel export 유지).
 
+그 위의 **observable hydration store 계층**(`mobile-saved-location-hydration-store.ts`)도 **신규
+dependency를 추가하지 않습니다.** 같은 `src/locations` 디렉터리의 saved-location 타입과 hydration
+manager의 `SavedLocationHydrationManager`/`SavedLocationHydrationState` 타입만 import하므로
+(`locations → locations`, type-only 포함) `apps/mobile`의 기존 의존 방향을 그대로 유지하고, React나
+AsyncStorage 등 그 어떤 native module도 import하지 않습니다(pure barrel export 유지).
+
 그 위의 **hydration production composition 계층**(`mobile-saved-location-hydration-production.ts`)도
-**신규 dependency를 추가하지 않습니다.** 같은 `src/locations` 디렉터리의 기존 두 module —
-AsyncStorage binding(`mobile-saved-location-async-storage`)과 hydration manager
-factory(`mobile-saved-location-hydration-manager`) — 만 import해 둘을 연결할 뿐이므로
+**신규 dependency를 추가하지 않습니다.** 같은 `src/locations` 디렉터리의 기존 세 module —
+AsyncStorage binding(`mobile-saved-location-async-storage`), hydration manager
+factory(`mobile-saved-location-hydration-manager`), observable store
+factory(`mobile-saved-location-hydration-store`) — 만 import해 셋을 연결할 뿐이므로
 (`locations → locations`), 새 npm package나 새 package-level 의존 방향을 만들지 않습니다.
 AsyncStorage binding을 통해 native module을 전이적으로 가지므로 이 module 역시 pure barrel에서는
 export되지 않습니다.
@@ -382,7 +412,9 @@ export되지 않습니다.
 그 위의 **startup boundary 계층**(`mobile-saved-location-hydration-startup.ts`)도 **신규
 dependency를 추가하지 않습니다.** 같은 `src/locations` 디렉터리의 production composition
 module(`mobile-saved-location-hydration-production`) 하나만 import하므로(`locations →
-locations`), React나 그 어떤 다른 package도 import하지 않습니다. root layout wiring
+locations`), React나 그 어떤 다른 package도 import하지 않습니다. 이 module은 이제 그 composition이
+export하는 **store** singleton(`mobileSavedLocationHydrationStore`)을 호출하지만, import 대상
+module 자체는 바뀌지 않았으므로 의존 방향은 그대로입니다. root layout wiring
 (`apps/mobile/src/app/_layout.tsx`)은 기존 `react`(`useEffect`)와 `expo-router`(`Stack`) 의존만
 그대로 사용하고 신규 dependency를 추가하지 않으며, 이 startup module을 직접 import합니다(pure
 barrel `./index`를 거치지 않음).

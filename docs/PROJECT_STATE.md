@@ -48,15 +48,24 @@
   barrel 미export): 구현됨. 이 persistence를 주입받아 hydration 진행 상태를
   `NOT_STARTED`/`LOADING`/`EMPTY`/`READY`/`ERROR`로 노출하는 provider-neutral hydration manager
   (`mobile-saved-location-hydration-manager.ts`, pure barrel export, 단일 in-flight 호출·성공 후
-  idempotent·실패 후 retry·고정 비노출 오류)도 구현됐습니다. 이 AsyncStorage binding과 hydration
-  manager의 production composition(`mobile-saved-location-hydration-production.ts`,
-  `mobileSavedLocationHydrationManager`, pure barrel 미export, import 시 storage I/O·`hydrate()`
-  호출 없음)도 구현됐습니다. 이 composition을 앱 시작 시 한 번만 호출하는 one-shot startup boundary
+  idempotent·실패 후 retry·고정 비노출 오류)도 구현됐습니다. 그 위에 이 manager를 감싸는
+  provider-neutral **observable hydration store**(`mobile-saved-location-hydration-store.ts`,
+  `createSavedLocationHydrationStore`, pure barrel export)도 구현됐습니다 — stable하고 deep-frozen된
+  cached snapshot(`getSnapshot()`), 등록 즉시 호출되지 않고 semantic transition에만 알리는 idempotent
+  subscribe/unsubscribe, manager의 exact hydrate Promise를 그대로 반환하며 concurrency·reentrancy에도
+  manager 호출·observer·알림을 중복시키지 않는 `hydrate()`를 제공합니다(향후 React
+  `useSyncExternalStore` 소비를 겨냥하며, hook 자체는 미구현). 이 AsyncStorage binding과 hydration
+  manager, 그리고 이 store의 production composition(`mobile-saved-location-hydration-production.ts`,
+  `mobileSavedLocationHydrationManager`·`mobileSavedLocationHydrationStore`, pure barrel 미export,
+  import 시 storage I/O·`hydrate()` 호출 없음)도 구현됐습니다. 이 composition의 **store**의
+  `hydrate()`를 앱 시작 시 한 번만 호출하는 one-shot startup boundary
   (`mobile-saved-location-hydration-startup.ts`, `startMobileSavedLocationHydrationOnce`)와 root
-  layout mount effect wiring(`apps/mobile/src/app/_layout.tsx`)도 구현됐습니다 — 반복·동시 effect
-  실행에도 실제 manager `hydrate()`와 그에 따른 storage read는 정확히 한 번만 일어나고, 첫 결과가
-  `ERROR`여도 자동 재시도하지 않으며, `<Stack />` 렌더링과 navigation은 차단하지 않습니다. 반면
-  React state/UI 연결: 미구현, migration execution: 미구현, 위치 권한: 미구현, 지역 관리 UI:
+  layout mount effect wiring(`apps/mobile/src/app/_layout.tsx`, 변경 없음)도 구현됐습니다 — 반복·동시
+  effect 실행에도 실제 store `hydrate()`(→ manager `hydrate()`)와 그에 따른 storage read는 정확히
+  한 번만 일어나고, 첫 결과가 `ERROR`여도 자동 재시도하지 않으며(향후 명시적 retry는 이 store의
+  `hydrate()`를 경유), `<Stack />` 렌더링과 navigation은 차단하지 않습니다. 반면 React
+  `useSyncExternalStore` hook: 미구현, React state/UI 연결: 미구현, 지역 mutation/save: 미구현,
+  migration execution: 미구현, 위치 권한: 미구현, 지역 관리 UI:
   미구현이고, development client rebuild 및 실제 기기 QA: 미수행입니다)
 - 디자인 시스템과 주요 화면
 - Android widget
