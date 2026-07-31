@@ -3,20 +3,108 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { KMA_KOREAN_LOCATION_CATALOG_RAW_ROWS } from './kma-korean-location-catalog.generated';
+import {
+  KMA_KOREAN_LOCATION_CATALOG_RAW_ROWS,
+  type KmaKoreanLocationRawRow,
+} from './kma-korean-location-catalog.generated';
 import { kmaKoreanLocationCatalog, kmaKoreanLocationCatalogEntry } from './kma-korean-location-catalog';
 import { kmaKoreanLocationSourceManifest } from './kma-korean-location-source-manifest';
 
 const SOURCE_TSV_PATH = new URL('./kma-korean-location-source.tsv', import.meta.url);
 
+/** The exact source TSV header, column for column. */
+const SOURCE_TSV_COLUMNS = [
+  'officialAdministrativeCode',
+  'adminArea1',
+  'adminArea2',
+  'adminArea3',
+  'latitude',
+  'longitude',
+  'nx',
+  'ny',
+  'officialOrder',
+] as const;
+
+/**
+ * The two official source rows the generation step excludes, because the source spreadsheet leaves
+ * their coordinate at the `(0, 0)` placeholder rather than a real Korean lat/lon.
+ */
+const EXCLUDED_SOURCE_CODES = ['5019000000', '5019099000'] as const;
+
 function readSourceTsvLines(): string[] {
   const content = readFileSync(SOURCE_TSV_PATH, 'utf-8');
-  // Trailing newline produces one empty trailing element after split; drop it.
-  const lines = content.split('\n');
+  // Trailing newline produces one empty trailing element after split; drop it. A `\r` is stripped
+  // per line rather than globally, so a CRLF checkout cannot silently corrupt a field value.
+  const lines = content.split('\n').map((line) => line.replace(/\r$/, ''));
   if (lines[lines.length - 1] === '') {
     lines.pop();
   }
   return lines;
+}
+
+interface SourceRow {
+  readonly officialAdministrativeCode: string;
+  readonly adminArea1: string;
+  readonly adminArea2: string;
+  readonly adminArea3: string;
+  readonly latitude: number;
+  readonly longitude: number;
+  readonly nx: number;
+  readonly ny: number;
+  readonly officialOrder: number;
+}
+
+/**
+ * Parse the committed TSV into typed rows, failing loudly on any malformed column count or numeric
+ * field — the parse must never paper over a corrupt source file by coercing a bad value.
+ */
+function parseSourceRows(): readonly SourceRow[] {
+  const lines = readSourceTsvLines();
+  const [header, ...dataLines] = lines;
+
+  expect(header?.split('\t')).toEqual([...SOURCE_TSV_COLUMNS]);
+
+  return dataLines.map((line, index) => {
+    const columns = line.split('\t');
+    expect(columns, `row ${index + 1} column count`).toHaveLength(SOURCE_TSV_COLUMNS.length);
+
+    const [code, adminArea1, adminArea2, adminArea3, latitude, longitude, nx, ny, officialOrder] =
+      columns as [string, string, string, string, string, string, string, string, string];
+
+    for (const [label, raw] of [
+      ['latitude', latitude],
+      ['longitude', longitude],
+    ] as const) {
+      expect(Number.isFinite(Number(raw)), `row ${index + 1} ${label} "${raw}"`).toBe(true);
+    }
+    for (const [label, raw] of [
+      ['nx', nx],
+      ['ny', ny],
+      ['officialOrder', officialOrder],
+    ] as const) {
+      expect(Number.isInteger(Number(raw)), `row ${index + 1} ${label} "${raw}"`).toBe(true);
+    }
+
+    return {
+      officialAdministrativeCode: code,
+      adminArea1,
+      adminArea2,
+      adminArea3,
+      latitude: Number(latitude),
+      longitude: Number(longitude),
+      nx: Number(nx),
+      ny: Number(ny),
+      officialOrder: Number(officialOrder),
+    };
+  });
+}
+
+/** The generation step's deterministic opaque id, recomputed here from the source code alone. */
+function deriveId(officialAdministrativeCode: string): string {
+  const digest = createHash('sha256')
+    .update(`life-weather:kma-location-v1:${officialAdministrativeCode}`, 'utf-8')
+    .digest('hex');
+  return `kr_${digest.slice(0, 24)}`;
 }
 
 describe('source manifest integrity', () => {
@@ -48,6 +136,57 @@ describe('source manifest integrity', () => {
     });
     expect(zeroCoordinateLines).toHaveLength(2);
     expect(dataLines.length - zeroCoordinateLines.length).toBe(kmaKoreanLocationCatalog.length);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The generated file is committed data with no committed generator, so CI has to be the thing that
+// proves it still corresponds to the committed source. This rebuilds every expected generated row
+// from the TSV alone and compares the whole table — not a sample — so a single wrong coordinate,
+// grid cell, name, id, or order anywhere in the 3,836 rows fails the build.
+// ---------------------------------------------------------------------------
+
+describe('generated rows correspond exactly to the committed source TSV', () => {
+  it('parses a well-formed source TSV whose row count matches the manifest', () => {
+    const sourceRows = parseSourceRows();
+
+    expect(sourceRows).toHaveLength(kmaKoreanLocationSourceManifest.sourceRowCount);
+  });
+
+  it('excludes exactly the two zero-coordinate 이어도 rows and nothing else', () => {
+    const zeroCoordinateRows = parseSourceRows().filter(
+      (row) => row.latitude === 0 && row.longitude === 0,
+    );
+
+    expect(zeroCoordinateRows.map((row) => row.officialAdministrativeCode)).toEqual([
+      ...EXCLUDED_SOURCE_CODES,
+    ]);
+    for (const row of zeroCoordinateRows) {
+      expect(row.adminArea1).toBe('이어도');
+    }
+  });
+
+  it('reproduces every generated row — id, names, coordinate, grid, and order — from the source', () => {
+    const sourceRows = parseSourceRows();
+    const keptRows = sourceRows.filter((row) => !(row.latitude === 0 && row.longitude === 0));
+
+    expect(keptRows).toHaveLength(kmaKoreanLocationSourceManifest.generatedRowCount);
+
+    const expectedRows: KmaKoreanLocationRawRow[] = keptRows.map((row, index) => [
+      row.officialAdministrativeCode,
+      deriveId(row.officialAdministrativeCode),
+      row.adminArea1,
+      row.adminArea2 === '' ? null : row.adminArea2,
+      row.adminArea3 === '' ? null : row.adminArea3,
+      row.latitude,
+      row.longitude,
+      row.nx,
+      row.ny,
+      // officialOrder is re-dealt 1..N over the rows that survive the exclusion.
+      index + 1,
+    ]);
+
+    expect(KMA_KOREAN_LOCATION_CATALOG_RAW_ROWS).toEqual(expectedRows);
   });
 });
 
@@ -132,14 +271,10 @@ describe('id policy', () => {
     }
   });
 
-  it('the same source row always yields the same id (deterministic, re-derivable)', async () => {
-    const { createHash: nodeCreateHash } = await import('node:crypto');
-    for (const row of KMA_KOREAN_LOCATION_CATALOG_RAW_ROWS.slice(0, 25)) {
+  it('every id — not a sample — is re-derivable from its source code (deterministic)', () => {
+    for (const row of KMA_KOREAN_LOCATION_CATALOG_RAW_ROWS) {
       const [officialAdministrativeCode, id] = row;
-      const digest = nodeCreateHash('sha256')
-        .update(`life-weather:kma-location-v1:${officialAdministrativeCode}`, 'utf-8')
-        .digest('hex');
-      expect(id).toBe(`kr_${digest.slice(0, 24)}`);
+      expect(id).toBe(deriveId(officialAdministrativeCode));
     }
   });
 

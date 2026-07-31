@@ -49,12 +49,16 @@ const MockPressable = vi.hoisted(() => function MockPressable(): null {
 const MockTextInput = vi.hoisted(() => function MockTextInput(): null {
   return null;
 });
+const MockScrollView = vi.hoisted(() => function MockScrollView(): null {
+  return null;
+});
 
 vi.mock('react-native', () => ({
   View: MockView,
   Text: MockText,
   Pressable: MockPressable,
   TextInput: MockTextInput,
+  ScrollView: MockScrollView,
   StyleSheet: { create: (styles: unknown) => styles },
 }));
 
@@ -137,6 +141,20 @@ function textInput(root: unknown): ElementLike {
     throw new Error('no TextInput was rendered');
   }
   return found;
+}
+
+/** The single scrollable result container, as an element — not merely an import check. */
+function scrollView(root: unknown): ElementLike {
+  const collected: ElementLike[] = [];
+  walk(root, (element) => {
+    if (element.type === MockScrollView) {
+      collected.push(element);
+    }
+  });
+  if (collected.length !== 1) {
+    throw new Error(`expected exactly 1 ScrollView, found ${collected.length}`);
+  }
+  return collected[0] as ElementLike;
 }
 
 function press(element: ElementLike): void {
@@ -301,7 +319,56 @@ describe('search', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 3 — adding a result: success persists through the real application store and navigates back.
+// 3 — the result list is scrollable, so a full 30-result page stays reachable.
+// ---------------------------------------------------------------------------
+
+describe('scrollable results', () => {
+  it('renders the result list inside a ScrollView that flexes to fill the screen', async () => {
+    const render = await hydratedRender();
+    changeText(textInput(render()), '중앙동');
+    const container = scrollView(render());
+
+    expect((container.props.style as { flex: number }).flex).toBe(1);
+  });
+
+  it('keeps taps working while the keyboard is open', async () => {
+    const render = await hydratedRender();
+    changeText(textInput(render()), '중앙동');
+
+    expect(scrollView(render()).props.keyboardShouldPersistTaps).toBe('handled');
+  });
+
+  it('puts every one of the 30 default-limit results inside the scroll container, not outside it', async () => {
+    const render = await hydratedRender();
+    changeText(textInput(render()), '중앙동');
+    const element = render();
+    const container = scrollView(element);
+
+    // The real catalog has more than 30 "중앙동" entries, so the default limit fills a full page.
+    const rowsInside = pressables(container).filter((pressable) =>
+      String(pressable.props.accessibilityLabel).endsWith(' 추가'),
+    );
+    expect(rowsInside).toHaveLength(30);
+
+    // Nothing but the back control lives outside the scroll container — the rows are not rendered
+    // into a fixed-height parent that would clip them.
+    const outside = pressables(element).filter((pressable) => !rowsInside.includes(pressable));
+    expect(outside.map((pressable) => pressable.props.accessibilityLabel)).toEqual(['뒤로 가기']);
+  });
+
+  it('keeps a result near the bottom of the page reachable inside the scroll container', async () => {
+    const render = await hydratedRender();
+    changeText(textInput(render()), '중앙동');
+    const container = scrollView(render());
+
+    // 제주특별자치도 서귀포시 중앙동 sits deep in officialOrder — far below the fold on a phone.
+    expect(texts(container)).toContain('제주특별자치도 서귀포시 중앙동');
+    expect(pressableByLabel(container, '제주특별자치도 서귀포시 중앙동 추가')).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4 — adding a result: success persists through the real application store and navigates back.
 // ---------------------------------------------------------------------------
 
 describe('add', () => {

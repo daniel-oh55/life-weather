@@ -71,6 +71,29 @@ apps/mobile/src/app/
    사용자 입력으로는 절대 throw하지 않습니다. 성공하면 배열과 각 entry(및 `kmaGrid`)를
    deep-freeze해 export합니다.
 
+### 소스 ↔ generated 전수 대조 (CI)
+
+생성 절차는 일회성이고 생성 스크립트는 저장소에 없으므로, **committed source TSV와 committed
+generated row가 여전히 서로 대응하는지는 CI가 증명합니다.**
+`kma-korean-location-catalog.test.ts`의 verifier가 매 test 실행마다:
+
+1. committed TSV를 파싱하면서 header가 예상 9개 열과 정확히 일치하는지, 각 데이터 행의 열 수가
+   정확한지, 숫자 열이 유효한 number/integer인지 검증합니다(행 끝 `\r`만 안전하게 제거하므로 CRLF
+   checkout이 값을 오염시킬 수 없습니다). 행 수는 manifest의 `sourceRowCount`(`3838`)와 일치해야
+   합니다.
+2. 좌표가 `(0, 0)`인 행을 TSV 전체에서 찾아 **정확히 두 행**(`5019000000`/`5019099000`, 둘 다
+   이어도)만 존재함을 확인하고 그 두 행만 제외합니다 — 하드코딩된 코드 목록으로 유효한 행을
+   조용히 걸러내지 않습니다.
+3. 남은 3836행 각각에 대해 expected generated row를 재구성합니다: opaque id를 SHA-256으로 **모든
+   행에 대해 다시 계산**하고(표본이 아님), 빈 2/3단계를 `null`로 정규화하고, `officialOrder`를
+   제외 후 `1..3836`으로 다시 매깁니다.
+4. `expect(KMA_KOREAN_LOCATION_CATALOG_RAW_ROWS).toEqual(expectedRows)` 한 번으로 3836행 전체를
+   deep equality 비교합니다 — 행정구역 코드, opaque id, 1/2/3단계 행정구역명, `null` 변환, 위도,
+   경도, `nx`, `ny`, `officialOrder`까지 **모든 필드가 전수 대응**해야 통과합니다.
+
+따라서 generated file의 좌표·격자·지역명·id·순서 중 어느 하나라도 소스와 어긋나면 CI가 실패합니다
+(negative control로 확인함).
+
 ### Generated catalog entry
 
 ```ts
@@ -106,9 +129,11 @@ id:     "kr_" + digest의 앞 24자
 ```
 
 같은 소스 행은 항상 같은 id를 만들고(재현 가능), 3836개 id는 모두 유일하며(충돌 시 생성
-실패), id 문자열에 원본 코드가 부분 문자열로 나타나지 않습니다. 이 hash 계산은 생성 스크립트
-실행 시 한 번만 일어나며, React Native 런타임에서는 계산하지 않습니다 — 런타임은 이미 계산된
-id를 `kma-korean-location-catalog.generated.ts`에서 읽기만 합니다.
+실패), id 문자열에 원본 코드가 부분 문자열로 나타나지 않습니다. 이 hash 계산은 **일회성 생성
+절차에서만** 한 번 일어나며(생성 스크립트 자체는 이 저장소에 commit되어 있지 않습니다), React
+Native 런타임에서는 계산하지 않습니다 — 런타임은 이미 계산된 id를
+`kma-korean-location-catalog.generated.ts`에서 읽기만 합니다. 대신 아래 전수 verifier가 CI에서
+모든 id를 소스 코드로부터 다시 계산해 대조합니다.
 
 ## 행정구역·표시명 정책
 
@@ -155,12 +180,25 @@ type KmaKoreanLocationSearchResult =
   소문자화합니다.
 - **매칭**: `displayName`, `fullName`, 각 admin area, 공백 제거 `fullName`을 대상으로 substring
   검색합니다.
+- **계층형 축약(hierarchy alias)**: `서울강남`처럼 각 행정구역 단계를 줄여 이어 쓴 질의도 실제
+  결과를 찾습니다. 공식 명칭 key 끝에서 행정구역 suffix **하나만** 기계적으로 제거해 축약 key를
+  만들고(`서울특별시`→`서울`, `강남구`→`강남`, `제주특별자치도`→`제주`, `경기도`→`경기`; 제거
+  결과가 빈 문자열이면 원래 key 유지), 각 단계를 **공식 명칭 또는 축약형 중 어느 쪽으로도** 쓸 수
+  있다고 보고 `adminArea1`부터 왼쪽에서 오른쪽으로 질의를 소비합니다. 그래서 `부산중구`(1단계만
+  축약)와 `부산중`(양쪽 축약)이 모두 `부산광역시 중구`에 도달합니다. 질의는 반드시 1단계(시·도)에서
+  시작해야 하므로 `강남`만으로는 이 tier에 걸리지 않습니다. 동의어 사전·별명 목록은 만들지
+  않았습니다 — suffix 규칙 하나뿐입니다.
 - **ranking** (동점은 `officialOrder` 오름차순):
   1. `displayName` exact
   2. admin 구성요소 exact (예: `강남구` 검색 시 강남구 자신과 강남구의 모든 동이 함께 매칭)
   3. `displayName` prefix
   4. `fullName` prefix
-  5. substring
+  5. hierarchy alias exact (예: `서울 강남`/`서울강남` → `서울특별시 강남구`)
+  6. hierarchy alias prefix (같은 질의의 강남구 하위 동들 — 항상 강남구 자신보다 뒤)
+  7. substring
+
+  축약 tier가 5·6번에 있으므로 **공식 지역명에 대한 exact/prefix 매칭을 절대 앞지르지 않습니다.**
+  공백은 비교 전에 모두 제거되므로 `서울 강남`과 `서울강남`은 동일한 결과 ID 배열을 반환합니다.
 - **limit**: 기본 30, `options.limit`을 주면 `1..50` 정수만 허용하고 그 외는 `INVALID_LIMIT`.
 - 반환된 entry는 카탈로그 자신의 frozen reference이고, 배열만 매 호출 새로 만듭니다. 어떤 입력에도
   throw하지 않고, network/storage I/O가 없으며, query 입력을 변형하지 않습니다.
@@ -190,8 +228,12 @@ fresh `kmaGrid`를 반환합니다.
   `/locations`로 이동할 뿐이며, 렌더링만으로는 검색·저장·storage I/O가 없습니다. 기존
   retry/delete 동작과 다섯 상태 문구는 바뀌지 않았습니다.
 - **검색 화면** (`apps/mobile/src/app/locations.tsx`) — 제목 `지역 추가`, 뒤로가기 버튼,
-  `TextInput`, 결과 목록(각 `fullName` + `추가` 버튼)으로 구성됩니다. 검색은 정적 local 카탈로그만
-  대상으로 하며 React Native 기본 컴포넌트만 사용합니다. `추가`를 누르면 candidate로 변환 →
+  `TextInput`, 결과 목록(각 `fullName` + `추가` 버튼)으로 구성됩니다. 결과 목록은 React Native 기본
+  `ScrollView`에 담기고 `flex: 1`로 남은 화면을 채우므로, 기본 limit인 30개 결과가 모두 스크롤로
+  도달 가능합니다(예: `중앙동` 검색 시 화면 아래쪽의 `제주특별자치도 서귀포시 중앙동`).
+  `keyboardShouldPersistTaps="handled"`라서 키보드가 열린 상태에서도 첫 탭이 `추가`에 그대로
+  전달됩니다. 결과가 30개로 제한되어 있어 `FlatList` 가상화는 쓰지 않았습니다. 검색은 정적 local
+  카탈로그만 대상으로 하며 React Native 기본 컴포넌트만 사용합니다. `추가`를 누르면 candidate로 변환 →
   `mobileSavedLocationApplicationStore.add()` 호출 → 성공 시 이전 화면으로 복귀,
   실패 시 고정 문구를 표시합니다.
 
@@ -227,9 +269,14 @@ current-location record 추가, 실제 weather API 호출, KMA service key 사�
    `kma-korean-location-catalog.generated.ts`를 재생성합니다.
 5. `kma-korean-location-source-manifest.ts`의 `sourceModifiedDate`·`referenceFileName`·
    `sourceRowCount`·`sourceSha256`·`generatedRowCount`를 새 값으로 갱신합니다.
-6. `pnpm --filter @life-weather/mobile test`로 dataset integrity 테스트를 다시 통과시킵니다.
+6. `pnpm --filter @life-weather/mobile test`로 dataset integrity 테스트와 위 **전수 verifier**를
+   다시 통과시킵니다. verifier는 새 TSV로부터 generated row 전체를 재구성해 deep equality로
+   비교하므로, 재생성이 한 행이라도 어긋나면 여기서 걸립니다.
 
-원본 XLSX/ZIP은 commit하지 않고, 실제 KMA 예보 API는 이 절차 어디에서도 호출하지 않습니다.
+이 절차는 일회성 수작업 생성 절차이며, 생성 스크립트는 저장소에 commit되어 있지 않습니다 —
+저장소가 보증하는 것은 committed TSV와 committed generated file의 대응이고, 그 대응은 CI verifier가
+검사합니다. 원본 XLSX/ZIP은 commit하지 않고, 실제 KMA 예보 API는 이 절차 어디에서도 호출하지
+않습니다.
 
 ## 향후 상태
 

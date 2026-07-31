@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useRouter } from 'expo-router';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { KmaKoreanLocationCatalogEntry } from '../locations/catalog/kma-korean-location-catalog';
 import { createSavedLocationCandidateFromKmaCatalogEntry } from '../locations/kma-korean-location-candidate';
@@ -90,7 +90,17 @@ export default function LocationSearchScreen() {
         style={styles.input}
       />
 
-      <View style={styles.list}>
+      {/*
+        The result list is scrollable: a query can return up to the search default of 30 rows, which
+        overflows the viewport. `keyboardShouldPersistTaps="handled"` keeps the first tap on an
+        "추가" control working while the keyboard is still open, instead of being swallowed by the
+        keyboard dismissal. A plain ScrollView is enough at this size — no virtualization needed.
+      */}
+      <ScrollView
+        style={styles.results}
+        contentContainerStyle={styles.list}
+        keyboardShouldPersistTaps="handled"
+      >
         {results.map((entry) => (
           <View key={entry.id} style={styles.row}>
             <Text style={styles.rowLabel}>{entry.fullName}</Text>
@@ -107,7 +117,7 @@ export default function LocationSearchScreen() {
             </Pressable>
           </View>
         ))}
-      </View>
+      </ScrollView>
 
       {addErrorMessage !== null ? <Text style={styles.text}>{addErrorMessage}</Text> : null}
     </View>
@@ -134,6 +144,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 12,
     fontSize: 16,
+  },
+  results: {
+    flex: 1,
   },
   list: {
     gap: 8,

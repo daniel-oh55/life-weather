@@ -56,6 +56,37 @@ describe('normalization', () => {
     );
   });
 
+  it('finds the real district for the abbreviated hierarchy "서울 강남" / "서울강남"', () => {
+    for (const query of ['서울 강남', '서울강남']) {
+      const result = searchKmaKoreanLocations(query);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      expect(result.locations.length).toBeGreaterThan(0);
+      expect(result.locations.map((entry) => entry.fullName)).toContain('서울특별시 강남구');
+      // The district itself outranks every one of its dong-level children.
+      expect(result.locations[0]?.fullName).toBe('서울특별시 강남구');
+    }
+  });
+
+  it.each([
+    ['제주 서귀포', '제주서귀포', '제주특별자치도 서귀포시'],
+    ['부산 중구', '부산중구', '부산광역시 중구'],
+  ])('resolves "%s" / "%s" to %s, spaced and unspaced alike', (spacedQuery, unspacedQuery, expectedFullName) => {
+    for (const query of [spacedQuery, unspacedQuery]) {
+      const result = searchKmaKoreanLocations(query);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      expect(result.locations.map((entry) => entry.fullName)).toContain(expectedFullName);
+      expect(result.locations[0]?.fullName).toBe(expectedFullName);
+    }
+  });
+
   it('treats a full-width (U+3000) internal space the same as a regular space, with real matches', () => {
     const withFullWidthSpace = searchKmaKoreanLocations('강남　구');
     const withRegularSpace = searchKmaKoreanLocations('강남 구');
@@ -91,6 +122,49 @@ describe('ranking', () => {
     // exact match on the same tier, so within that group officialOrder must already be ascending.
     const tier2Orders = result.locations.slice(1).map((entry) => entry.officialOrder);
     expect(tier2Orders).toEqual([...tier2Orders].sort((a, b) => a - b));
+  });
+
+  it('ranks the abbreviated district ahead of its dong-level children, and matches nothing else', () => {
+    const result = searchKmaKoreanLocations('서울강남');
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.locations.length).toBeGreaterThan(1);
+    expect(result.locations[0]?.fullName).toBe('서울특별시 강남구');
+    // Every remaining result is a real Gangnam-gu neighborhood — the alias rule never widens the
+    // match to an unrelated region.
+    for (const entry of result.locations.slice(1)) {
+      expect(entry.adminArea1).toBe('서울특별시');
+      expect(entry.adminArea2).toBe('강남구');
+    }
+  });
+
+  it('never lets an alias match outrank a match on a real administrative name', () => {
+    // "강남구" is an official name: the exact/admin-exact tiers must still own the whole page, so
+    // adding the alias tiers cannot have displaced them.
+    const result = searchKmaKoreanLocations('강남구');
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.locations[0]?.displayName).toBe('강남구');
+    for (const entry of result.locations) {
+      expect(entry.adminArea2).toBe('강남구');
+    }
+  });
+
+  it('requires an abbreviated query to start at the province level', () => {
+    // "강남" alone is a dong/district-level fragment, never a province alias, so it must not drag
+    // in every 강남-containing hierarchy through the alias tiers.
+    const result = searchKmaKoreanLocations('강남');
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    for (const entry of result.locations) {
+      expect(entry.fullName).toContain('강남');
+    }
   });
 
   it('distinguishes same-name locations in different regions by fullName (중앙동)', () => {
