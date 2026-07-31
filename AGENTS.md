@@ -21,6 +21,24 @@
   기록합니다.
 - 채팅의 완료 보고는 보조 맥락이며 저장소나 GitHub의 근거를 대신하지 않습니다.
 
+## 작업 전 계약 확인과 최소 해결
+
+구현 또는 remediation 전에 작업 범위 안에서 다음을 확인합니다.
+
+- 재현되는 문제 또는 새로 구현할 공개 계약
+- 해당 책임을 소유하는 계층
+- 입력, 기대 출력과 상태 전이
+- 허용되는 부작용과 금지되는 부작용
+- Promise, snapshot 또는 callback의 reference identity 요구
+- 완료 검사와 반드시 보존할 회귀 조건
+
+저장소 근거와 충돌하지 않는 이미 확정된 결정을 다시 논의하지 않습니다. 증상을
+우회하기 위한 새 상태나 wrapper를 추가하지 않고, 원인을 소유한 최소 계층에서 수정합니다.
+
+기존 계층과 공개 계약으로 해결할 수 있으면 새 manager, adapter, wrapper, generic
+framework 또는 일회성 abstraction을 추가하지 않습니다. 테스트 편의를 위해 production
+API나 runtime 구조를 복잡하게 만들지 않습니다.
+
 ## 역할 분리
 
 - 하나의 PR에는 Codex 또는 Claude Code 중 한 명만 primary implementer로 지정합니다.
@@ -176,6 +194,20 @@ fixture와 synthetic coordinates, 저장소에서 이미 승인된 비민감 sta
 - `apps/api/tsconfig.json`과 Vercel entrypoint/runtime config
 - mobile app config, EAS config와 Android/iOS native generation policy
 - `.env` example의 변수명 계약
+- saved-location persistence, AsyncStorage binding, hydration manager, observable store와
+  React external-store 경계의 책임 분리 및 공개 계약
+
+Saved-location 또는 hydration 관련 작업에서는 관련 architecture 문서를 canonical contract로
+사용하며, 특히 다음을 보존합니다.
+
+- import 또는 hook 호출만으로 hydration이나 storage I/O가 시작되지 않음
+- manager와 store의 책임 분리 및 hydration 상태 전이
+- exact in-flight Promise와 cached snapshot의 reference identity
+- deep-frozen snapshot
+- stable subscribe/getSnapshot callback
+- client와 server snapshot getter 계약
+- 중복 hydration, retry와 reentrant lifecycle
+- pure barrel과 native runtime boundary
 
 ## Remote 및 파괴 작업
 
@@ -204,6 +236,21 @@ fixture와 synthetic coordinates, 저장소에서 이미 승인된 비민감 sta
 - 테스트를 삭제하거나 완화해서 CI를 통과시키지 않습니다.
 - 기존 검증으로 충분하면 새 checker를 만들지 않습니다.
 - 외부 API 실호출을 unit 또는 integration test의 대체로 사용하지 않습니다.
+
+### 테스트의 비공허성
+
+테스트는 구현 세부사항이 아니라 공개 계약을 검증해야 합니다. Mock, module cache 또는 import
+순서 때문에 대상 경계를 실행하지 않고도 통과하는 테스트를 허용하지 않습니다.
+
+중요한 guard, lifecycle과 reference identity 테스트는 위험에 비례해 다음 방법 중 필요한 것을
+사용합니다.
+
+- 대표적인 잘못된 구현에서 실제로 실패하는지 확인
+- positive 또는 negative control
+- shuffle이나 독립 module instance를 통한 순서 의존성 확인
+
+이 검증을 위해 production 전용 export, test-only 분기 또는 불필요한 runtime abstraction을
+추가하지 않습니다.
 
 ## 완료 보고
 
