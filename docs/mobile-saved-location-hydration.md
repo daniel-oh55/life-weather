@@ -135,8 +135,8 @@ AsyncStorage production binding(`mobileSavedLocationPersistence`)은 계속 이 
 
 ## 이 경계에서 하지 않는 것(후속 범위)
 
-- React hook/context/provider, `useSyncExternalStore` 자체(아래 observable store는 이를 위한 provider-neutral
-  기반이지 hook 구현은 아닙니다).
+- React context/provider(아래 observable store와 [hook](#react-usesyncexternalstore-hook)은
+  provider-neutral 기반과 얇은 subscription 경계이지 context/provider 구현은 아닙니다).
 - 지역 추가·삭제·재정렬 UI, mutation 후 자동 저장.
 - write queue, debounce, retry backoff.
 - refresh, background rehydration, stale data 유지 정책.
@@ -147,8 +147,9 @@ AsyncStorage production binding(`mobileSavedLocationPersistence`)은 계속 이 
 ## 관찰 가능한 hydration store
 
 manager 위에 provider-neutral **observable store**가 추가됐습니다 — manager가 노출하는 discriminated
-union 상태를 향후 React `useSyncExternalStore`가 안전하게 소비할 수 있는 작은 계약으로 감쌉니다. 이
-PR에서는 React hook이나 화면은 구현하지 않습니다.
+union 상태를 React `useSyncExternalStore`가 안전하게 소비할 수 있는 작은 계약으로 감쌉니다. 이 store를
+구독하는 hook은 [아래](#react-usesyncexternalstore-hook)에서 설명하며, 화면은 여전히 구현하지
+않습니다.
 
 - **module 경로**: `apps/mobile/src/locations/mobile-saved-location-hydration-store.ts`.
 - **export 이름**: `createSavedLocationHydrationStore(manager)`.
@@ -258,7 +259,9 @@ observable store를 실제로 조립하는 module이 추가됐습니다.
   load하지 않으며, runtime consumer는 이 production module을 **직접** import합니다.
 - app-start에서 `hydrate()`를 호출하는 wiring은 아래 [app-start hydration](#app-start-hydration)
   절에서 설명하는 one-shot startup boundary로 **구현됐습니다** — 이제 이 export된 **store**를
-  경유합니다. React state/context/hook/UI 연결은 여전히 **미구현**입니다.
+  경유합니다. React `useSyncExternalStore` hook은
+  [아래](#react-usesyncexternalstore-hook) 절에서 구현됐으며, 화면 consumer·React
+  Context/Provider·상태별 UI 연결은 여전히 **미구현**입니다.
 - 이 변경은 native dependency나 native config를 추가하지 않았으므로, development client 재빌드나
   실제 기기 QA는 이번 PR에서도 수행하지 않았습니다.
 
@@ -295,10 +298,38 @@ production composition의 **store**를 실제 앱 시작 시 호출하는 **one-
 - root layout의 mount effect는 hydration 완료를 기다리지 않고 navigation을 차단하지 않습니다 —
   `<Stack />` 렌더링은 그대로 유지되고, `EMPTY`/`READY`/`ERROR`에 따른 화면 분기·loading/error UI·
   splash screen 제어·effect cleanup은 없습니다.
-- React state/hooks/context/`useSyncExternalStore` hook 자체, 화면에 저장 지역 표시, 사용자 retry
-  UI는 여전히 **미구현**입니다.
+- React state/context, 화면 consumer, 저장 지역 표시와 사용자 retry UI는 여전히 **미구현**이며,
+  `useSyncExternalStore` hook은 [아래](#react-usesyncexternalstore-hook) 절에서 구현됐습니다.
 - 이 startup module과 root layout wiring 모두 pure barrel
   (`apps/mobile/src/locations/index.ts`)에서 export되지 않습니다 — root layout은 startup module을
   직접 import하고, startup module은 production composition을 직접 import합니다.
 - 이 변경은 native dependency나 native config를 추가하지 않았으므로, development client 재빌드나
   실제 기기 QA는 이번 PR에서도 수행하지 않았습니다.
+
+## React `useSyncExternalStore` hook
+
+production observable hydration store([위](#관찰-가능한-hydration-store))를 React가 구독할 수 있는
+얇은 runtime hook이 추가됐습니다.
+
+- **module 경로**: `apps/mobile/src/locations/use-mobile-saved-location-hydration.ts`.
+- **export 이름**: `useMobileSavedLocationHydration()`.
+- 이 module은 `react`의 `useSyncExternalStore`와, 같은 `src/locations` 디렉터리의 hydration
+  manager 상태 타입(`SavedLocationHydrationState`, type-only)·production composition의
+  **store** singleton(`mobileSavedLocationHydrationStore`,
+  `./mobile-saved-location-hydration-production`)만 import합니다.
+- `subscribe`/client `getSnapshot`/server `getSnapshot` provider function은 module scope에 정확히
+  한 번 정의되어(`export`하지 않음) `useSyncExternalStore`에 매 render마다 새 callback이 전달되지
+  않고, client와 server getter는 동일한 함수 reference입니다 — 이 store의 캐시된 snapshot은 양쪽
+  모두에서 안전하게 읽을 수 있기 때문입니다.
+- hook의 반환값은 store의 `getSnapshot()`이 반환하는 **exact cached snapshot reference**입니다 —
+  복사·spread·매핑·재검증이 없고, hook 자체의 local/derived state도 없습니다.
+- hook은 `hydrate()`를 호출하지 않고, app-root one-shot startup 정책이나 `ERROR` retry 정책을
+  재정의하지 않으며, listener·error·location logging이 없습니다. hook의 import나 호출만으로는
+  storage I/O(`getItem`/`setItem`/`removeItem`)가 발생하지 않습니다 — store가 이미 hydrate된 이후에
+  호출됐을 때만 그 terminal snapshot을 반영합니다.
+- 이 hook은 production composition을 직접 import하므로 pure boundary가 아니며, pure barrel
+  (`apps/mobile/src/locations/index.ts`)에서 **export되지 않습니다.** 향후 화면 consumer는 이
+  hook module을 직접 import해야 합니다.
+- **이 경계에서 하지 않는 것(후속 범위)**: 이 hook을 소비하는 화면, React Context/Provider,
+  상태별(loading/empty/ready/error) UI, explicit retry 버튼, 지역 mutation/save, 위치 권한/GPS,
+  weather API 호출, timer/effect/memo/reducer, development client 재빌드, 실제 기기 QA.

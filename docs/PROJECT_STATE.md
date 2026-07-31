@@ -53,8 +53,8 @@
   `createSavedLocationHydrationStore`, pure barrel export)도 구현됐습니다 — stable하고 deep-frozen된
   cached snapshot(`getSnapshot()`), 등록 즉시 호출되지 않고 semantic transition에만 알리는 idempotent
   subscribe/unsubscribe, manager의 exact hydrate Promise를 그대로 반환하며 concurrency·reentrancy에도
-  manager 호출·observer·알림을 중복시키지 않는 `hydrate()`를 제공합니다(향후 React
-  `useSyncExternalStore` 소비를 겨냥하며, hook 자체는 미구현). 이 AsyncStorage binding과 hydration
+  manager 호출·observer·알림을 중복시키지 않는 `hydrate()`를 제공합니다(React
+  `useSyncExternalStore` hook이 소비할 수 있는 기반). 이 AsyncStorage binding과 hydration
   manager, 그리고 이 store의 production composition(`mobile-saved-location-hydration-production.ts`,
   `mobileSavedLocationHydrationManager`·`mobileSavedLocationHydrationStore`, pure barrel 미export,
   import 시 storage I/O·`hydrate()` 호출 없음)도 구현됐습니다. 이 composition의 **store**의
@@ -63,9 +63,13 @@
   layout mount effect wiring(`apps/mobile/src/app/_layout.tsx`, 변경 없음)도 구현됐습니다 — 반복·동시
   effect 실행에도 실제 store `hydrate()`(→ manager `hydrate()`)와 그에 따른 storage read는 정확히
   한 번만 일어나고, 첫 결과가 `ERROR`여도 자동 재시도하지 않으며(향후 명시적 retry는 이 store의
-  `hydrate()`를 경유), `<Stack />` 렌더링과 navigation은 차단하지 않습니다. 반면 React
-  `useSyncExternalStore` hook: 미구현, React state/UI 연결: 미구현, 지역 mutation/save: 미구현,
-  migration execution: 미구현, 위치 권한: 미구현, 지역 관리 UI:
+  `hydrate()`를 경유), `<Stack />` 렌더링과 navigation은 차단하지 않습니다. 반면 이 store를 구독하는 React
+  `useSyncExternalStore` hook(`use-mobile-saved-location-hydration.ts`,
+  `useMobileSavedLocationHydration`)도 구현됐습니다 — store의 exact cached snapshot 참조를 그대로
+  반환하고, 안정적인 module-scope subscribe/getSnapshot callback을 client/server 동일하게 쓰며,
+  hook의 import·호출만으로는 `hydrate()`나 storage I/O가 없고 pure barrel에서는 export되지
+  않습니다. 반면 hook을 소비하는 화면, React Context/Provider, 상태별 UI, explicit retry UI: 미구현,
+  지역 mutation/save: 미구현, migration execution: 미구현, 위치 권한: 미구현, 지역 관리 UI:
   미구현이고, development client rebuild 및 실제 기기 QA: 미수행입니다)
 - 디자인 시스템과 주요 화면
 - Android widget
