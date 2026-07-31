@@ -108,10 +108,12 @@
   binding → (5) provider-neutral hydration manager → (6) 그 manager를 감싸는 provider-neutral
   observable hydration store → (7) 이 manager와 store의 production composition → (8) 이
   composition의 store를 앱 시작 시 한 번만 호출하는 startup boundary → (9) 이 store를 구독하는
-  React `useSyncExternalStore` hook의 아홉 계층으로 구성되며, (10) 이 hook을 소비하는 화면·React
-  Context/Provider·상태별 UI·explicit retry UI·지역 mutation/save·migration 실행·위치 권한·현재
-  위치 조회·실제 호출과 development client 재빌드·실제 기기 QA는 여전히 후속 PR 범위입니다. 자세한
-  내용은
+  React `useSyncExternalStore` hook의 아홉 계층으로 구성되며, (10) 이 hook을 직접 호출해 다섯
+  hydration 상태(`NOT_STARTED`/`LOADING`/`EMPTY`/`READY`/`ERROR`)를 최소 읽기 전용 텍스트로
+  보여주는 첫 화면 consumer(`apps/mobile/src/app/index.tsx`)가 추가됐습니다 — hydration을
+  시작·retry하지 않고 hook의 exact snapshot만 분기해 표시합니다. React Context/Provider·explicit
+  retry UI·지역 mutation/save·migration 실행·위치 권한·현재 위치 조회·실제 호출과 development
+  client 재빌드·실제 기기 QA는 여전히 후속 PR 범위입니다. 자세한 내용은
   [mobile-saved-location.md](./mobile-saved-location.md),
   [mobile-saved-location-collection.md](./mobile-saved-location-collection.md),
   [mobile-saved-location-persistence.md](./mobile-saved-location-persistence.md)와
