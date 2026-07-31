@@ -214,7 +214,9 @@ locations: [] }`가 기록됩니다.
   마지막 지역을 삭제하면 `EMPTY` 문구로 전환됩니다.
 - **저장 실패** — `저장 지역 변경을 저장하지 못했습니다.`라는 generic 문구만 표시합니다. 오류
   kind, storage key, 위치 ID, 좌표, native error message, stack은 표시하지 않습니다. 이 문구는
-  이후 mutation이 성공하면 사라집니다.
+  이 화면에서 다음 삭제를 시작할 때 사라지고, 그 삭제가 실패하면 다시 표시됩니다. 다른
+  consumer의 mutation 결과와 자동으로 동기화하는 presentation 정책은 후속 다중-consumer UI
+  범위입니다.
 - **EMPTY** — `저장된 지역이 없습니다.`만 표시합니다. 지역 검색·추가 UI는 후속 범위이며, 이를
   개발용 문구로 사용자에게 노출하지 않습니다.
 - **접근성** — React Native `Pressable`과 의미 있는 `accessibilityRole`/`accessibilityLabel`을
