@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useRouter } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { mobileSavedLocationApplicationStore } from '../locations/mobile-saved-location-application-production';
@@ -25,6 +26,7 @@ function describeSavedLocations(snapshot: SavedLocationApplicationSnapshot): str
 }
 
 export default function HomeScreen() {
+  const router = useRouter();
   const savedLocations = useMobileSavedLocations();
   // Whether the *last* dispatched mutation failed. Kept local to the screen rather than in the
   // store's snapshot: it is presentation state for one generic message, not shared app state.
@@ -45,9 +47,25 @@ export default function HomeScreen() {
     setWriteFailed(!result.ok);
   }
 
+  function handleAddLocation(): void {
+    router.push('/locations');
+  }
+
   return (
     <View style={styles.container}>
       <Text style={styles.text}>{describeSavedLocations(savedLocations)}</Text>
+
+      {savedLocations.status === 'EMPTY' || savedLocations.status === 'READY' ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="지역 추가"
+          disabled={isSaving}
+          onPress={handleAddLocation}
+          style={styles.button}
+        >
+          <Text style={styles.buttonLabel}>지역 추가</Text>
+        </Pressable>
+      ) : null}
 
       {savedLocations.status === 'ERROR' ? (
         <Pressable

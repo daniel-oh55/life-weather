@@ -89,9 +89,20 @@
   `READY`의 저장 지역 목록과 지역별 `삭제` 버튼(`SAVING` 중 비활성화), 저장 실패 시 generic Korean
   문구를 표시합니다(raw 오류 kind·storage key·위치 ID·좌표 미노출). 기존 hydration manager/store,
   one-shot startup, collection/persistence schema와 `isCurrent` 의미는 이 작업에서 바뀌지
-  않았습니다. 반면 지역 검색 데이터·검색/추가 UI: 미구현, 선택 지역 상태: 미구현, reorder UI:
-  미구현, React Context/Provider: 미구현, migration execution: 미구현, 위치 권한: 미구현이고,
-  development client rebuild 및 실제 기기 QA: 미수행입니다)
+  않았습니다. 이어서 **PR #51**에서 공식 KMA 행정구역·예보격자 자료(공공데이터포털 dataset
+  `15084084`, `기상청41_단기예보 조회서비스_오픈API활용가이드_2607.zip`, 공공저작물 출처표시
+  제1유형)를 정적 모바일 카탈로그(`apps/mobile/src/locations/catalog`, 3836 entry)로 정규화하고,
+  provider-neutral 검색(`searchKmaKoreanLocations`)과 candidate 매핑
+  (`createSavedLocationCandidateFromKmaCatalogEntry`), 지역 검색 화면(`apps/mobile/src/app/locations.tsx`),
+  홈 화면 `지역 추가` 진입점을 구현했습니다 — 검색 결과를 선택하면 기존
+  `mobileSavedLocationApplicationStore.add()`를 통해 저장되고 홈 화면 `READY` 목록에 반영되며,
+  중복 추가와 저장 실패는 고정 Korean 문구로만 표시됩니다(raw 오류 kind·행정구역 코드·좌표·격자
+  미노출). id는 생성 단계에서만 계산하는 결정론적 opaque id(`kr_` + SHA-256 앞 24자)이고, 런타임은
+  이미 계산된 id를 읽기만 합니다. 자세한 내용은
+  [kma-korean-location-catalog.md](./kma-korean-location-catalog.md) 참고. 반면 선택 지역 상태:
+  미구현, 선택 지역 삭제 fallback: 미구현, reorder UI: 미구현, React Context/Provider: 미구현,
+  migration execution: 미구현, 위치 권한: 미구현이고, development client rebuild 및 실제 기기
+  QA: 미수행입니다)
 - 디자인 시스템과 주요 화면
 - Android widget
 - AdMob
@@ -113,5 +124,8 @@
   정교한 일러스트/animation·지역 재정렬 등 확장 UX는 1.1 이후입니다. 위젯은 제품 방향에서 삭제된
   것이 아니라 1.1로 이동했고, 필수 보안·개인정보·실기기 검증은 축소하지 않습니다. 자세한 내용은
   [product-scope.md](./product-scope.md) 참고.
+- PR #51의 KMA 대한민국 지역 검색 카탈로그는 공공저작물 출처표시 제1유형을 따릅니다 — 이 출처
+  표시는 향후 앱 설정의 "데이터 출처" 화면에도 노출되어야 하며, 그 설정 화면 자체는 아직
+  구현되지 않았습니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
