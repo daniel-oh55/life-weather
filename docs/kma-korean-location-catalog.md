@@ -35,6 +35,46 @@
 
 다운로드 URL, service key, 로컬 파일 경로는 어디에도 기록하지 않습니다.
 
+### Source TSV line-ending contract
+
+`sourceSha256`은 committed `kma-korean-location-source.tsv`의 **exact byte**에 대한 SHA-256이므로
+line ending도 provenance contract의 일부입니다. 저장소 root의 `.gitattributes`는 이 source TSV
+**한 경로만** `text eol=lf`로 고정합니다 — 저장소 전역 `* text=auto`나 `*.tsv` 전체 규칙은 두지
+않았고, 다른 파일의 EOL 정책은 바꾸지 않습니다. 따라서 Windows에서 `core.autocrlf=true`를 써도
+exact-path 규칙이 우선하므로, **새 clean checkout에서는 이 파일이 LF로 checkout되며 별도의 수동
+변환이 필요하지 않습니다.**
+
+이 규칙이 없으면 `core.autocrlf=true` checkout이 파일을 CRLF로 바꿔 raw-byte SHA-256만 달라지고,
+manifest integrity 테스트가 실패합니다(전수 대조 verifier는 행 끝 `\r`을 제거하므로 그대로
+통과합니다 — 즉 값이 아니라 byte만 어긋납니다).
+
+이 규칙이 추가되기 전에 만든 working tree에는 CRLF checkout이 남아 있을 수 있습니다. 이때는 먼저
+해당 파일에 **사용자 수정이 없는지** 확인한 뒤,
+
+```bash
+git status --short -- \
+  apps/mobile/src/locations/catalog/kma-korean-location-source.tsv
+```
+
+출력이 비어 있으면 그 파일만 index에서 다시 checkout합니다.
+
+```bash
+rm apps/mobile/src/locations/catalog/kma-korean-location-source.tsv
+git checkout-index --force -- \
+  apps/mobile/src/locations/catalog/kma-korean-location-source.tsv
+```
+
+`git checkout-index --force`만 단독으로 실행하면 index의 stat cache가 파일을 "변경 없음"으로
+판단해 **아무것도 다시 쓰지 않고 조용히 끝날 수 있습니다.** 위처럼 파일을 먼저 지우거나(또는
+`touch`로 mtime을 바꾸거나) 새로 clone하면 새 attribute가 실제로 적용됩니다. 다시 쓴 뒤
+`git ls-files --eol <path>`가 `i/lf w/lf attr/text eol=lf`를 보고해야 하며, stat cache 때문에
+`git status`가 잠시 modified로 보이면 같은 경로만 `git add`해 stat 정보를 갱신합니다(내용이
+동일하므로 index blob은 바뀌지 않습니다).
+
+source를 갱신할 때는 **CRLF 변환에 맞춰 `sourceSha256`만 바꾸거나 generated catalog를 다시
+생성해서는 안 됩니다** — 정규화된 TSV는 LF로 유지하고, hash는 그 LF 원본에서 계산합니다. 이
+line-ending 규칙은 source 내용이나 generated catalog를 전혀 바꾸지 않습니다.
+
 ## XLSX → TSV → generated catalog 파이프라인
 
 ```text
