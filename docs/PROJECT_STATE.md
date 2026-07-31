@@ -68,9 +68,11 @@
   `useMobileSavedLocationHydration`)도 구현됐습니다 — store의 exact cached snapshot 참조를 그대로
   반환하고, 안정적인 module-scope subscribe/getSnapshot callback을 client/server 동일하게 쓰며,
   hook의 import·호출만으로는 `hydrate()`나 storage I/O가 없고 pure barrel에서는 export되지
-  않습니다. 반면 hook을 소비하는 화면, React Context/Provider, 상태별 UI, explicit retry UI: 미구현,
-  지역 mutation/save: 미구현, migration execution: 미구현, 위치 권한: 미구현, 지역 관리 UI:
-  미구현이고, development client rebuild 및 실제 기기 QA: 미수행입니다)
+  않습니다. 이 hook을 직접 소비하는 첫 홈 화면(`apps/mobile/src/app/index.tsx`)도 구현됐습니다 —
+  다섯 hydration 상태를 각각 구분되는 최소 읽기 전용 텍스트로 표시하며, hydration 시작·retry나
+  storage API 호출은 하지 않고 hook의 exact snapshot만 분기합니다. 반면 React Context/Provider,
+  explicit retry UI: 미구현, 지역 mutation/save: 미구현, migration execution: 미구현, 위치 권한:
+  미구현, 지역 관리 UI: 미구현이고, development client rebuild 및 실제 기기 QA: 미수행입니다)
 - 디자인 시스템과 주요 화면
 - Android widget
 - AdMob
