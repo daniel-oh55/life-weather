@@ -133,14 +133,27 @@
   consumer(`apps/mobile/src/app/index.tsx`)는 이제 이 hook을 소비해 다섯 상태 문구에 더해 `ERROR`의
   explicit `다시 시도` 버튼, `READY`의 저장 지역 목록과 지역별 `삭제` 버튼(`SAVING` 중 비활성화),
   저장 실패 시의 generic Korean 문구를 표시합니다 — raw 오류 kind·storage key·위치 ID·좌표는 어디에도
-  노출하지 않습니다. 지역 검색 데이터와 검색·추가 UI, 선택 지역 상태, reorder UI, migration 실행,
-  위치 권한·현재 위치 조회, 실제 weather 호출과 development client 재빌드·실제 기기 QA는 여전히 후속
-  PR 범위입니다. 자세한 내용은
+  노출하지 않습니다. **PR #51**에서는 이 위에 공식 KMA 대한민국 행정구역·예보격자 자료를
+  정규화한 정적 검색 카탈로그(`src/locations/catalog`, `kmaKoreanLocationCatalog`, 3836
+  entry)와 그 위의 provider-neutral 검색(`searchKmaKoreanLocations`)·candidate 매핑
+  (`createSavedLocationCandidateFromKmaCatalogEntry`)을 추가했습니다 — 카탈로그는 모듈 로드 시
+  한 번 strict Zod schema로 전체 검증되고 deep-freeze되며(잘못 생성된 데이터는 즉시 throw로
+  fail-closed), 검색은 사용자 입력으로는 절대 throw하지 않습니다. 이 카탈로그를 소비하는 지역
+  검색 화면(`apps/mobile/src/app/locations.tsx`)과 홈 화면의 `지역 추가` 진입점도 추가했습니다 —
+  검색 결과를 선택하면 candidate로 변환된 뒤 기존 `mobileSavedLocationApplicationStore.add()`를
+  통해 저장되고, 중복·저장 실패는 고정 Korean 문구로만 표시됩니다. id는 생성 단계에서만
+  Node `crypto`로 계산하는 결정론적 opaque id이며 원본 행정구역 코드는 화면이나
+  `MobileSavedLocationCandidate`에 노출되지 않습니다. 이 작업은 `apps/mobile`의 기존 의존 방향과
+  saved-location collection/persistence/hydration/application store의 공개 계약을 바꾸지
+  않았고, 실제 KMA 예보 API는 호출하지 않았으며, 새 dependency도 추가하지 않았습니다. 반면 선택
+  지역 상태, reorder UI, migration 실행, 위치 권한·현재 위치 조회, 실제 weather 호출과
+  development client 재빌드·실제 기기 QA는 여전히 후속 PR 범위입니다. 자세한 내용은
   [mobile-saved-location.md](./mobile-saved-location.md),
   [mobile-saved-location-collection.md](./mobile-saved-location-collection.md),
   [mobile-saved-location-persistence.md](./mobile-saved-location-persistence.md),
-  [mobile-saved-location-hydration.md](./mobile-saved-location-hydration.md)와
-  [mobile-saved-location-application.md](./mobile-saved-location-application.md) 참고.
+  [mobile-saved-location-hydration.md](./mobile-saved-location-hydration.md),
+  [mobile-saved-location-application.md](./mobile-saved-location-application.md)와
+  [kma-korean-location-catalog.md](./kma-korean-location-catalog.md) 참고.
 - `apps/api` — Hono 기반 백엔드. 외부 공공데이터 API 호출, API 키 보관, 응답 정규화를 담당할
   위치입니다. **현재 상태**: `GET /health`에 더해, PR #4에서 기상청(KMA) **원본 응답 경계**
   (`src/providers/kma`)를 구현했습니다 — 단기·초단기예보 원본 JSON의 Zod 런타임 검증, 성공·
@@ -473,6 +486,15 @@ module을 import하지 않으므로 pure barrel export를 유지합니다. produ
 전이적으로 가지므로 pure barrel에서는 export되지 않습니다. 홈 화면
 (`apps/mobile/src/app/index.tsx`)은 기존 `react`·`react-native` 의존만 사용하며 이 hook과
 production store를 직접 import합니다(pure barrel `./index`를 거치지 않음).
+
+**PR #51**의 KMA 대한민국 지역 검색 카탈로그(`src/locations/catalog`)와 그 위의 검색·candidate
+매핑도 **신규 dependency를 추가하지 않습니다.** 카탈로그 runtime 경계는 이미 있는 `zod`(direct
+dependency)만 쓰고, 검색·candidate 매핑은 그 카탈로그 타입과 기존 `mobile-saved-location-collection`의
+`mobileSavedLocationCandidate`만 import하므로(`locations → locations`) 새 package나 새
+package-level 의존 방향을 만들지 않습니다. 지역 검색 화면(`apps/mobile/src/app/locations.tsx`)은
+기존 `react`·`react-native`·`expo-router`(이미 `apps/mobile/src/app/_layout.tsx`가 쓰는 동일
+package) 의존만 사용합니다. 이 카탈로그와 검색·candidate 매핑은 native module을 import하지
+않으므로 pure barrel(`src/locations/index.ts`)에서 export됩니다.
 
 `weather-core`는 런타임에 zod에도 contracts에도 의존하지 않습니다. PR #3에서 상태 정규화의
 반환 타입이 contracts의 `WeatherCondition`에 할당 가능한지를 **컴파일 타임 타입 테스트**로만

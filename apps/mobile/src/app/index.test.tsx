@@ -63,6 +63,20 @@ vi.mock('react-native', () => ({
 }));
 
 // ---------------------------------------------------------------------------
+// `expo-router`'s `useRouter` is replaced with a fake returning call-recording `push`/`back`
+// mocks, so navigation can be asserted without a real navigation container.
+// ---------------------------------------------------------------------------
+
+const routerMock = vi.hoisted(() => ({
+  push: vi.fn(),
+  back: vi.fn(),
+}));
+
+vi.mock('expo-router', () => ({
+  useRouter: () => routerMock,
+}));
+
+// ---------------------------------------------------------------------------
 // Synthetic fixtures and element-tree helpers.
 // ---------------------------------------------------------------------------
 
@@ -249,19 +263,23 @@ describe('read-only states', () => {
     await hydrating;
   });
 
-  it('renders the empty copy with no controls', async () => {
+  it('renders the empty copy with only the "지역 추가" entry point', async () => {
     const render = await loadScreen();
     const { mobileSavedLocationHydrationStore } = await import(
       '../locations/mobile-saved-location-hydration-production'
     );
 
     await mobileSavedLocationHydrationStore.hydrate();
+    const element = render();
 
-    expect(texts(render())).toEqual(['저장된 지역이 없습니다.']);
-    expect(pressables(render())).toHaveLength(0);
+    expect(texts(element)).toEqual(['저장된 지역이 없습니다.', '지역 추가']);
+    expect(pressables(element).map((pressable) => pressable.props.accessibilityLabel)).toEqual([
+      '지역 추가',
+    ]);
+    expect(pressables(element)[0]?.props.disabled).toBe(false);
   });
 
-  it('renders the ready copy, one row per saved location, and a delete control for each', async () => {
+  it('renders the ready copy, one row per saved location, a delete control for each, and the "지역 추가" entry point', async () => {
     asyncStorageMock.getItem.mockResolvedValue(storedEnvelope('a', 'b', 'c'));
     const render = await loadScreen();
     const { mobileSavedLocationHydrationStore } = await import(
@@ -273,6 +291,7 @@ describe('read-only states', () => {
 
     expect(texts(element)).toEqual([
       '저장된 지역이 준비되었습니다.\n저장 지역 수: 3',
+      '지역 추가',
       'Synthetic a',
       '삭제',
       'Synthetic b',
@@ -282,7 +301,7 @@ describe('read-only states', () => {
     ]);
     expect(
       pressables(element).map((pressable) => pressable.props.accessibilityLabel),
-    ).toEqual(['Synthetic a 삭제', 'Synthetic b 삭제', 'Synthetic c 삭제']);
+    ).toEqual(['지역 추가', 'Synthetic a 삭제', 'Synthetic b 삭제', 'Synthetic c 삭제']);
     expect(pressables(element).every((pressable) => pressable.props.disabled === false)).toBe(true);
   });
 
@@ -326,6 +345,55 @@ describe('read-only states', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 1b — the "지역 추가" entry point navigates to the search screen and performs no search/storage
+// I/O of its own; it does not appear, and is not reachable, outside EMPTY/READY.
+// ---------------------------------------------------------------------------
+
+describe('"지역 추가" entry point', () => {
+  it('navigates to /locations when pressed from EMPTY', async () => {
+    const render = await loadScreen();
+    const { mobileSavedLocationHydrationStore } = await import(
+      '../locations/mobile-saved-location-hydration-production'
+    );
+
+    await mobileSavedLocationHydrationStore.hydrate();
+    press(pressableByLabel(render(), '지역 추가'));
+
+    expect(routerMock.push).toHaveBeenCalledTimes(1);
+    expect(routerMock.push).toHaveBeenCalledWith('/locations');
+    expect(routerMock.back).toHaveBeenCalledTimes(0);
+  });
+
+  it('navigates to /locations when pressed from READY, without touching storage', async () => {
+    asyncStorageMock.getItem.mockResolvedValue(storedEnvelope('a'));
+    const render = await loadScreen();
+    const { mobileSavedLocationHydrationStore } = await import(
+      '../locations/mobile-saved-location-hydration-production'
+    );
+
+    await mobileSavedLocationHydrationStore.hydrate();
+    press(pressableByLabel(render(), '지역 추가'));
+
+    expect(routerMock.push).toHaveBeenCalledTimes(1);
+    expect(routerMock.push).toHaveBeenCalledWith('/locations');
+    expect(asyncStorageMock.setItem).toHaveBeenCalledTimes(0);
+  });
+
+  it('does not appear in NOT_STARTED, LOADING, or ERROR', async () => {
+    asyncStorageMock.getItem.mockRejectedValue(new Error('synthetic storage failure'));
+    const render = await loadScreen();
+
+    expect(() => pressableByLabel(render(), '지역 추가')).toThrow();
+
+    const { mobileSavedLocationHydrationStore } = await import(
+      '../locations/mobile-saved-location-hydration-production'
+    );
+    await mobileSavedLocationHydrationStore.hydrate();
+    expect(() => pressableByLabel(render(), '지역 추가')).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 2 — explicit retry from ERROR.
 // ---------------------------------------------------------------------------
 
@@ -347,6 +415,7 @@ describe('retry', () => {
 
     expect(texts(render())).toEqual([
       '저장된 지역이 준비되었습니다.\n저장 지역 수: 1',
+      '지역 추가',
       'Synthetic a',
       '삭제',
     ]);
@@ -409,6 +478,7 @@ describe('delete', () => {
 
     expect(texts(render())).toEqual([
       '저장된 지역이 준비되었습니다.\n저장 지역 수: 2',
+      '지역 추가',
       'Synthetic a',
       '삭제',
       'Synthetic c',
@@ -422,7 +492,7 @@ describe('delete', () => {
     });
   });
 
-  it('shows the empty state after the last saved location is deleted, without removeItem', async () => {
+  it('shows the empty state (with only "지역 추가") after the last saved location is deleted, without removeItem', async () => {
     asyncStorageMock.getItem.mockResolvedValue(storedEnvelope('a'));
     const render = await loadScreen();
     const { mobileSavedLocationHydrationStore } = await import(
@@ -433,8 +503,9 @@ describe('delete', () => {
     press(pressableByLabel(render(), 'Synthetic a 삭제'));
     await flush();
 
-    expect(texts(render())).toEqual(['저장된 지역이 없습니다.']);
-    expect(pressables(render())).toHaveLength(0);
+    expect(texts(render())).toEqual(['저장된 지역이 없습니다.', '지역 추가']);
+    expect(pressables(render())).toHaveLength(1);
+    expect(pressables(render())[0]?.props.accessibilityLabel).toBe('지역 추가');
     expect(asyncStorageMock.setItem).toHaveBeenCalledTimes(1);
     expect(asyncStorageMock.removeItem).toHaveBeenCalledTimes(0);
   });
@@ -458,6 +529,9 @@ describe('delete', () => {
     press(pressableByLabel(render(), 'Synthetic a 삭제'));
 
     const during = render();
+    // Every control — including the "지역 추가" entry point, not just the delete buttons — is
+    // disabled while a write is in flight.
+    expect(pressables(during)).toHaveLength(3);
     expect(pressables(during).every((pressable) => pressable.props.disabled === true)).toBe(true);
     // No optimistic update: both rows are still shown while the write is in flight.
     expect(texts(during)).toContain('저장된 지역이 준비되었습니다.\n저장 지역 수: 2');
@@ -488,6 +562,7 @@ describe('delete', () => {
 
     expect(texts(element)).toEqual([
       '저장된 지역이 준비되었습니다.\n저장 지역 수: 2',
+      '지역 추가',
       'Synthetic a',
       '삭제',
       'Synthetic b',
@@ -521,6 +596,7 @@ describe('delete', () => {
 
     expect(texts(render())).toEqual([
       '저장된 지역이 준비되었습니다.\n저장 지역 수: 1',
+      '지역 추가',
       'Synthetic b',
       '삭제',
     ]);

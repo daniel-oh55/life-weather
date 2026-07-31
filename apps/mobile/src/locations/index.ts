@@ -26,6 +26,14 @@
  * add / remove that publish a new collection only after `persistence.save()` succeeds. All of these
  * layers stay provider-neutral and are exported from this same pure barrel. React hooks/context,
  * screen wiring, and location permission remain out of scope for this module.
+ *
+ * Alongside the saved-location boundary, this barrel also exports the **KMA Korean location
+ * catalog** (`./catalog/kma-korean-location-catalog`, generated from an official KMA reference
+ * dataset — see `docs/kma-korean-location-catalog.md`), its provenance manifest, a substring
+ * search over that static catalog ({@link searchKmaKoreanLocations}), and the mapping from a
+ * catalog entry to a {@link MobileSavedLocationCandidate}
+ * ({@link createSavedLocationCandidateFromKmaCatalogEntry}). These stay provider-neutral too — no
+ * network or storage I/O, no UI.
  */
 
 export {
@@ -91,3 +99,28 @@ export {
   type SavedLocationApplicationStoreListener,
   type SavedLocationApplicationWriteStatus,
 } from './mobile-saved-location-application-store';
+
+export {
+  kmaKoreanLocationCatalog,
+  kmaKoreanLocationCatalogEntry,
+  kmaKoreanLocationKmaGrid,
+  type KmaKoreanLocationCatalogEntry,
+} from './catalog/kma-korean-location-catalog';
+
+export {
+  kmaKoreanLocationSourceManifest,
+  type KmaKoreanLocationSourceManifest,
+} from './catalog/kma-korean-location-source-manifest';
+
+export {
+  searchKmaKoreanLocations,
+  type KmaKoreanLocationSearchErrorKind,
+  type KmaKoreanLocationSearchOptions,
+  type KmaKoreanLocationSearchResult,
+} from './kma-korean-location-search';
+
+export {
+  createSavedLocationCandidateFromKmaCatalogEntry,
+  type SavedLocationCandidateFromCatalogErrorKind,
+  type SavedLocationCandidateFromCatalogResult,
+} from './kma-korean-location-candidate';
