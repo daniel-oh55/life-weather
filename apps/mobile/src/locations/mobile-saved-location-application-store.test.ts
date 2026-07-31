@@ -466,6 +466,143 @@ describe('initializeSelectedLocation', () => {
     expect(expectReady(store.getSnapshot()).selectedLocationId).toBe('a');
     expect(selected.loadMock).toHaveBeenCalledTimes(2);
   });
+
+  it('gives a reentrant call from a SELECTION_LOADING listener the exact same in-flight promise, and starts no second read', async () => {
+    // The first cycle fails synchronously so a retry (a real ERROR -> SELECTION_LOADING transition)
+    // is what the listener below observes and reenters — see the module documentation's
+    // single-flight contract. A third, distinct deferred load exists purely as a negative control:
+    // if the fix regressed to registering the tracker after `republish()`, the reentrant call would
+    // start a second cycle and reach this third mock.
+    let loadCallCount = 0;
+    const retryDeferred = deferred<SelectedLocationPersistenceLoadResult>();
+    const regressionDeferred = deferred<SelectedLocationPersistenceLoadResult>();
+    let regressionDeferredUsed = false;
+    const { persistence } = recordingPersistence({
+      load: async () => ({ ok: true, locations: [record('a', 0)] }),
+    });
+    const selected = recordingSelectedPersistence({
+      load: () => {
+        loadCallCount += 1;
+        if (loadCallCount === 1) {
+          return Promise.resolve({ ok: false, error: { kind: 'STORAGE_READ_FAILED' } });
+        }
+        if (loadCallCount === 2) {
+          return retryDeferred.promise;
+        }
+        regressionDeferredUsed = true;
+        return regressionDeferred.promise;
+      },
+    });
+    const { store, hydrationStore } = buildStore(persistence, selected.persistence);
+    await hydrationStore.hydrate();
+    await store.initializeSelectedLocation();
+    expect(store.getSnapshot().status).toBe('ERROR');
+    expect(loadCallCount).toBe(1);
+
+    let reentrantPromise: Promise<void> | undefined;
+    let terminalNotifications = 0;
+    store.subscribe(() => {
+      const snapshot = store.getSnapshot();
+      if (snapshot.status === 'SELECTION_LOADING' && reentrantPromise === undefined) {
+        reentrantPromise = store.initializeSelectedLocation();
+      }
+      if (snapshot.status === 'READY') {
+        terminalNotifications += 1;
+      }
+    });
+
+    const firstPromise = store.initializeSelectedLocation();
+
+    // The reentrant call happened synchronously, inside `republish()`, before `firstPromise` was
+    // even assigned here — so by construction it can only be observing the tracker this same call
+    // registered.
+    expect(reentrantPromise).toBe(firstPromise);
+    expect(loadCallCount).toBe(2);
+    expect(regressionDeferredUsed).toBe(false);
+
+    retryDeferred.resolve({ ok: true, selectedLocationId: 'a' });
+    await firstPromise;
+
+    expect(loadCallCount).toBe(2);
+    expect(regressionDeferredUsed).toBe(false);
+    expect(terminalNotifications).toBe(1);
+    expect(expectReady(store.getSnapshot()).selectedLocationId).toBe('a');
+  });
+
+  it('recovers after a real synchronous throw from load(), starting a fresh cycle on retry', async () => {
+    const { persistence } = recordingPersistence({
+      load: async () => ({ ok: true, locations: [record('a', 0)] }),
+    });
+    const selected = recordingSelectedPersistence();
+    // A genuine synchronous throw, not `async () => { throw ... }` (which is a rejected promise) —
+    // the two are handled by different code paths in the old, buggy implementation.
+    selected.loadMock.mockImplementationOnce(() => {
+      throw new Error(SECRET_MARKER);
+    });
+    const { store, hydrationStore } = buildStore(persistence, selected.persistence);
+    await hydrationStore.hydrate();
+
+    const firstPromise = store.initializeSelectedLocation();
+    await expect(firstPromise).resolves.toBeUndefined();
+    expect(store.getSnapshot()).toEqual({
+      status: 'ERROR',
+      error: { scope: 'SELECTED_LOCATION', kind: 'STORAGE_READ_FAILED' },
+      writeStatus: 'IDLE',
+    });
+    expect(JSON.stringify(store.getSnapshot())).not.toContain(SECRET_MARKER);
+    expect(selected.loadMock).toHaveBeenCalledTimes(1);
+
+    selected.loadMock.mockImplementationOnce(async () => ({ ok: true, selectedLocationId: 'a' }));
+
+    const secondPromise = store.initializeSelectedLocation();
+    expect(secondPromise).not.toBe(firstPromise);
+
+    await expect(secondPromise).resolves.toBeUndefined();
+    expect(selected.loadMock).toHaveBeenCalledTimes(2);
+    expect(expectReady(store.getSnapshot()).selectedLocationId).toBe('a');
+  });
+
+  it('lets a listener retry immediately from inside the ERROR notification, without the settling cycle clobbering the new tracker', async () => {
+    const { persistence } = recordingPersistence({
+      load: async () => ({ ok: true, locations: [record('a', 0)] }),
+    });
+    const selected = recordingSelectedPersistence();
+    selected.loadMock.mockImplementationOnce(() => {
+      throw new Error(SECRET_MARKER);
+    });
+    const { store, hydrationStore } = buildStore(persistence, selected.persistence);
+    await hydrationStore.hydrate();
+
+    let retryPromise: Promise<void> | undefined;
+    store.subscribe(() => {
+      const snapshot = store.getSnapshot();
+      if (
+        snapshot.status === 'ERROR' &&
+        snapshot.error.scope === 'SELECTED_LOCATION' &&
+        retryPromise === undefined
+      ) {
+        retryPromise = store.initializeSelectedLocation();
+      }
+    });
+
+    const firstPromise = store.initializeSelectedLocation();
+    await expect(firstPromise).resolves.toBeUndefined();
+
+    // The retry was started synchronously from inside the terminal ERROR notification (before the
+    // first cycle's `settleSelectedInitialization` even called `resolveCycle()`), so its own read
+    // has already happened even though `retryPromise` has not settled yet.
+    expect(retryPromise).toBeDefined();
+    expect(retryPromise).not.toBe(firstPromise);
+    expect(selected.loadMock).toHaveBeenCalledTimes(2);
+
+    await expect(retryPromise).resolves.toBeUndefined();
+    expect(expectReady(store.getSnapshot()).selectedLocationId).toBe('a');
+
+    // A later call must join the recovered READY state (or the retry's tracker, had it still been
+    // in flight) rather than starting a third read.
+    await store.initializeSelectedLocation();
+    expect(selected.loadMock).toHaveBeenCalledTimes(2);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -28,7 +28,12 @@ beforeEach(() => {
   vi.resetAllMocks();
   startSavedHydrationMock.mockResolvedValue(undefined);
   initializeSelectedLocationMock.mockResolvedValue(undefined);
-  getSnapshotMock.mockReturnValue({ status: 'READY', locations: [], selectedLocationId: 'a', writeStatus: 'IDLE' });
+  // The real application-store snapshot immediately after saved-location hydration succeeds and
+  // before selected-location initialization has run is always SELECTION_LOADING — never EMPTY or
+  // READY, both of which require selected-location initialization to have already finished (and
+  // READY additionally requires a `selectedLocationId` present in a non-empty `locations`, which
+  // `{ status: 'READY', locations: [], selectedLocationId: 'a' }` violates).
+  getSnapshotMock.mockReturnValue({ status: 'SELECTION_LOADING', writeStatus: 'IDLE' });
 });
 
 afterEach(() => {
@@ -59,7 +64,8 @@ describe('sequencing', () => {
       hydrationResolve = resolve;
     });
     startSavedHydrationMock.mockReturnValue(hydrationPending);
-    getSnapshotMock.mockReturnValue({ status: 'EMPTY', selectedLocationId: null, writeStatus: 'IDLE' });
+    // See the beforeEach comment: this is the actual reachable snapshot at this point, not EMPTY.
+    getSnapshotMock.mockReturnValue({ status: 'SELECTION_LOADING', writeStatus: 'IDLE' });
 
     const { startMobileLocationApplicationOnce } = await import(
       './mobile-location-application-startup'
@@ -75,6 +81,9 @@ describe('sequencing', () => {
     hydrationResolve?.();
     await started;
 
+    // A coordinator that incorrectly gated the call on `status === 'EMPTY' || status === 'READY'`
+    // instead of `status !== 'ERROR'` would never call this from a SELECTION_LOADING snapshot, so
+    // this assertion also serves as the negative control for that miscoding.
     expect(initializeSelectedLocationMock).toHaveBeenCalledTimes(1);
   });
 
@@ -97,9 +106,30 @@ describe('sequencing', () => {
   });
 
   it('starts selected-location initialization when saved hydration settles into READY', async () => {
+    // A READY snapshot is never actually observable at this exact call site in production (selected
+    // initialization has not run yet, so it can only be SELECTION_LOADING or ERROR) — this fixture
+    // exists purely to prove the coordinator's real `!== 'ERROR'` gate, not a narrower
+    // `'EMPTY' | 'READY'` one, so it still calls through for any other status a future refactor might
+    // produce here. Unlike the removed fixture, `selectedLocationId` names a record actually present
+    // in `locations`, so the snapshot itself does not violate the store's own READY invariant.
     getSnapshotMock.mockReturnValue({
       status: 'READY',
-      locations: [],
+      locations: [
+        {
+          id: 'a',
+          displayName: 'Synthetic a',
+          countryCode: 'KR',
+          adminArea1: 'Synthetic Province',
+          adminArea2: 'Synthetic District',
+          adminArea3: null,
+          latitude: 37.5,
+          longitude: 127.0,
+          timezone: 'Asia/Seoul',
+          kmaGrid: null,
+          isCurrent: false,
+          sortOrder: 0,
+        },
+      ],
       selectedLocationId: 'a',
       writeStatus: 'IDLE',
     });

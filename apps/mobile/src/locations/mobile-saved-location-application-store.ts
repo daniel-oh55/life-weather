@@ -592,20 +592,51 @@ export function createSavedLocationApplicationStore({
     return saved.ok ? null : 'STORAGE_WRITE_FAILED';
   }
 
-  async function runSelectedInitialization(): Promise<void> {
+  /**
+   * Settle one selected-location initialization cycle, guarded by identity against a stale tracker
+   * clear. `cyclePromise` is the exact promise `selectedInitInFlight` was set to at the start of this
+   * cycle: if a later cycle has since replaced the tracker (impossible in practice today, since
+   * nothing clears `selectedInitInFlight` before this runs, but checked defensively so a future
+   * concurrent cycle can never be clobbered), this cycle's terminal state and notification are
+   * skipped — only the previously-registered tracker may be cleared here. The tracker is cleared
+   * *before* the terminal `republish()`, so a listener observing that notification which immediately
+   * calls `initializeSelectedLocation()` again starts a fresh cycle rather than rejoining this one.
+   * `resolveCycle()` — which settles the promise returned to the original caller — always runs last,
+   * after the terminal notification, and never rejects.
+   */
+  function settleSelectedInitialization(
+    cyclePromise: Promise<void>,
+    nextState: SelectedLocationInternalState,
+    resolveCycle: () => void,
+  ): void {
+    if (selectedInitInFlight === cyclePromise) {
+      selectedState = nextState;
+      selectedInitInFlight = null;
+      republish();
+    }
+    resolveCycle();
+  }
+
+  async function runSelectedInitializationCycle(
+    cyclePromise: Promise<void>,
+    resolveCycle: () => void,
+  ): Promise<void> {
     let loadResult: SelectedLocationPersistenceLoadResult;
     try {
       loadResult = await selectedLocationPersistence.load();
     } catch {
       // The persistence boundary is contractually throw-free; this guard only keeps a hostile or
-      // broken injected implementation from producing an unhandled rejection here.
+      // broken injected implementation from producing an unhandled rejection here — and covers both
+      // a synchronous throw from `load()` and a rejected promise it returns.
       loadResult = { ok: false, error: { kind: 'STORAGE_READ_FAILED' } };
     }
 
     if (!loadResult.ok) {
-      selectedState = { status: 'ERROR', kind: loadResult.error.kind };
-      selectedInitInFlight = null;
-      republish();
+      settleSelectedInitialization(
+        cyclePromise,
+        { status: 'ERROR', kind: loadResult.error.kind },
+        resolveCycle,
+      );
       return;
     }
 
@@ -613,9 +644,11 @@ export function createSavedLocationApplicationStore({
     // SELECTION_LOADING until this settles, and every mutation requires EMPTY/READY, so no mutation
     // can run concurrently with this read.
     const resolved = resolveSelectedLocationId(committed ?? [], loadResult.selectedLocationId);
-    selectedState = { status: 'READY', selectedLocationId: resolved };
-    selectedInitInFlight = null;
-    republish();
+    settleSelectedInitialization(
+      cyclePromise,
+      { status: 'READY', selectedLocationId: resolved },
+      resolveCycle,
+    );
   }
 
   function initializeSelectedLocation(): Promise<void> {
@@ -631,11 +664,22 @@ export function createSavedLocationApplicationStore({
       return Promise.resolve();
     }
 
+    let resolveCycle: () => void = () => {};
+    const cyclePromise = new Promise<void>((resolve) => {
+      resolveCycle = resolve;
+    });
+
+    // The tracker must be recorded *before* `republish()`: that call notifies listeners
+    // synchronously, and a listener that reentrantly calls `initializeSelectedLocation()` from within
+    // that notification must observe an already-registered in-flight cycle rather than starting a
+    // second one.
+    selectedInitInFlight = cyclePromise;
     selectedState = { status: 'LOADING' };
     republish();
-    const promise = runSelectedInitialization();
-    selectedInitInFlight = promise;
-    return promise;
+
+    void runSelectedInitializationCycle(cyclePromise, resolveCycle);
+
+    return cyclePromise;
   }
 
   async function retryInitialization(): Promise<void> {
