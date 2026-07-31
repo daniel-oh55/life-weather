@@ -34,6 +34,18 @@
  * catalog entry to a {@link MobileSavedLocationCandidate}
  * ({@link createSavedLocationCandidateFromKmaCatalogEntry}). These stay provider-neutral too — no
  * network or storage I/O, no UI.
+ *
+ * This barrel also exports the **selected-location persistence** boundary
+ * ({@link ./mobile-selected-location-persistence}) — a separate versioned V1 envelope, under a
+ * separate stable key, for the id of the saved location the user is currently viewing
+ * (`selectedLocationId`). This is a distinct concept from a saved location's `isCurrent` flag (the
+ * device's real GPS-derived current-location record) and the two are never combined. The
+ * coordination of this selection against the saved-location collection — resolution/fallback,
+ * `select()`, and the cross-key write ordering for the first add and a selected removal — lives in
+ * the existing application store ({@link ./mobile-saved-location-application-store}), not a new
+ * module; see `docs/mobile-selected-location.md`. The concrete AsyncStorage binding for this
+ * persistence (`./mobile-selected-location-async-storage`) follows the same pure/native barrel
+ * split as the saved-location binding and is not exported here.
  */
 
 export {
@@ -91,7 +103,9 @@ export {
 
 export {
   createSavedLocationApplicationStore,
+  type SavedLocationApplicationErrorInfo,
   type SavedLocationApplicationErrorKind,
+  type SavedLocationApplicationErrorScope,
   type SavedLocationApplicationMutationResult,
   type SavedLocationApplicationSnapshot,
   type SavedLocationApplicationStore,
@@ -99,6 +113,23 @@ export {
   type SavedLocationApplicationStoreListener,
   type SavedLocationApplicationWriteStatus,
 } from './mobile-saved-location-application-store';
+
+export {
+  SELECTED_LOCATION_PERSISTENCE_VERSION,
+  SELECTED_LOCATION_PERSISTENCE_KEY,
+  mobileSelectedLocationPersistenceEnvelopeV1,
+  encodeSelectedLocationId,
+  decodeSelectedLocationId,
+  createSelectedLocationPersistence,
+  type MobileSelectedLocationPersistenceEnvelopeV1,
+  type SelectedLocationKeyValueStorage,
+  type SelectedLocationPersistenceErrorKind,
+  type SelectedLocationPersistenceEncodeResult,
+  type SelectedLocationPersistenceDecodeResult,
+  type SelectedLocationPersistenceLoadResult,
+  type SelectedLocationPersistenceSaveResult,
+  type SelectedLocationPersistence,
+} from './mobile-selected-location-persistence';
 
 export {
   kmaKoreanLocationCatalog,

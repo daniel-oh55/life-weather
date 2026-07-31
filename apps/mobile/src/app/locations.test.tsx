@@ -227,7 +227,11 @@ async function hydratedRender(): Promise<() => unknown> {
   const { mobileSavedLocationHydrationStore } = await import(
     '../locations/mobile-saved-location-hydration-production'
   );
+  const { mobileSavedLocationApplicationStore } = await import(
+    '../locations/mobile-saved-location-application-production'
+  );
   await mobileSavedLocationHydrationStore.hydrate();
+  await mobileSavedLocationApplicationStore.initializeSelectedLocation();
   return render;
 }
 
@@ -377,14 +381,21 @@ describe('add', () => {
     const { mobileSavedLocationApplicationStore } = await import(
       '../locations/mobile-saved-location-application-production'
     );
+    const { SAVED_LOCATION_PERSISTENCE_KEY } = await import('../locations');
 
     changeText(textInput(render()), '강남구');
     press(pressableByLabel(render(), '서울특별시 강남구 추가'));
     await flush();
 
-    expect(asyncStorageMock.setItem).toHaveBeenCalledTimes(1);
-    const [, serialized] = asyncStorageMock.setItem.mock.calls[0] as [string, string];
-    const saved = JSON.parse(serialized) as { locations: { displayName: string }[] };
+    // Adding the first location into an empty collection also writes the selected-location key
+    // (this is the first add — it becomes the selection), before the saved-location key.
+    expect(asyncStorageMock.setItem).toHaveBeenCalledTimes(2);
+    const calls = asyncStorageMock.setItem.mock.calls as [string, string][];
+    const collectionCall = calls.find(([key]) => key === SAVED_LOCATION_PERSISTENCE_KEY);
+    if (collectionCall === undefined) {
+      throw new Error('expected a saved-location write');
+    }
+    const saved = JSON.parse(collectionCall[1]) as { locations: { displayName: string }[] };
     expect(saved.locations).toHaveLength(1);
     expect(saved.locations[0]?.displayName).toBe('강남구');
 

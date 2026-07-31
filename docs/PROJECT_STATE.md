@@ -99,10 +99,32 @@
   중복 추가와 저장 실패는 고정 Korean 문구로만 표시됩니다(raw 오류 kind·행정구역 코드·좌표·격자
   미노출). id는 생성 단계에서만 계산하는 결정론적 opaque id(`kr_` + SHA-256 앞 24자)이고, 런타임은
   이미 계산된 id를 읽기만 합니다. 자세한 내용은
-  [kma-korean-location-catalog.md](./kma-korean-location-catalog.md) 참고. 반면 선택 지역 상태:
-  미구현, 선택 지역 삭제 fallback: 미구현, reorder UI: 미구현, React Context/Provider: 미구현,
-  migration execution: 미구현, 위치 권한: 미구현이고, development client rebuild 및 실제 기기
-  QA: 미수행입니다)
+  [kma-korean-location-catalog.md](./kma-korean-location-catalog.md) 참고. 이어서 **PR #52**에서
+  사용자가 현재 조회 중인 저장 지역을 나타내는 `selectedLocationId`를 별도로 저장·복원하는 **선택
+  지역 상태**를 구현했습니다 — `isCurrent`(기기의 실제 GPS 현재 위치 record 여부)와는 절대 결합하지
+  않는 별도 개념으로, 분리된 storage key(`@life-weather/mobile/selected-location`)와 독립된
+  versioned V1 envelope(`{ version: 1, selectedLocationId }`, id schema는 기존 saved-location id
+  schema를 재사용), provider-neutral codec·load/save 경계(`mobile-selected-location-persistence.ts`),
+  그 위의 concrete AsyncStorage binding(`mobile-selected-location-async-storage.ts`,
+  `getItem`/`setItem` 두 메서드만 위임, pure barrel 미export)으로 구성됩니다. 이 선택 상태의 조정은
+  새 module이 아니라 기존 application store(`mobile-saved-location-application-store.ts`)에 추가돼
+  `EMPTY`/`READY` snapshot에 항상 검증된 `selectedLocationId`(EMPTY는 항상 `null`, READY는 항상
+  collection에 실존하는 non-empty id)를 더하고, saved hydration은 끝났지만 선택 preference가 아직
+  로딩 중인 새 `SELECTION_LOADING` 상태와 `ERROR`에 scope(`SAVED_LOCATIONS`/`SELECTED_LOCATION`)를
+  추가합니다. 저장된 preference가 없거나 stale하면 첫(`sortOrder === 0`) 저장 지역으로 자동
+  fallback하되 그 fallback을 자동으로 다시 쓰지는 않고, 첫 지역 추가는 자동으로 선택되며(selected
+  persistence write 후 collection write, 이 순서), 선택된 지역을 삭제하면 삭제 전 index 기준의
+  fallback(같은 index → 마지막 → null)이 같은 순서로 저장됩니다. `select()`/`add()`/`remove()`는
+  하나의 `writeStatus` write lock을 공유합니다. 앱 시작은 기존 저장 지역 hydration one-shot
+  startup(`mobile-saved-location-hydration-startup.ts`, 계약 무변경)을 감싸는 새 app-level
+  orchestrator(`mobile-location-application-startup.ts`,
+  `startMobileLocationApplicationOnce`)가 저장 지역 hydration 성공 후에만 선택 초기화를 시작하도록
+  순서를 정하고, 홈 화면은 통합 `retryInitialization()`으로 두 실패 scope 모두를 재시도합니다.
+  홈 화면(`apps/mobile/src/app/index.tsx`)은 각 저장 지역 행에 `선택됨`(비활성)/`선택` 컨트롤을
+  추가했습니다. 자세한 내용은 [mobile-selected-location.md](./mobile-selected-location.md) 참고.
+  반면 선택 지역 삭제 fallback과 첫 지역 자동 선택은 이제 구현됐지만, reorder UI: 미구현, React
+  Context/Provider: 미구현, migration execution: 미구현, 위치 권한: 미구현, 실제 weather API
+  연결: 미구현이고, development client rebuild 및 실제 기기 QA: 미수행입니다)
 - 디자인 시스템과 주요 화면
 - Android widget
 - AdMob
@@ -127,5 +149,8 @@
 - PR #51의 KMA 대한민국 지역 검색 카탈로그는 공공저작물 출처표시 제1유형을 따릅니다 — 이 출처
   표시는 향후 앱 설정의 "데이터 출처" 화면에도 노출되어야 하며, 그 설정 화면 자체는 아직
   구현되지 않았습니다.
+- PR #52는 선택 지역 상태(`selectedLocationId`)의 저장·복원·fallback만 구현했습니다. 다음은 아직
+  구현되지 않았습니다: 선택 지역을 실제 weather API client에 연결, mobile API base URL production
+  configuration, request loading/error/stale lifecycle, 실제 Android QA.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
