@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ---------------------------------------------------------------------------
 // The native AsyncStorage module is replaced with an in-memory, call-recording mock so the real
-// persistence / hydration-manager / production-composition / hook code can run unmodified against
-// it, exactly as `use-mobile-saved-location-hydration.test.ts` does.
+// persistence / hydration / application-store / hook code runs unmodified against it, exactly as
+// `use-mobile-saved-locations.test.ts` does. Nothing about the saved-location boundary is stubbed:
+// every assertion below goes through the real store and the real codec.
 // ---------------------------------------------------------------------------
 
 const asyncStorageMock = vi.hoisted(() => ({
@@ -17,25 +18,31 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
 }));
 
 // ---------------------------------------------------------------------------
-// `react`'s `useSyncExternalStore` is replaced with a mock so `HomeScreen` can be invoked as a plain
-// function (no renderer) while still delegating to the real hook/store. Its default behavior calls
-// the supplied `getSnapshot()` and returns the result, matching what React itself would do on an
-// initial render. Every other `react` export stays the real implementation.
+// `react`'s `useSyncExternalStore` and `useState` are replaced with minimal fakes so `HomeScreen`
+// can be invoked as a plain function (no renderer is available in this Node-based setup). The
+// `useSyncExternalStore` fake reads the supplied `getSnapshot()`, matching what React does on an
+// initial render; the `useState` fake keeps per-render-slot state across the manual `render()` calls
+// below. Only React's scheduling is faked — the screen's own logic and every boundary beneath it
+// run for real. Every other `react` export stays the real implementation.
 // ---------------------------------------------------------------------------
 
 const useSyncExternalStoreMock = vi.hoisted(() => vi.fn());
+const useStateMock = vi.hoisted(() => vi.fn());
 
 vi.mock('react', async (importOriginal) => {
   const actual = await importOriginal<typeof import('react')>();
-  return { ...actual, useSyncExternalStore: useSyncExternalStoreMock };
+  return {
+    ...actual,
+    useSyncExternalStore: useSyncExternalStoreMock,
+    useState: useStateMock,
+  };
 });
 
 // ---------------------------------------------------------------------------
 // `react-native` ships Flow syntax its `index.js` cannot be parsed by this Vitest/Rolldown setup, so
-// it is replaced with minimal marker components/`StyleSheet.create` passthrough — matching how
+// it is replaced with minimal marker components and a `StyleSheet.create` passthrough — matching how
 // `_layout.test.tsx` mocks `expo-router`'s `Stack`. `HomeScreen` is still invoked as a real function
-// and its returned element tree is inspected directly, so this only removes an unparseable native
-// dependency and asserts nothing about React Native internals.
+// and its returned element tree is inspected directly.
 // ---------------------------------------------------------------------------
 
 const MockView = vi.hoisted(() => function MockView(): null {
@@ -44,12 +51,20 @@ const MockView = vi.hoisted(() => function MockView(): null {
 const MockText = vi.hoisted(() => function MockText(): null {
   return null;
 });
+const MockPressable = vi.hoisted(() => function MockPressable(): null {
+  return null;
+});
 
 vi.mock('react-native', () => ({
   View: MockView,
   Text: MockText,
+  Pressable: MockPressable,
   StyleSheet: { create: (styles: unknown) => styles },
 }));
+
+// ---------------------------------------------------------------------------
+// Synthetic fixtures and element-tree helpers.
+// ---------------------------------------------------------------------------
 
 function sharedFields(id: string) {
   return {
@@ -74,16 +89,97 @@ function storedRecord(id: string, sortOrder: number) {
   };
 }
 
-function extractText(element: ReturnType<typeof import('./index').default>): string {
-  const textElement = (element as { props: { children: unknown } }).props.children as {
-    props: { children: string };
+function storedEnvelope(...ids: string[]): string {
+  return JSON.stringify({
+    version: 1,
+    locations: ids.map((id, index) => storedRecord(id, index)),
+  });
+}
+
+interface ElementLike {
+  readonly type: unknown;
+  readonly props: Record<string, unknown>;
+}
+
+function isElement(node: unknown): node is ElementLike {
+  return typeof node === 'object' && node !== null && 'type' in node && 'props' in node;
+}
+
+function walk(node: unknown, visit: (element: ElementLike) => void): void {
+  if (Array.isArray(node)) {
+    node.forEach((child) => walk(child, visit));
+    return;
+  }
+  if (!isElement(node)) {
+    return;
+  }
+  visit(node);
+  walk(node.props.children, visit);
+}
+
+/** Every rendered `Text` string, in document order. */
+function texts(root: unknown): string[] {
+  const collected: string[] = [];
+  walk(root, (element) => {
+    if (element.type === MockText && typeof element.props.children === 'string') {
+      collected.push(element.props.children);
+    }
+  });
+  return collected;
+}
+
+function pressables(root: unknown): ElementLike[] {
+  const collected: ElementLike[] = [];
+  walk(root, (element) => {
+    if (element.type === MockPressable) {
+      collected.push(element);
+    }
+  });
+  return collected;
+}
+
+function pressableByLabel(root: unknown, accessibilityLabel: string): ElementLike {
+  const match = pressables(root).find(
+    (element) => element.props.accessibilityLabel === accessibilityLabel,
+  );
+  if (match === undefined) {
+    throw new Error(`no pressable labelled "${accessibilityLabel}" was rendered`);
+  }
+  return match;
+}
+
+function press(element: ElementLike): void {
+  (element.props.onPress as () => void)();
+}
+
+/** Let every pending microtask — and therefore any settled mutation — run to completion. */
+async function flush(): Promise<void> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// A minimal `useState` slot table: `render()` resets the cursor, so repeated renders read back the
+// state their setters wrote, the way React would.
+// ---------------------------------------------------------------------------
+
+let hookSlots: unknown[] = [];
+let hookCursor = 0;
+
+async function loadScreen() {
+  const { default: HomeScreen } = await import('./index');
+  return function render() {
+    hookCursor = 0;
+    return HomeScreen();
   };
-  return textElement.props.children;
 }
 
 beforeEach(() => {
   vi.resetModules();
   vi.resetAllMocks();
+  hookSlots = [];
+  hookCursor = 0;
   asyncStorageMock.getItem.mockResolvedValue(null);
   asyncStorageMock.setItem.mockResolvedValue(undefined);
   asyncStorageMock.removeItem.mockResolvedValue(undefined);
@@ -94,6 +190,18 @@ beforeEach(() => {
       _getServerSnapshot?: () => unknown,
     ) => getSnapshot(),
   );
+  useStateMock.mockImplementation((initial: unknown) => {
+    const slot = hookCursor;
+    hookCursor += 1;
+    if (!(slot in hookSlots)) {
+      hookSlots[slot] = typeof initial === 'function' ? (initial as () => unknown)() : initial;
+    }
+    const setState = (next: unknown) => {
+      hookSlots[slot] =
+        typeof next === 'function' ? (next as (previous: unknown) => unknown)(hookSlots[slot]) : next;
+    };
+    return [hookSlots[slot], setState];
+  });
 });
 
 afterEach(() => {
@@ -101,27 +209,20 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// 1 — before any hydration is driven, the screen shows the NOT_STARTED copy and performs no
-// storage I/O by itself.
+// 1 — the five read-only states keep the PR #49 copy, and only ERROR / READY add controls.
 // ---------------------------------------------------------------------------
 
-describe('NOT_STARTED', () => {
-  it('renders the not-started copy without touching storage', async () => {
-    const { default: HomeScreen } = await import('./index');
+describe('read-only states', () => {
+  it('renders the not-started copy with no controls and no storage I/O', async () => {
+    const render = await loadScreen();
 
-    const element = HomeScreen();
+    const element = render();
 
-    expect(extractText(element)).toBe('저장 지역을 준비하고 있습니다.');
+    expect(texts(element)).toEqual(['저장 지역을 준비하고 있습니다.']);
+    expect(pressables(element)).toHaveLength(0);
     expect(asyncStorageMock.getItem).toHaveBeenCalledTimes(0);
   });
-});
 
-// ---------------------------------------------------------------------------
-// 2 — while the real store's `hydrate()` promise is still pending, the screen shows the LOADING
-// copy (the manager transitions to LOADING synchronously before `persistence.load()` settles).
-// ---------------------------------------------------------------------------
-
-describe('LOADING', () => {
   it('renders the loading copy while hydration is in flight', async () => {
     let resolveGetItem: (value: string | null) => void = () => {};
     asyncStorageMock.getItem.mockImplementation(
@@ -131,117 +232,298 @@ describe('LOADING', () => {
         }),
     );
 
-    const { default: HomeScreen } = await import('./index');
+    const render = await loadScreen();
     const { mobileSavedLocationHydrationStore } = await import(
       '../locations/mobile-saved-location-hydration-production'
     );
 
-    const hydratePromise = mobileSavedLocationHydrationStore.hydrate();
-    const element = HomeScreen();
+    const hydrating = mobileSavedLocationHydrationStore.hydrate();
 
-    expect(extractText(element)).toBe('저장된 지역을 불러오는 중입니다.');
+    expect(texts(render())).toEqual(['저장된 지역을 불러오는 중입니다.']);
+    expect(pressables(render())).toHaveLength(0);
 
-    // The manager defers its `persistence.load()` call by one microtask (see
-    // `mobile-saved-location-hydration-manager.ts`), so wait until `getItem` has actually been
-    // invoked before resolving it, rather than assuming a fixed number of ticks.
     while (asyncStorageMock.getItem.mock.calls.length === 0) {
       await Promise.resolve();
     }
     resolveGetItem(null);
-    await hydratePromise;
+    await hydrating;
   });
-});
 
-// ---------------------------------------------------------------------------
-// 3 — a successful hydration against an empty stored collection shows the EMPTY copy.
-// ---------------------------------------------------------------------------
-
-describe('EMPTY', () => {
-  it('renders the empty copy once hydration resolves to no saved locations', async () => {
-    asyncStorageMock.getItem.mockResolvedValue(null);
-
-    const { default: HomeScreen } = await import('./index');
+  it('renders the empty copy with no controls', async () => {
+    const render = await loadScreen();
     const { mobileSavedLocationHydrationStore } = await import(
       '../locations/mobile-saved-location-hydration-production'
     );
 
     await mobileSavedLocationHydrationStore.hydrate();
-    const element = HomeScreen();
 
-    expect(extractText(element)).toBe('저장된 지역이 없습니다.');
+    expect(texts(render())).toEqual(['저장된 지역이 없습니다.']);
+    expect(pressables(render())).toHaveLength(0);
   });
-});
 
-// ---------------------------------------------------------------------------
-// 4 — a successful hydration with saved locations shows the READY copy with the exact count taken
-// from the snapshot (not a hardcoded value).
-// ---------------------------------------------------------------------------
-
-describe('READY', () => {
-  it('renders the ready copy with the exact saved-location count from the snapshot', async () => {
-    asyncStorageMock.getItem.mockResolvedValue(
-      JSON.stringify({
-        version: 1,
-        locations: [storedRecord('a', 0), storedRecord('b', 1), storedRecord('c', 2)],
-      }),
-    );
-
-    const { default: HomeScreen } = await import('./index');
+  it('renders the ready copy, one row per saved location, and a delete control for each', async () => {
+    asyncStorageMock.getItem.mockResolvedValue(storedEnvelope('a', 'b', 'c'));
+    const render = await loadScreen();
     const { mobileSavedLocationHydrationStore } = await import(
       '../locations/mobile-saved-location-hydration-production'
     );
 
     await mobileSavedLocationHydrationStore.hydrate();
-    const element = HomeScreen();
+    const element = render();
 
-    expect(extractText(element)).toBe('저장된 지역이 준비되었습니다.\n저장 지역 수: 3');
+    expect(texts(element)).toEqual([
+      '저장된 지역이 준비되었습니다.\n저장 지역 수: 3',
+      'Synthetic a',
+      '삭제',
+      'Synthetic b',
+      '삭제',
+      'Synthetic c',
+      '삭제',
+    ]);
+    expect(
+      pressables(element).map((pressable) => pressable.props.accessibilityLabel),
+    ).toEqual(['Synthetic a 삭제', 'Synthetic b 삭제', 'Synthetic c 삭제']);
+    expect(pressables(element).every((pressable) => pressable.props.disabled === false)).toBe(true);
   });
-});
 
-// ---------------------------------------------------------------------------
-// 5 — a failed hydration shows the ERROR copy and never leaks the raw error kind or any storage
-// detail into the rendered text.
-// ---------------------------------------------------------------------------
-
-describe('ERROR', () => {
-  it('renders the error copy without exposing the raw error kind', async () => {
+  it('renders the error copy with a retry control and no raw error detail', async () => {
     asyncStorageMock.getItem.mockRejectedValue(new Error('synthetic storage failure'));
-
-    const { default: HomeScreen } = await import('./index');
+    const render = await loadScreen();
     const { mobileSavedLocationHydrationStore } = await import(
       '../locations/mobile-saved-location-hydration-production'
     );
 
     await mobileSavedLocationHydrationStore.hydrate();
-    const element = HomeScreen();
-    const text = extractText(element);
+    const element = render();
+    const rendered = texts(element).join('\n');
 
-    expect(text).toBe('저장된 지역을 불러오지 못했습니다.');
-    expect(text).not.toContain('STORAGE_READ_FAILED');
-    expect(text).not.toContain('synthetic storage failure');
+    expect(texts(element)).toEqual(['저장된 지역을 불러오지 못했습니다.', '다시 시도']);
+    expect(pressableByLabel(element, '저장 지역 다시 불러오기')).toBeDefined();
+    expect(rendered).not.toContain('STORAGE_READ_FAILED');
+    expect(rendered).not.toContain('synthetic storage failure');
   });
-});
 
-// ---------------------------------------------------------------------------
-// 6 — calling the screen, however many times, never itself starts hydration or touches storage;
-// it only ever reflects whatever state the store already holds.
-// ---------------------------------------------------------------------------
-
-describe('no hydration side effects from the screen', () => {
-  it('does not call hydrate() or storage APIs by rendering the screen', async () => {
-    const { default: HomeScreen } = await import('./index');
-    const { mobileSavedLocationHydrationStore } = await import(
-      '../locations/mobile-saved-location-hydration-production'
+  it('does not hydrate, retry, or mutate merely by rendering', async () => {
+    const render = await loadScreen();
+    const { mobileSavedLocationApplicationStore } = await import(
+      '../locations/mobile-saved-location-application-production'
     );
-    const hydrateSpy = vi.spyOn(mobileSavedLocationHydrationStore, 'hydrate');
+    const retrySpy = vi.spyOn(mobileSavedLocationApplicationStore, 'retryHydration');
+    const removeSpy = vi.spyOn(mobileSavedLocationApplicationStore, 'remove');
+    const addSpy = vi.spyOn(mobileSavedLocationApplicationStore, 'add');
 
-    HomeScreen();
-    HomeScreen();
-    HomeScreen();
+    render();
+    render();
+    render();
 
-    expect(hydrateSpy).toHaveBeenCalledTimes(0);
+    expect(retrySpy).toHaveBeenCalledTimes(0);
+    expect(removeSpy).toHaveBeenCalledTimes(0);
+    expect(addSpy).toHaveBeenCalledTimes(0);
     expect(asyncStorageMock.getItem).toHaveBeenCalledTimes(0);
     expect(asyncStorageMock.setItem).toHaveBeenCalledTimes(0);
     expect(asyncStorageMock.removeItem).toHaveBeenCalledTimes(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2 — explicit retry from ERROR.
+// ---------------------------------------------------------------------------
+
+describe('retry', () => {
+  it('re-reads storage once and reflects the recovered state', async () => {
+    asyncStorageMock.getItem.mockRejectedValueOnce(new Error('synthetic storage failure'));
+    asyncStorageMock.getItem.mockResolvedValue(storedEnvelope('a'));
+
+    const render = await loadScreen();
+    const { mobileSavedLocationHydrationStore } = await import(
+      '../locations/mobile-saved-location-hydration-production'
+    );
+
+    await mobileSavedLocationHydrationStore.hydrate();
+    expect(texts(render())).toContain('저장된 지역을 불러오지 못했습니다.');
+
+    press(pressableByLabel(render(), '저장 지역 다시 불러오기'));
+    await flush();
+
+    expect(texts(render())).toEqual([
+      '저장된 지역이 준비되었습니다.\n저장 지역 수: 1',
+      'Synthetic a',
+      '삭제',
+    ]);
+    expect(asyncStorageMock.getItem).toHaveBeenCalledTimes(2);
+  });
+
+  it('starts no second load when the retry control is tapped repeatedly', async () => {
+    let resolveGetItem: (value: string | null) => void = () => {};
+    asyncStorageMock.getItem.mockRejectedValueOnce(new Error('synthetic storage failure'));
+    asyncStorageMock.getItem.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveGetItem = resolve;
+        }),
+    );
+
+    const render = await loadScreen();
+    const { mobileSavedLocationHydrationStore } = await import(
+      '../locations/mobile-saved-location-hydration-production'
+    );
+
+    await mobileSavedLocationHydrationStore.hydrate();
+    const retry = pressableByLabel(render(), '저장 지역 다시 불러오기');
+
+    press(retry);
+    press(retry);
+    press(retry);
+    await Promise.resolve();
+
+    // The retry control is gone the moment hydration is back in flight, and the three taps shared
+    // the store's single in-flight load rather than starting three reads.
+    expect(texts(render())).toEqual(['저장된 지역을 불러오는 중입니다.']);
+    expect(pressables(render())).toHaveLength(0);
+
+    while (asyncStorageMock.getItem.mock.calls.length < 2) {
+      await Promise.resolve();
+    }
+    expect(asyncStorageMock.getItem).toHaveBeenCalledTimes(2);
+    resolveGetItem(null);
+    await flush();
+    expect(asyncStorageMock.getItem).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3 — deleting a saved location.
+// ---------------------------------------------------------------------------
+
+describe('delete', () => {
+  it('persists the removal and re-renders the real remaining collection', async () => {
+    asyncStorageMock.getItem.mockResolvedValue(storedEnvelope('a', 'b', 'c'));
+    const render = await loadScreen();
+    const { mobileSavedLocationHydrationStore } = await import(
+      '../locations/mobile-saved-location-hydration-production'
+    );
+
+    await mobileSavedLocationHydrationStore.hydrate();
+    press(pressableByLabel(render(), 'Synthetic b 삭제'));
+    await flush();
+
+    expect(texts(render())).toEqual([
+      '저장된 지역이 준비되었습니다.\n저장 지역 수: 2',
+      'Synthetic a',
+      '삭제',
+      'Synthetic c',
+      '삭제',
+    ]);
+    expect(asyncStorageMock.setItem).toHaveBeenCalledTimes(1);
+    const [, serialized] = asyncStorageMock.setItem.mock.calls[0] as [string, string];
+    expect(JSON.parse(serialized)).toEqual({
+      version: 1,
+      locations: [storedRecord('a', 0), storedRecord('c', 1)],
+    });
+  });
+
+  it('shows the empty state after the last saved location is deleted, without removeItem', async () => {
+    asyncStorageMock.getItem.mockResolvedValue(storedEnvelope('a'));
+    const render = await loadScreen();
+    const { mobileSavedLocationHydrationStore } = await import(
+      '../locations/mobile-saved-location-hydration-production'
+    );
+
+    await mobileSavedLocationHydrationStore.hydrate();
+    press(pressableByLabel(render(), 'Synthetic a 삭제'));
+    await flush();
+
+    expect(texts(render())).toEqual(['저장된 지역이 없습니다.']);
+    expect(pressables(render())).toHaveLength(0);
+    expect(asyncStorageMock.setItem).toHaveBeenCalledTimes(1);
+    expect(asyncStorageMock.removeItem).toHaveBeenCalledTimes(0);
+  });
+
+  it('disables every delete control while the write is in flight', async () => {
+    asyncStorageMock.getItem.mockResolvedValue(storedEnvelope('a', 'b'));
+    let resolveSetItem: () => void = () => {};
+    asyncStorageMock.setItem.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSetItem = () => resolve();
+        }),
+    );
+
+    const render = await loadScreen();
+    const { mobileSavedLocationHydrationStore } = await import(
+      '../locations/mobile-saved-location-hydration-production'
+    );
+
+    await mobileSavedLocationHydrationStore.hydrate();
+    press(pressableByLabel(render(), 'Synthetic a 삭제'));
+
+    const during = render();
+    expect(pressables(during).every((pressable) => pressable.props.disabled === true)).toBe(true);
+    // No optimistic update: both rows are still shown while the write is in flight.
+    expect(texts(during)).toContain('저장된 지역이 준비되었습니다.\n저장 지역 수: 2');
+
+    resolveSetItem();
+    await flush();
+
+    const after = render();
+    expect(texts(after)).toContain('저장된 지역이 준비되었습니다.\n저장 지역 수: 1');
+    expect(pressables(after).every((pressable) => pressable.props.disabled === false)).toBe(true);
+  });
+
+  it('shows generic copy when the write fails and keeps the collection unchanged', async () => {
+    asyncStorageMock.getItem.mockResolvedValue(storedEnvelope('a', 'b'));
+    asyncStorageMock.setItem.mockRejectedValue(new Error('synthetic native write failure'));
+
+    const render = await loadScreen();
+    const { mobileSavedLocationHydrationStore } = await import(
+      '../locations/mobile-saved-location-hydration-production'
+    );
+
+    await mobileSavedLocationHydrationStore.hydrate();
+    press(pressableByLabel(render(), 'Synthetic a 삭제'));
+    await flush();
+
+    const element = render();
+    const rendered = texts(element).join('\n');
+
+    expect(texts(element)).toEqual([
+      '저장된 지역이 준비되었습니다.\n저장 지역 수: 2',
+      'Synthetic a',
+      '삭제',
+      'Synthetic b',
+      '삭제',
+      '저장 지역 변경을 저장하지 못했습니다.',
+    ]);
+    expect(rendered).not.toContain('STORAGE_WRITE_FAILED');
+    expect(rendered).not.toContain('synthetic native write failure');
+    expect(rendered).not.toContain('@life-weather/mobile/saved-locations');
+    expect(rendered).not.toContain('37.5');
+    expect(rendered).not.toContain('127');
+  });
+
+  it('clears the failure copy once a later delete succeeds', async () => {
+    asyncStorageMock.getItem.mockResolvedValue(storedEnvelope('a', 'b'));
+    asyncStorageMock.setItem.mockRejectedValueOnce(new Error('synthetic native write failure'));
+    asyncStorageMock.setItem.mockResolvedValue(undefined);
+
+    const render = await loadScreen();
+    const { mobileSavedLocationHydrationStore } = await import(
+      '../locations/mobile-saved-location-hydration-production'
+    );
+
+    await mobileSavedLocationHydrationStore.hydrate();
+    press(pressableByLabel(render(), 'Synthetic a 삭제'));
+    await flush();
+    expect(texts(render())).toContain('저장 지역 변경을 저장하지 못했습니다.');
+
+    press(pressableByLabel(render(), 'Synthetic a 삭제'));
+    await flush();
+
+    expect(texts(render())).toEqual([
+      '저장된 지역이 준비되었습니다.\n저장 지역 수: 1',
+      'Synthetic b',
+      '삭제',
+    ]);
+    expect(asyncStorageMock.setItem).toHaveBeenCalledTimes(2);
   });
 });

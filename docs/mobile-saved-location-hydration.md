@@ -137,7 +137,9 @@ AsyncStorage production binding(`mobileSavedLocationPersistence`)은 계속 이 
 
 - React context/provider(아래 observable store와 [hook](#react-usesyncexternalstore-hook)은
   provider-neutral 기반과 얇은 subscription 경계이지 context/provider 구현은 아닙니다).
-- 지역 추가·삭제·재정렬 UI, mutation 후 자동 저장.
+- 지역 추가·삭제 mutation과 그 저장 — 이는 이 경계 위의 **application store**가 소유합니다
+  ([mobile-saved-location-application.md](./mobile-saved-location-application.md)). 재정렬 UI는
+  여전히 후속 범위입니다.
 - write queue, debounce, retry backoff.
 - refresh, background rehydration, stale data 유지 정책.
 - migration 실행, corrupt data repair/delete.
@@ -330,6 +332,8 @@ production observable hydration store([위](#관찰-가능한-hydration-store))�
 - 이 hook은 production composition을 직접 import하므로 pure boundary가 아니며, pure barrel
   (`apps/mobile/src/locations/index.ts`)에서 **export되지 않습니다.** 향후 화면 consumer는 이
   hook module을 직접 import해야 합니다.
-- **이 경계에서 하지 않는 것(후속 범위)**: 이 hook을 소비하는 화면, React Context/Provider,
-  상태별(loading/empty/ready/error) UI, explicit retry 버튼, 지역 mutation/save, 위치 권한/GPS,
-  weather API 호출, timer/effect/memo/reducer, development client 재빌드, 실제 기기 QA.
+- **이 경계에서 하지 않는 것**: 지역 mutation/save, explicit retry 위임, 위치 권한/GPS, weather
+  API 호출, timer/effect/memo/reducer, development client 재빌드, 실제 기기 QA. explicit retry와
+  persistence 기반 `add`/`remove`는 이 hydration store 위에 쌓인 **application store**가
+  소유합니다 — 이 경계의 공개 계약은 그대로 둔 채 위에서 관찰·위임하며, 자세한 내용은
+  [mobile-saved-location-application.md](./mobile-saved-location-application.md) 참고.

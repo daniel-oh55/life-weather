@@ -19,10 +19,13 @@
  * small `NOT_STARTED` / `LOADING` / `EMPTY` / `READY` / `ERROR` state machine with single-flight
  * concurrent hydration, idempotent success, and retryable failure. On top of that, the **observable
  * hydration store** ({@link ./mobile-saved-location-hydration-store}) wraps the manager with a
- * stable, deep-frozen cached snapshot and a subscribe/notify contract intended for a future React
- * `useSyncExternalStore` consumer. Both layers stay provider-neutral and are exported from this same
- * pure barrel. React state/hooks/context, screen wiring, and location permission remain out of scope
- * for this module.
+ * stable, deep-frozen cached snapshot and a subscribe/notify contract a React `useSyncExternalStore`
+ * consumer can read. On top of both, the **application store**
+ * ({@link ./mobile-saved-location-application-store}) observes that hydration store, owns the
+ * committed collection, and adds the write side: explicit hydration retry plus persistence-backed
+ * add / remove that publish a new collection only after `persistence.save()` succeeds. All of these
+ * layers stay provider-neutral and are exported from this same pure barrel. React hooks/context,
+ * screen wiring, and location permission remain out of scope for this module.
  */
 
 export {
@@ -77,3 +80,14 @@ export {
   type SavedLocationHydrationStore,
   type SavedLocationHydrationStoreListener,
 } from './mobile-saved-location-hydration-store';
+
+export {
+  createSavedLocationApplicationStore,
+  type SavedLocationApplicationErrorKind,
+  type SavedLocationApplicationMutationResult,
+  type SavedLocationApplicationSnapshot,
+  type SavedLocationApplicationStore,
+  type SavedLocationApplicationStoreDependencies,
+  type SavedLocationApplicationStoreListener,
+  type SavedLocationApplicationWriteStatus,
+} from './mobile-saved-location-application-store';
