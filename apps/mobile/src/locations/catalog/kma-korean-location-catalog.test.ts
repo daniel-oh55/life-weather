@@ -55,11 +55,13 @@ interface SourceRow {
 }
 
 /**
- * Parse the committed TSV into typed rows, failing loudly on any malformed column count or numeric
- * field — the parse must never paper over a corrupt source file by coercing a bad value.
+ * Parse already-read TSV lines into typed rows, failing loudly on any malformed column count or
+ * numeric field — the parse must never paper over a corrupt source file by coercing a bad value.
+ *
+ * Split from {@link parseSourceRows} so the negative-control tests can feed a mutated copy of the
+ * real lines through the exact same parser without ever touching the committed TSV on disk.
  */
-function parseSourceRows(): readonly SourceRow[] {
-  const lines = readSourceTsvLines();
+function parseSourceRowsFromLines(lines: readonly string[]): readonly SourceRow[] {
   const [header, ...dataLines] = lines;
 
   expect(header?.split('\t')).toEqual([...SOURCE_TSV_COLUMNS]);
@@ -75,6 +77,9 @@ function parseSourceRows(): readonly SourceRow[] {
       ['latitude', latitude],
       ['longitude', longitude],
     ] as const) {
+      // `Number('')` and `Number('   ')` are both `0`, so a blank field would otherwise pass the
+      // finite check and silently become a real coordinate. Reject blanks before converting.
+      expect(raw.trim(), `row ${index + 1} ${label} must not be blank`).not.toBe('');
       expect(Number.isFinite(Number(raw)), `row ${index + 1} ${label} "${raw}"`).toBe(true);
     }
     for (const [label, raw] of [
@@ -82,6 +87,7 @@ function parseSourceRows(): readonly SourceRow[] {
       ['ny', ny],
       ['officialOrder', officialOrder],
     ] as const) {
+      expect(raw.trim(), `row ${index + 1} ${label} must not be blank`).not.toBe('');
       expect(Number.isInteger(Number(raw)), `row ${index + 1} ${label} "${raw}"`).toBe(true);
     }
 
@@ -97,6 +103,11 @@ function parseSourceRows(): readonly SourceRow[] {
       officialOrder: Number(officialOrder),
     };
   });
+}
+
+/** Parse the committed TSV on disk into typed rows. */
+function parseSourceRows(): readonly SourceRow[] {
+  return parseSourceRowsFromLines(readSourceTsvLines());
 }
 
 /** The generation step's deterministic opaque id, recomputed here from the source code alone. */
@@ -187,6 +198,65 @@ describe('generated rows correspond exactly to the committed source TSV', () => 
     ]);
 
     expect(KMA_KOREAN_LOCATION_CATALOG_RAW_ROWS).toEqual(expectedRows);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Negative control for the parser itself. `Number('')` and `Number('   ')` are both `0`, so without
+// an explicit blank check a corrupt source file could smuggle a `(0, 0)` coordinate or a `0` grid
+// cell past the correspondence tests above. These mutate an in-memory copy of the real lines — the
+// committed TSV on disk is never written to.
+// ---------------------------------------------------------------------------
+
+/** Zero-based TSV column index of each numeric field, matching `SOURCE_TSV_COLUMNS`. */
+const NUMERIC_SOURCE_COLUMNS: readonly (readonly [string, number])[] = [
+  ['latitude', 4],
+  ['longitude', 5],
+  ['nx', 6],
+  ['ny', 7],
+  ['officialOrder', 8],
+];
+
+const BLANK_FIELD_VALUES: readonly (readonly [string, string])[] = [
+  ['an empty string', ''],
+  ['a whitespace-only string', '   '],
+];
+
+const BLANK_FIELD_CASES: [string, number, string, string][] = NUMERIC_SOURCE_COLUMNS.flatMap(
+  ([label, columnIndex]) =>
+    BLANK_FIELD_VALUES.map(
+      ([blankLabel, blankValue]): [string, number, string, string] => [
+        label,
+        columnIndex,
+        blankLabel,
+        blankValue,
+      ],
+    ),
+);
+
+describe('source parser rejects blank numeric fields', () => {
+  it.each(BLANK_FIELD_CASES)(
+    'rejects %s (column %d) when the source field is %s',
+    (_label, columnIndex, _blankLabel, blankValue) => {
+      const mutated = [...readSourceTsvLines()];
+
+      const columns = mutated[1]?.split('\t');
+      expect(columns).toBeDefined();
+      if (columns === undefined) {
+        return;
+      }
+
+      columns[columnIndex] = blankValue;
+      mutated[1] = columns.join('\t');
+
+      expect(() => parseSourceRowsFromLines(mutated)).toThrow();
+    },
+  );
+
+  it('still parses the unmutated committed source lines', () => {
+    expect(parseSourceRowsFromLines(readSourceTsvLines())).toHaveLength(
+      kmaKoreanLocationSourceManifest.sourceRowCount,
+    );
   });
 });
 
