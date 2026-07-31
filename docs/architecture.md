@@ -108,16 +108,39 @@
   binding → (5) provider-neutral hydration manager → (6) 그 manager를 감싸는 provider-neutral
   observable hydration store → (7) 이 manager와 store의 production composition → (8) 이
   composition의 store를 앱 시작 시 한 번만 호출하는 startup boundary → (9) 이 store를 구독하는
-  React `useSyncExternalStore` hook의 아홉 계층으로 구성되며, (10) 이 hook을 직접 호출해 다섯
-  hydration 상태(`NOT_STARTED`/`LOADING`/`EMPTY`/`READY`/`ERROR`)를 최소 읽기 전용 텍스트로
-  보여주는 첫 화면 consumer(`apps/mobile/src/app/index.tsx`)가 추가됐습니다 — hydration을
-  시작·retry하지 않고 hook의 exact snapshot만 분기해 표시합니다. React Context/Provider·explicit
-  retry UI·지역 mutation/save·migration 실행·위치 권한·현재 위치 조회·실제 호출과 development
-  client 재빌드·실제 기기 QA는 여전히 후속 PR 범위입니다. 자세한 내용은
+  React `useSyncExternalStore` hook으로 구성됩니다. 그 위에 write 측을 소유하는 **provider-neutral
+  application store 계층**(`mobile-saved-location-application-store.ts`,
+  `createSavedLocationApplicationStore`)이 추가됐습니다 — observable hydration store와
+  persistence를 주입받아 hydration 상태를 관찰하고, hydration이 성공한 뒤에는 hydration snapshot이
+  아니라 자신이 소유한 **committed collection**에서 `EMPTY`/`READY`를 파생하며, 여기에 write 차원
+  (`IDLE`/`SAVING`)을 더한 하나의 stable·deep-frozen cached snapshot을 공개합니다. `add`/`remove`는
+  각각 `EMPTY`/`READY`와 `READY`에서만 허용되고, 해당 순수 collection operation을 먼저 호출해 실패
+  시 persistence를 전혀 건드리지 않으며, 성공하면 `SAVING`을 알린 뒤 `persistence.save()`를 정확히
+  한 번 호출하고 **저장 성공 후에만** 새 collection을 committed로 공개합니다(optimistic update가
+  없으므로 실패 시 rollback 대상도 없고 이전 collection이 그대로 유지됩니다). 마지막 지역 삭제도
+  `clear()`가 아니라 `save([])`로 같은 versioned envelope 경로를 사용하고, `SAVING` 중의 동시·재진입
+  mutation은 두 번째 write 없이 `WRITE_IN_PROGRESS`를 돌려주며(write queue·debounce·batching·
+  compare-and-swap 없음), 모든 실패는 `{ kind }`만 담는 고정 오류입니다. `retryHydration()`은
+  hydration store의 `hydrate()`에 위임해 그 exact Promise reference를 반환할 뿐 timer·backoff·자동
+  retry를 두지 않고, app-root one-shot startup은 기존 startup boundary가 계속 단독으로 소유합니다.
+  이 store 역시 provider-neutral하므로 pure barrel에서 export되며, 그 위에 기존 두 production
+  singleton(hydration store·AsyncStorage persistence)을 한 번씩 주입하는 **application production
+  composition**(`mobile-saved-location-application-production.ts`)과 이를 구독하는 **React hook**
+  (`use-mobile-saved-locations.ts`, `useMobileSavedLocations`)이 추가됐습니다 — 둘 다 native module을
+  전이적으로 가지므로 pure barrel에서는 export되지 않고, hook은 mutation action을 반환하지 않으며
+  화면이 production singleton의 `retryHydration()`/`add()`/`remove()`를 직접 호출합니다(React
+  Context/Provider·generic action framework 없음). 홈 화면
+  consumer(`apps/mobile/src/app/index.tsx`)는 이제 이 hook을 소비해 다섯 상태 문구에 더해 `ERROR`의
+  explicit `다시 시도` 버튼, `READY`의 저장 지역 목록과 지역별 `삭제` 버튼(`SAVING` 중 비활성화),
+  저장 실패 시의 generic Korean 문구를 표시합니다 — raw 오류 kind·storage key·위치 ID·좌표는 어디에도
+  노출하지 않습니다. 지역 검색 데이터와 검색·추가 UI, 선택 지역 상태, reorder UI, migration 실행,
+  위치 권한·현재 위치 조회, 실제 weather 호출과 development client 재빌드·실제 기기 QA는 여전히 후속
+  PR 범위입니다. 자세한 내용은
   [mobile-saved-location.md](./mobile-saved-location.md),
   [mobile-saved-location-collection.md](./mobile-saved-location-collection.md),
-  [mobile-saved-location-persistence.md](./mobile-saved-location-persistence.md)와
-  [mobile-saved-location-hydration.md](./mobile-saved-location-hydration.md) 참고.
+  [mobile-saved-location-persistence.md](./mobile-saved-location-persistence.md),
+  [mobile-saved-location-hydration.md](./mobile-saved-location-hydration.md)와
+  [mobile-saved-location-application.md](./mobile-saved-location-application.md) 참고.
 - `apps/api` — Hono 기반 백엔드. 외부 공공데이터 API 호출, API 키 보관, 응답 정규화를 담당할
   위치입니다. **현재 상태**: `GET /health`에 더해, PR #4에서 기상청(KMA) **원본 응답 경계**
   (`src/providers/kma`)를 구현했습니다 — 단기·초단기예보 원본 JSON의 Zod 런타임 검증, 성공·
@@ -437,6 +460,19 @@ composition의 store singleton만 import하므로(`locations → locations`, `ap
 기존 의존 유지), 새 npm package나 새 package-level 의존 방향을 만들지 않습니다. production
 composition을 통해 native AsyncStorage module을 전이적으로 가지므로, 이 module 역시 pure
 barrel에서는 export되지 않습니다.
+
+그 위의 **application store 계층**(`mobile-saved-location-application-store.ts`)과 그
+**production composition**(`mobile-saved-location-application-production.ts`)·**React hook**
+(`use-mobile-saved-locations.ts`)도 **신규 dependency를 추가하지 않습니다.** application store는
+같은 `src/locations` 디렉터리의 saved-location 타입·collection operation·hydration 타입·hydration
+store 타입·persistence 타입만 import하고(`locations → locations`, type-only 포함) React나 native
+module을 import하지 않으므로 pure barrel export를 유지합니다. production composition은 이미 있는
+두 singleton(`mobile-saved-location-hydration-production`의 store와
+`mobile-saved-location-async-storage`의 persistence)만 주입하고, hook은 기존 의존인 `react`의
+`useSyncExternalStore`와 그 composition만 import합니다 — 둘 다 native AsyncStorage module을
+전이적으로 가지므로 pure barrel에서는 export되지 않습니다. 홈 화면
+(`apps/mobile/src/app/index.tsx`)은 기존 `react`·`react-native` 의존만 사용하며 이 hook과
+production store를 직접 import합니다(pure barrel `./index`를 거치지 않음).
 
 `weather-core`는 런타임에 zod에도 contracts에도 의존하지 않습니다. PR #3에서 상태 정규화의
 반환 타입이 contracts의 `WeatherCondition`에 할당 가능한지를 **컴파일 타임 타입 테스트**로만

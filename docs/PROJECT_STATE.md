@@ -70,9 +70,28 @@
   hook의 import·호출만으로는 `hydrate()`나 storage I/O가 없고 pure barrel에서는 export되지
   않습니다. 이 hook을 직접 소비하는 첫 홈 화면(`apps/mobile/src/app/index.tsx`)도 구현됐습니다 —
   다섯 hydration 상태를 각각 구분되는 최소 읽기 전용 텍스트로 표시하며, hydration 시작·retry나
-  storage API 호출은 하지 않고 hook의 exact snapshot만 분기합니다. 반면 React Context/Provider,
-  explicit retry UI: 미구현, 지역 mutation/save: 미구현, migration execution: 미구현, 위치 권한:
-  미구현, 지역 관리 UI: 미구현이고, development client rebuild 및 실제 기기 QA: 미수행입니다)
+  storage API 호출은 하지 않고 hook의 exact snapshot만 분기합니다. 그 위에 write 측을 소유하는
+  provider-neutral **application store**(`mobile-saved-location-application-store.ts`,
+  `createSavedLocationApplicationStore({ hydrationStore, persistence })`, pure barrel export)도
+  구현됐습니다 — hydration 상태를 관찰해 write 차원(`IDLE`/`SAVING`)을 더한 stable·deep-frozen
+  cached snapshot을 공개하고, hydration 성공 이후에는 자신이 소유한 committed collection에서
+  `EMPTY`/`READY`를 파생하며, `add`(`EMPTY`/`READY`)·`remove`(`READY`)가 순수 collection operation을
+  먼저 호출해 실패 시 persistence를 전혀 건드리지 않고, 성공 시 `persistence.save()`를 정확히 한 번
+  호출한 뒤 **저장 성공 후에만** 새 collection을 공개합니다(optimistic update 없음 → 실패 시 이전
+  collection 유지). 마지막 지역 삭제도 `clear()`가 아니라 `save([])`를 사용하고, `SAVING` 중의
+  동시·재진입 mutation은 두 번째 write 없이 `WRITE_IN_PROGRESS`를 반환하며, `retryHydration()`은
+  hydration store의 `hydrate()`에 위임해 exact Promise reference를 반환합니다(timer·backoff·자동
+  retry 없음). 이 store의 production composition
+  (`mobile-saved-location-application-production.ts`, `mobileSavedLocationApplicationStore`, 기존
+  hydration store·AsyncStorage persistence를 한 번씩 주입, pure barrel 미export)과 React hook
+  (`use-mobile-saved-locations.ts`, `useMobileSavedLocations`, pure barrel 미export)도 구현됐고,
+  홈 화면(`apps/mobile/src/app/index.tsx`)이 이를 소비해 `ERROR`의 explicit `다시 시도` 버튼,
+  `READY`의 저장 지역 목록과 지역별 `삭제` 버튼(`SAVING` 중 비활성화), 저장 실패 시 generic Korean
+  문구를 표시합니다(raw 오류 kind·storage key·위치 ID·좌표 미노출). 기존 hydration manager/store,
+  one-shot startup, collection/persistence schema와 `isCurrent` 의미는 이 작업에서 바뀌지
+  않았습니다. 반면 지역 검색 데이터·검색/추가 UI: 미구현, 선택 지역 상태: 미구현, reorder UI:
+  미구현, React Context/Provider: 미구현, migration execution: 미구현, 위치 권한: 미구현이고,
+  development client rebuild 및 실제 기기 QA: 미수행입니다)
 - 디자인 시스템과 주요 화면
 - Android widget
 - AdMob
@@ -86,5 +105,13 @@
   release 완료를 의미하지 않습니다.
 - 실제 key, domain 또는 project ID는 이 문서에 기록하지 않습니다.
 - AI workflow harness는 제품 기능 stage가 아니라 repository 운영 기반입니다.
+- Owner가 릴리스 범위를 Fast-track **1.0**과 **1.1 이후**로 확정했습니다 — 1.0은 수동 지역 검색,
+  여러 저장 지역, KMA 현재/시간별/단기, AirKorea PM10/PM2.5 최소 지원, 오늘/시간별/생활날씨/설정
+  최소 화면, 기존 생활정책 4개, loading/error/empty/stale, 오늘 화면 하단 adaptive banner 1개,
+  개인정보·동의·Data safety, Development Build와 실제 Android QA, 필수 보안·contract·schema 검증
+  유지이고, Android widget 전체·GPS 권한 흐름·추가 생활정책·push·추가 광고 형식·중기/자외선 상세·
+  정교한 일러스트/animation·지역 재정렬 등 확장 UX는 1.1 이후입니다. 위젯은 제품 방향에서 삭제된
+  것이 아니라 1.1로 이동했고, 필수 보안·개인정보·실기기 검증은 축소하지 않습니다. 자세한 내용은
+  [product-scope.md](./product-scope.md) 참고.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.

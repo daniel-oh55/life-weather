@@ -1,11 +1,16 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { useMobileSavedLocationHydration } from '../locations/use-mobile-saved-location-hydration';
+import { mobileSavedLocationApplicationStore } from '../locations/mobile-saved-location-application-production';
+import type { SavedLocationApplicationSnapshot } from '../locations/mobile-saved-location-application-store';
+import { useMobileSavedLocations } from '../locations/use-mobile-saved-locations';
 
-function describeSavedLocationHydration(
-  hydration: ReturnType<typeof useMobileSavedLocationHydration>,
-): string {
-  switch (hydration.status) {
+/**
+ * The single status line for each application state. `ERROR` deliberately carries no error kind,
+ * storage detail, or native message — only generic Korean copy.
+ */
+function describeSavedLocations(snapshot: SavedLocationApplicationSnapshot): string {
+  switch (snapshot.status) {
     case 'NOT_STARTED':
       return '저장 지역을 준비하고 있습니다.';
     case 'LOADING':
@@ -13,18 +18,72 @@ function describeSavedLocationHydration(
     case 'EMPTY':
       return '저장된 지역이 없습니다.';
     case 'READY':
-      return `저장된 지역이 준비되었습니다.\n저장 지역 수: ${hydration.locations.length}`;
+      return `저장된 지역이 준비되었습니다.\n저장 지역 수: ${snapshot.locations.length}`;
     case 'ERROR':
       return '저장된 지역을 불러오지 못했습니다.';
   }
 }
 
 export default function HomeScreen() {
-  const hydration = useMobileSavedLocationHydration();
+  const savedLocations = useMobileSavedLocations();
+  // Whether the *last* dispatched mutation failed. Kept local to the screen rather than in the
+  // store's snapshot: it is presentation state for one generic message, not shared app state.
+  const [writeFailed, setWriteFailed] = useState(false);
+
+  const isSaving = savedLocations.writeStatus === 'SAVING';
+
+  // Explicit, user-initiated retry only — no timer, no backoff, no automatic retry. A repeated tap
+  // cannot start a second load: the button exists only in ERROR, and the store below is
+  // single-flight, so the extra call joins the in-flight hydration instead of restarting it.
+  function handleRetry(): void {
+    void mobileSavedLocationApplicationStore.retryHydration();
+  }
+
+  async function handleRemove(locationId: string): Promise<void> {
+    setWriteFailed(false);
+    const result = await mobileSavedLocationApplicationStore.remove(locationId);
+    setWriteFailed(!result.ok);
+  }
 
   return (
     <View style={styles.container}>
-      <Text style={styles.text}>{describeSavedLocationHydration(hydration)}</Text>
+      <Text style={styles.text}>{describeSavedLocations(savedLocations)}</Text>
+
+      {savedLocations.status === 'ERROR' ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="저장 지역 다시 불러오기"
+          onPress={handleRetry}
+          style={styles.button}
+        >
+          <Text style={styles.buttonLabel}>다시 시도</Text>
+        </Pressable>
+      ) : null}
+
+      {savedLocations.status === 'READY' ? (
+        <View style={styles.list}>
+          {savedLocations.locations.map((location) => (
+            <View key={location.id} style={styles.row}>
+              <Text style={styles.rowLabel}>{location.displayName}</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`${location.displayName} 삭제`}
+                disabled={isSaving}
+                onPress={() => {
+                  void handleRemove(location.id);
+                }}
+                style={styles.button}
+              >
+                <Text style={styles.buttonLabel}>삭제</Text>
+              </Pressable>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {writeFailed ? (
+        <Text style={styles.text}>저장 지역 변경을 저장하지 못했습니다.</Text>
+      ) : null}
     </View>
   );
 }
@@ -34,8 +93,34 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 16,
+    padding: 16,
   },
   text: {
+    fontSize: 16,
+  },
+  list: {
+    alignSelf: 'stretch',
+    gap: 8,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  rowLabel: {
+    flexShrink: 1,
+    fontSize: 16,
+  },
+  button: {
+    minHeight: 48,
+    minWidth: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  buttonLabel: {
     fontSize: 16,
   },
 });
