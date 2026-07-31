@@ -53,8 +53,8 @@
   `createSavedLocationHydrationStore`, pure barrel export)도 구현됐습니다 — stable하고 deep-frozen된
   cached snapshot(`getSnapshot()`), 등록 즉시 호출되지 않고 semantic transition에만 알리는 idempotent
   subscribe/unsubscribe, manager의 exact hydrate Promise를 그대로 반환하며 concurrency·reentrancy에도
-  manager 호출·observer·알림을 중복시키지 않는 `hydrate()`를 제공합니다(향후 React
-  `useSyncExternalStore` 소비를 겨냥하며, hook 자체는 미구현). 이 AsyncStorage binding과 hydration
+  manager 호출·observer·알림을 중복시키지 않는 `hydrate()`를 제공합니다(React
+  `useSyncExternalStore` hook이 소비할 수 있는 기반). 이 AsyncStorage binding과 hydration
   manager, 그리고 이 store의 production composition(`mobile-saved-location-hydration-production.ts`,
   `mobileSavedLocationHydrationManager`·`mobileSavedLocationHydrationStore`, pure barrel 미export,
   import 시 storage I/O·`hydrate()` 호출 없음)도 구현됐습니다. 이 composition의 **store**의

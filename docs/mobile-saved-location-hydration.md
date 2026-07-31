@@ -259,7 +259,9 @@ observable store를 실제로 조립하는 module이 추가됐습니다.
   load하지 않으며, runtime consumer는 이 production module을 **직접** import합니다.
 - app-start에서 `hydrate()`를 호출하는 wiring은 아래 [app-start hydration](#app-start-hydration)
   절에서 설명하는 one-shot startup boundary로 **구현됐습니다** — 이제 이 export된 **store**를
-  경유합니다. React state/context/hook/UI 연결은 여전히 **미구현**입니다.
+  경유합니다. React `useSyncExternalStore` hook은
+  [아래](#react-usesyncexternalstore-hook) 절에서 구현됐으며, 화면 consumer·React
+  Context/Provider·상태별 UI 연결은 여전히 **미구현**입니다.
 - 이 변경은 native dependency나 native config를 추가하지 않았으므로, development client 재빌드나
   실제 기기 QA는 이번 PR에서도 수행하지 않았습니다.
 
@@ -296,8 +298,8 @@ production composition의 **store**를 실제 앱 시작 시 호출하는 **one-
 - root layout의 mount effect는 hydration 완료를 기다리지 않고 navigation을 차단하지 않습니다 —
   `<Stack />` 렌더링은 그대로 유지되고, `EMPTY`/`READY`/`ERROR`에 따른 화면 분기·loading/error UI·
   splash screen 제어·effect cleanup은 없습니다.
-- React state/hooks/context, 화면에 저장 지역 표시, 사용자 retry UI는 여전히 **미구현**입니다
-  (`useSyncExternalStore` hook 자체는 [아래](#react-usesyncexternalstore-hook)에서 구현됐습니다).
+- React state/context, 화면 consumer, 저장 지역 표시와 사용자 retry UI는 여전히 **미구현**이며,
+  `useSyncExternalStore` hook은 [아래](#react-usesyncexternalstore-hook) 절에서 구현됐습니다.
 - 이 startup module과 root layout wiring 모두 pure barrel
   (`apps/mobile/src/locations/index.ts`)에서 export되지 않습니다 — root layout은 startup module을
   직접 import하고, startup module은 production composition을 직접 import합니다.
