@@ -312,29 +312,33 @@ locations: [] }`가 기록됩니다.
 `apps/mobile/src/app/index.tsx`는 이 hook을 직접 소비하며, 이전 상태별 문구를 유지하면서 다음을
 추가합니다.
 
-- **ERROR** — `다시 시도` 버튼이 explicit retry를 한 번 호출합니다. retry가 시작되면 상태가
-  즉시 `LOADING`이 되어 버튼이 사라지고, store의 single-flight 계약 덕분에 반복 탭이 두 번째
-  load를 시작하지 못합니다. raw error kind/message는 표시하지 않습니다.
+- **ERROR** — `다시 시도` 버튼이 `retryInitialization()`을 호출합니다.
+  `SAVED_LOCATIONS` 오류를 재시도하면 saved-location hydration이 다시 시작되며 공개 상태는
+  `LOADING`이 됩니다. `SELECTED_LOCATION` 오류를 재시도하면 선택 preference read만 다시
+  시작되며 공개 상태는 `SELECTION_LOADING`이 됩니다. 두 상태 모두 버튼이 사라지고,
+  각 경계의 single-flight 계약 때문에 반복 입력이 두 번째 read를 시작하지 못합니다.
+  raw error kind/message는 표시하지 않습니다.
 - **READY** — 저장 지역 `displayName` 목록과 각 지역의 `삭제` 버튼, 그리고(PR #52) 선택 표시/
-  선택 버튼을 표시합니다 — 선택된 지역은 비활성 `선택됨` 버튼, 나머지는 `선택` 버튼입니다. `SAVING`
-  중에는 모든 컨트롤(선택 포함)이 비활성화되고, optimistic 변경이 없으므로 목록/선택은 저장이
-  성공한 뒤에만 갱신됩니다. 마지막 지역을 삭제하면 `EMPTY` 문구로 전환됩니다. 선택 컨트롤의 정확한
-  계약은 [mobile-selected-location.md](./mobile-selected-location.md) 참고.
+  선택 버튼을 표시합니다 — 선택된 지역은 비활성 `선택됨` 버튼, 나머지는 `선택` 버튼입니다. 목록
+  위에는 `지역 추가` 버튼도 표시되며, 누르면 `/locations` 지역 검색 화면으로 이동합니다. `SAVING`
+  중에는 모든 컨트롤(`지역 추가`, 선택, 삭제 포함)이 비활성화되고, optimistic 변경이 없으므로
+  목록/선택은 저장이 성공한 뒤에만 갱신됩니다. 마지막 지역을 삭제하면 `EMPTY` 문구로 전환됩니다.
+  선택 컨트롤의 정확한 계약은 [mobile-selected-location.md](./mobile-selected-location.md) 참고.
 - **SELECTION_LOADING**(PR #52) — `선택 지역을 준비하는 중입니다.`만 표시합니다.
 - **저장 실패** — `저장 지역 변경을 저장하지 못했습니다.`라는 generic 문구만 표시합니다. 오류
   kind, storage key, 위치 ID, 좌표, native error message, stack은 표시하지 않습니다. 이 문구는
   이 화면에서 다음 삭제를 시작할 때 사라지고, 그 삭제가 실패하면 다시 표시됩니다. 다른
   consumer의 mutation 결과와 자동으로 동기화하는 presentation 정책은 후속 다중-consumer UI
   범위입니다.
-- **EMPTY** — `저장된 지역이 없습니다.`만 표시합니다. 지역 검색·추가 UI는 후속 범위이며, 이를
-  개발용 문구로 사용자에게 노출하지 않습니다.
+- **EMPTY** — `저장된 지역이 없습니다.` 문구와 `지역 추가` 버튼을 표시합니다.
+  버튼을 누르면 `/locations` 지역 검색 화면으로 이동하며, 검색 결과의 `추가` control을 통해
+  첫 저장 지역을 추가할 수 있습니다.
 - **접근성** — React Native `Pressable`과 의미 있는 `accessibilityRole`/`accessibilityLabel`을
   사용하고 최소 터치 영역(48×48)을 확보합니다. 외부 UI dependency, animation, icon, image는
   없습니다.
 
 ## 이 경계에서 하지 않는 것(후속 범위)
 
-- 대한민국 지역 검색 데이터와 검색 UI, 실제 add 버튼.
 - 위치 권한·GPS·current-location 조회.
 - reorder UI, 좌우 스와이프.
 - weather API 호출, KMA/AirKorea 변경, AdMob, Android widget.
