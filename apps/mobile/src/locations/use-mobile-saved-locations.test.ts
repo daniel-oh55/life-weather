@@ -178,9 +178,12 @@ describe('hook has no side effects of its own', () => {
 // ---------------------------------------------------------------------------
 
 describe('subscribe delegation', () => {
-  it('observes the real hydration and write transitions through the delegated subscribe', async () => {
-    asyncStorageMock.getItem.mockResolvedValue(
-      JSON.stringify({ version: 1, locations: [storedRecord('a', 0)] }),
+  it('observes the real hydration, selection, and write transitions through the delegated subscribe', async () => {
+    const { SAVED_LOCATION_PERSISTENCE_KEY } = await import('./index');
+    asyncStorageMock.getItem.mockImplementation(async (key: string) =>
+      key === SAVED_LOCATION_PERSISTENCE_KEY
+        ? JSON.stringify({ version: 1, locations: [storedRecord('a', 0)] })
+        : null,
     );
 
     const { useMobileSavedLocations } = await import('./use-mobile-saved-locations');
@@ -205,10 +208,12 @@ describe('subscribe delegation', () => {
     });
 
     await mobileSavedLocationHydrationStore.hydrate();
+    await mobileSavedLocationApplicationStore.initializeSelectedLocation();
     await mobileSavedLocationApplicationStore.remove('a');
 
     expect(observed).toEqual([
       'LOADING:IDLE',
+      'SELECTION_LOADING:IDLE',
       'READY:IDLE',
       'READY:SAVING',
       'EMPTY:IDLE',
@@ -248,9 +253,12 @@ describe('subscribe delegation', () => {
 // ---------------------------------------------------------------------------
 
 describe('terminal snapshot and barrel non-exposure', () => {
-  it('reflects the terminal snapshot after hydration and a mutation complete', async () => {
-    asyncStorageMock.getItem.mockResolvedValue(
-      JSON.stringify({ version: 1, locations: [storedRecord('a', 0), storedRecord('b', 1)] }),
+  it('reflects the terminal snapshot after hydration, selection, and a mutation complete', async () => {
+    const { SAVED_LOCATION_PERSISTENCE_KEY } = await import('./index');
+    asyncStorageMock.getItem.mockImplementation(async (key: string) =>
+      key === SAVED_LOCATION_PERSISTENCE_KEY
+        ? JSON.stringify({ version: 1, locations: [storedRecord('a', 0), storedRecord('b', 1)] })
+        : null,
     );
 
     const { useMobileSavedLocations } = await import('./use-mobile-saved-locations');
@@ -263,6 +271,7 @@ describe('terminal snapshot and barrel non-exposure', () => {
 
     const initial = useMobileSavedLocations();
     await mobileSavedLocationHydrationStore.hydrate();
+    await mobileSavedLocationApplicationStore.initializeSelectedLocation();
     await mobileSavedLocationApplicationStore.remove('a');
     const final = useMobileSavedLocations();
 

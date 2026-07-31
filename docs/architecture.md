@@ -145,15 +145,38 @@
   Node `crypto`로 계산하는 결정론적 opaque id이며 원본 행정구역 코드는 화면이나
   `MobileSavedLocationCandidate`에 노출되지 않습니다. 이 작업은 `apps/mobile`의 기존 의존 방향과
   saved-location collection/persistence/hydration/application store의 공개 계약을 바꾸지
-  않았고, 실제 KMA 예보 API는 호출하지 않았으며, 새 dependency도 추가하지 않았습니다. 반면 선택
-  지역 상태, reorder UI, migration 실행, 위치 권한·현재 위치 조회, 실제 weather 호출과
+  않았고, 실제 KMA 예보 API는 호출하지 않았으며, 새 dependency도 추가하지 않았습니다. **PR
+  #52**에서는 사용자가 현재 조회 중인 저장 지역을 나타내는 별도 **선택 지역(selected-location)
+  경계**를 추가했습니다 — 기기의 실제 GPS 현재 위치 record 여부인 `isCurrent`와는 절대 결합하지
+  않는 `selectedLocationId`를, saved-location과 완전히 분리된 storage
+  key(`@life-weather/mobile/selected-location`)와 독립 versioned V1
+  envelope(`mobile-selected-location-persistence.ts`, id schema는 기존 saved-location id schema
+  재사용, `load`/`save` 두 메서드만·`clear()` 없음)로 관리하고, 그 위에 `getItem`/`setItem` 두
+  메서드만 위임하는 concrete AsyncStorage binding(`mobile-selected-location-async-storage.ts`,
+  pure barrel 미export)을 추가했습니다. 이 선택 상태의 조정 책임은 새 module이 아니라 기존
+  application store(`mobile-saved-location-application-store.ts`)가 맡습니다 — saved-location
+  hydration이 성공한 뒤에만 시작되는 별도 내부 초기화 상태 기계로 저장된 preference를 읽고, 없거나
+  collection에 없는 id는 자동으로 첫(`sortOrder === 0`) 저장 지역으로 fallback하되(자동 write
+  없음) collection이 비면 항상 `null`로 해석하며, 그 결과 `EMPTY`/`READY` snapshot은 항상 검증된
+  `selectedLocationId`만 공개합니다(선택 preference가 아직 로딩 중이면 새 `SELECTION_LOADING`
+  상태, 실패하면 기존 `ERROR`에 scope를 더한 형태). 새 `select()` mutation과, 첫 저장 지역 추가
+  시의 자동 선택(selected-location write 후 collection write)·선택된 지역 삭제 시의 index 기반
+  fallback(같은 index → 마지막 → null, 같은 순서)이 기존 `add()`/`remove()`에 추가됐고,
+  `add`/`remove`/`select`는 하나의 write lock을 공유합니다. 앱 시작은 기존 저장 지역 hydration
+  one-shot startup을 감싸는 새 app-level orchestrator(`mobile-location-application-startup.ts`,
+  `startMobileLocationApplicationOnce`)가 그 hydration이 끝난 뒤에만(성공한 경우에만) 선택
+  초기화를 시작하도록 순서를 정하며, 기존 hydration startup의 정확한 one-shot Promise 계약은
+  바뀌지 않았습니다. 홈 화면은 통합 `retryInitialization()`으로 두 실패 scope를 모두 재시도하고,
+  각 저장 지역 행에 `선택됨`(비활성)/`선택` 컨트롤을 추가했습니다. 새 dependency는 추가하지
+  않았습니다. 반면 reorder UI, migration 실행, 위치 권한·현재 위치 조회, 실제 weather 호출과
   development client 재빌드·실제 기기 QA는 여전히 후속 PR 범위입니다. 자세한 내용은
   [mobile-saved-location.md](./mobile-saved-location.md),
   [mobile-saved-location-collection.md](./mobile-saved-location-collection.md),
   [mobile-saved-location-persistence.md](./mobile-saved-location-persistence.md),
   [mobile-saved-location-hydration.md](./mobile-saved-location-hydration.md),
-  [mobile-saved-location-application.md](./mobile-saved-location-application.md)와
-  [kma-korean-location-catalog.md](./kma-korean-location-catalog.md) 참고.
+  [mobile-saved-location-application.md](./mobile-saved-location-application.md),
+  [kma-korean-location-catalog.md](./kma-korean-location-catalog.md)와
+  [mobile-selected-location.md](./mobile-selected-location.md) 참고.
 - `apps/api` — Hono 기반 백엔드. 외부 공공데이터 API 호출, API 키 보관, 응답 정규화를 담당할
   위치입니다. **현재 상태**: `GET /health`에 더해, PR #4에서 기상청(KMA) **원본 응답 경계**
   (`src/providers/kma`)를 구현했습니다 — 단기·초단기예보 원본 JSON의 Zod 런타임 검증, 성공·
@@ -495,6 +518,20 @@ package-level 의존 방향을 만들지 않습니다. 지역 검색 화면(`app
 기존 `react`·`react-native`·`expo-router`(이미 `apps/mobile/src/app/_layout.tsx`가 쓰는 동일
 package) 의존만 사용합니다. 이 카탈로그와 검색·candidate 매핑은 native module을 import하지
 않으므로 pure barrel(`src/locations/index.ts`)에서 export됩니다.
+
+**PR #52**의 선택 지역(selected-location) codec·persistence 경계(`mobile-selected-location-
+persistence.ts`)도 **신규 dependency를 추가하지 않습니다.** 이미 있는 `zod`와 같은
+`src/locations` 디렉터리의 `mobileSavedLocation` id 타입만 import하므로(`locations →
+locations`, type-only 포함) pure barrel export를 유지합니다. 그 위의 concrete AsyncStorage
+binding(`mobile-selected-location-async-storage.ts`)도 이미 있는
+`@react-native-async-storage/async-storage`(PR #42에서 추가된 동일 dependency)만 재사용하고 새
+package를 추가하지 않으며, 기존 saved-location binding과 같은 이유로 pure barrel에서는 export되지
+않습니다. 이 선택 상태를 조정하는 로직이 추가된 application store·production
+composition(`mobile-saved-location-application-store.ts`,
+`mobile-saved-location-application-production.ts`)과 새 app-level startup
+orchestrator(`mobile-location-application-startup.ts`)도 같은 `src/locations` 디렉터리의 기존
+module만 import하므로(`locations → locations`) 새 npm package나 새 package-level 의존 방향을
+만들지 않습니다.
 
 `weather-core`는 런타임에 zod에도 contracts에도 의존하지 않습니다. PR #3에서 상태 정규화의
 반환 타입이 contracts의 `WeatherCondition`에 할당 가능한지를 **컴파일 타임 타입 테스트**로만

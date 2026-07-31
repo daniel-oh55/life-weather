@@ -70,6 +70,10 @@
 - 위젯은 제품 방향에서 삭제된 것이 아니라 1.1로 이동한 것입니다.
 - 1.0 광고는 오늘 화면 하단 adaptive banner만입니다.
 - 필수 보안·개인정보·실기기 검증은 축소하지 않습니다.
+- "여러 저장 지역"은 현재 조회 중인 지역(`selectedLocationId`)의 저장·복원·삭제 시 fallback을
+  포함합니다 — 이 선택 상태 자체는 1.0 범위이며, 지역 재정렬·좌우 스와이프·상단 dropdown의 최종
+  디자인만 1.1 이후 확장 UX입니다. 자세한 내용은
+  [mobile-selected-location.md](./mobile-selected-location.md) 참고.
 
 ## 후속 확장 (MVP 이후)
 

@@ -9,6 +9,13 @@
 기존 hydration manager·hydration store·startup boundary·hydration hook의 공개 계약은 이 PR에서
 바뀌지 않았습니다.
 
+> **PR #52 갱신**: 이 store는 이제 사용자가 현재 조회 중인 저장 지역을 나타내는
+> `selectedLocationId`도 함께 소유합니다 — `isCurrent`(기기의 실제 GPS 현재 위치 record 여부)와는
+> 절대 결합하지 않는 별도 preference입니다. 아래 snapshot·mutation 설명은 이 확장을 반영해
+> 갱신됐습니다. 선택 상태의 별도 key/envelope, resolution(fallback) 알고리즘, 앱 시작 순서,
+> add/remove의 cross-key write 순서 같은 세부 계약은
+> [mobile-selected-location.md](./mobile-selected-location.md)에서 다룹니다.
+
 ## 목적
 
 - hydration 상태를 관찰해 하나의 application snapshot으로 노출합니다.
@@ -28,6 +35,9 @@ interface SavedLocationApplicationStore {
   getSnapshot(): SavedLocationApplicationSnapshot;
   subscribe(listener: SavedLocationApplicationStoreListener): () => void;
   retryHydration(): Promise<void>;
+  initializeSelectedLocation(): Promise<void>;
+  retryInitialization(): Promise<void>;
+  select(locationId: unknown): Promise<SavedLocationApplicationMutationResult>;
   add(candidate: unknown): Promise<SavedLocationApplicationMutationResult>;
   remove(locationId: unknown): Promise<SavedLocationApplicationMutationResult>;
 }
@@ -50,26 +60,43 @@ type SavedLocationApplicationWriteStatus = 'IDLE' | 'SAVING';
 type SavedLocationApplicationSnapshot =
   | { readonly status: 'NOT_STARTED'; readonly writeStatus: 'IDLE' }
   | { readonly status: 'LOADING'; readonly writeStatus: 'IDLE' }
-  | { readonly status: 'EMPTY'; readonly writeStatus: SavedLocationApplicationWriteStatus }
+  | { readonly status: 'SELECTION_LOADING'; readonly writeStatus: 'IDLE' }
+  | {
+      readonly status: 'EMPTY';
+      readonly selectedLocationId: null;
+      readonly writeStatus: SavedLocationApplicationWriteStatus;
+    }
   | {
       readonly status: 'READY';
       readonly locations: readonly MobileSavedLocation[];
+      readonly selectedLocationId: string;
       readonly writeStatus: SavedLocationApplicationWriteStatus;
     }
   | {
       readonly status: 'ERROR';
-      readonly error: { readonly kind: SavedLocationHydrationErrorKind };
+      readonly error: {
+        readonly scope: 'SAVED_LOCATIONS' | 'SELECTED_LOCATION';
+        readonly kind: SavedLocationHydrationErrorKind | SelectedLocationInitializationErrorKind;
+      };
       readonly writeStatus: 'IDLE';
     };
 ```
 
-- `NOT_STARTED`/`LOADING`/`ERROR`는 항상 `IDLE`입니다 — mutation은 hydration 성공 이후에만
-  가능하므로 이 세 상태에서는 write가 진행 중일 수 없습니다.
+- `NOT_STARTED`/`LOADING`/`SELECTION_LOADING`/`ERROR`는 항상 `IDLE`입니다 — mutation은 saved
+  hydration과 선택 preference 초기화가 모두 성공한 이후에만 가능하므로, 이 네 상태에서는 write가
+  진행 중일 수 없습니다.
+- **`SELECTION_LOADING`**(PR #52)은 saved-location hydration은 끝났지만
+  ([mobile-selected-location.md](./mobile-selected-location.md)의) 선택 preference 초기화가 아직
+  끝나지 않은 상태입니다. `READY`가 항상 검증된 `selectedLocationId`를 동반하도록, 이 상태를
+  거치지 않고는 `EMPTY`/`READY`가 공개되지 않습니다.
 - `EMPTY`/`READY`는 hydration snapshot이 아니라 **committed collection**에서 파생됩니다. 따라서
-  마지막 지역을 삭제하면 `EMPTY`가, 빈 collection에 추가하면 `READY`가 공개됩니다.
-- `ERROR.error.kind`는 hydration manager의 고정 discriminator를 **그대로 통과**시키며 재해석하지
-  않습니다. raw storage error, native message, stack, Zod issue, 저장 문자열, 위치 ID, 표시명,
-  좌표, grid는 어디에도 담기지 않습니다.
+  마지막 지역을 삭제하면 `EMPTY`가, 빈 collection에 추가하면 `READY`가 공개됩니다. `EMPTY`의
+  `selectedLocationId`는 항상 `null`이고, `READY`의 `selectedLocationId`는 항상 `locations` 안에
+  동일 id의 record가 정확히 1개 존재하는 non-empty string입니다.
+- `ERROR.error.scope`(PR #52)는 실패한 경계를 구분합니다 — `SAVED_LOCATIONS`는 hydration
+  manager의, `SELECTED_LOCATION`은 선택 preference 초기화의 고정 discriminator를 **그대로
+  통과**시키며 재해석하지 않습니다. raw storage error, native message, stack, Zod issue, 저장
+  문자열, 위치 ID, 표시명, 좌표, grid는 어디에도 담기지 않습니다.
 
 ### snapshot 참조와 immutability
 
@@ -107,8 +134,11 @@ type SavedLocationApplicationSnapshot =
 | --- | --- |
 | `add` | `EMPTY`, `READY` |
 | `remove` | `READY` |
+| `select`(PR #52) | `READY` |
 
-그 외 상태에서는 persistence를 전혀 호출하지 않고 고정 오류를 반환합니다.
+그 외 상태에서는 persistence를 전혀 호출하지 않고 고정 오류를 반환합니다. 세 operation은 하나의
+`writeStatus` write lock을 공유합니다 — 자세한 내용은
+[mobile-selected-location.md](./mobile-selected-location.md) 참고.
 
 ### 고정 오류 kind
 
@@ -209,9 +239,12 @@ locations: [] }`가 기록됩니다.
 - **ERROR** — `다시 시도` 버튼이 explicit retry를 한 번 호출합니다. retry가 시작되면 상태가
   즉시 `LOADING`이 되어 버튼이 사라지고, store의 single-flight 계약 덕분에 반복 탭이 두 번째
   load를 시작하지 못합니다. raw error kind/message는 표시하지 않습니다.
-- **READY** — 저장 지역 `displayName` 목록과 각 지역의 `삭제` 버튼을 표시합니다. `SAVING` 중에는
-  모든 삭제 버튼이 비활성화되고, optimistic 변경이 없으므로 목록은 저장이 성공한 뒤에만 갱신됩니다.
-  마지막 지역을 삭제하면 `EMPTY` 문구로 전환됩니다.
+- **READY** — 저장 지역 `displayName` 목록과 각 지역의 `삭제` 버튼, 그리고(PR #52) 선택 표시/
+  선택 버튼을 표시합니다 — 선택된 지역은 비활성 `선택됨` 버튼, 나머지는 `선택` 버튼입니다. `SAVING`
+  중에는 모든 컨트롤(선택 포함)이 비활성화되고, optimistic 변경이 없으므로 목록/선택은 저장이
+  성공한 뒤에만 갱신됩니다. 마지막 지역을 삭제하면 `EMPTY` 문구로 전환됩니다. 선택 컨트롤의 정확한
+  계약은 [mobile-selected-location.md](./mobile-selected-location.md) 참고.
+- **SELECTION_LOADING**(PR #52) — `선택 지역을 준비하는 중입니다.`만 표시합니다.
 - **저장 실패** — `저장 지역 변경을 저장하지 못했습니다.`라는 generic 문구만 표시합니다. 오류
   kind, storage key, 위치 ID, 좌표, native error message, stack은 표시하지 않습니다. 이 문구는
   이 화면에서 다음 삭제를 시작할 때 사라지고, 그 삭제가 실패하면 다시 표시됩니다. 다른
@@ -226,8 +259,6 @@ locations: [] }`가 기록됩니다.
 ## 이 경계에서 하지 않는 것(후속 범위)
 
 - 대한민국 지역 검색 데이터와 검색 UI, 실제 add 버튼.
-- 사용자 선택 지역/활성 지역 상태(`isCurrent`는 기기의 실제 현재 위치 record 여부로 유지되며 선택
-  표시로 쓰이지 않습니다).
 - 위치 권한·GPS·current-location 조회.
 - reorder UI, 좌우 스와이프.
 - weather API 호출, KMA/AirKorea 변경, AdMob, Android widget.

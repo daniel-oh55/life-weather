@@ -8,7 +8,7 @@ import { useMobileSavedLocations } from '../locations/use-mobile-saved-locations
 
 /**
  * The single status line for each application state. `ERROR` deliberately carries no error kind,
- * storage detail, or native message — only generic Korean copy.
+ * scope, storage detail, or native message — only generic Korean copy.
  */
 function describeSavedLocations(snapshot: SavedLocationApplicationSnapshot): string {
   switch (snapshot.status) {
@@ -16,6 +16,8 @@ function describeSavedLocations(snapshot: SavedLocationApplicationSnapshot): str
       return '저장 지역을 준비하고 있습니다.';
     case 'LOADING':
       return '저장된 지역을 불러오는 중입니다.';
+    case 'SELECTION_LOADING':
+      return '선택 지역을 준비하는 중입니다.';
     case 'EMPTY':
       return '저장된 지역이 없습니다.';
     case 'READY':
@@ -35,10 +37,17 @@ export default function HomeScreen() {
   const isSaving = savedLocations.writeStatus === 'SAVING';
 
   // Explicit, user-initiated retry only — no timer, no backoff, no automatic retry. A repeated tap
-  // cannot start a second load: the button exists only in ERROR, and the store below is
-  // single-flight, so the extra call joins the in-flight hydration instead of restarting it.
+  // cannot start a second load: the button exists only in ERROR, and the store's retryInitialization
+  // routes to whichever boundary (saved-location hydration or selected-location initialization) is
+  // actually failing, joining its single-flight in-progress read instead of restarting it.
   function handleRetry(): void {
-    void mobileSavedLocationApplicationStore.retryHydration();
+    void mobileSavedLocationApplicationStore.retryInitialization();
+  }
+
+  async function handleSelect(locationId: string): Promise<void> {
+    setWriteFailed(false);
+    const result = await mobileSavedLocationApplicationStore.select(locationId);
+    setWriteFailed(!result.ok);
   }
 
   async function handleRemove(locationId: string): Promise<void> {
@@ -80,22 +89,38 @@ export default function HomeScreen() {
 
       {savedLocations.status === 'READY' ? (
         <View style={styles.list}>
-          {savedLocations.locations.map((location) => (
-            <View key={location.id} style={styles.row}>
-              <Text style={styles.rowLabel}>{location.displayName}</Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`${location.displayName} 삭제`}
-                disabled={isSaving}
-                onPress={() => {
-                  void handleRemove(location.id);
-                }}
-                style={styles.button}
-              >
-                <Text style={styles.buttonLabel}>삭제</Text>
-              </Pressable>
-            </View>
-          ))}
+          {savedLocations.locations.map((location) => {
+            const isSelected = location.id === savedLocations.selectedLocationId;
+            const selectDisabled = isSelected || isSaving;
+            return (
+              <View key={location.id} style={styles.row}>
+                <Text style={styles.rowLabel}>{location.displayName}</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={isSelected ? `${location.displayName} 선택됨` : `${location.displayName} 선택`}
+                  accessibilityState={{ selected: isSelected, disabled: selectDisabled }}
+                  disabled={selectDisabled}
+                  onPress={() => {
+                    void handleSelect(location.id);
+                  }}
+                  style={styles.button}
+                >
+                  <Text style={styles.buttonLabel}>{isSelected ? '선택됨' : '선택'}</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`${location.displayName} 삭제`}
+                  disabled={isSaving}
+                  onPress={() => {
+                    void handleRemove(location.id);
+                  }}
+                  style={styles.button}
+                >
+                  <Text style={styles.buttonLabel}>삭제</Text>
+                </Pressable>
+              </View>
+            );
+          })}
         </View>
       ) : null}
 
