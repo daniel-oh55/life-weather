@@ -1,4 +1,7 @@
+import type { WeatherSuccessResponseV1 } from '@life-weather/contracts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { noSelectionSuccessResponseBody, successResponseBody } from '../weather-api/fixtures';
 
 // ---------------------------------------------------------------------------
 // The native AsyncStorage module is replaced with an in-memory, call-recording mock so the real
@@ -69,6 +72,29 @@ const routerMock = vi.hoisted(() => ({
 
 vi.mock('expo-router', () => ({
   useRouter: () => routerMock,
+}));
+
+// ---------------------------------------------------------------------------
+// The weather-query React hook is replaced with a call-recording mock so `HomeScreen` can be
+// invoked as a plain function without ever running the hook's real `useEffect` (there is no real
+// renderer/dispatcher in this Node-based setup). The production weather-query store is replaced
+// too, so a screen `다시 시도` press can be asserted against a bare `retry` spy without importing
+// the real client/env wiring. Neither replacement re-implements or re-tests the hook/store
+// themselves — both are covered by their own dedicated test files.
+// ---------------------------------------------------------------------------
+
+const useMobileWeatherQueryMock = vi.hoisted(() => vi.fn());
+
+vi.mock('../weather-query/use-mobile-weather-query', () => ({
+  useMobileWeatherQuery: useMobileWeatherQueryMock,
+}));
+
+const mobileWeatherQueryStoreMock = vi.hoisted(() => ({
+  retry: vi.fn(),
+}));
+
+vi.mock('../weather-query/mobile-weather-query-production', () => ({
+  mobileWeatherQueryStore: mobileWeatherQueryStoreMock,
 }));
 
 // ---------------------------------------------------------------------------
@@ -233,6 +259,8 @@ beforeEach(async () => {
     };
     return [hookSlots[slot], setState];
   });
+  useMobileWeatherQueryMock.mockReturnValue({ status: 'IDLE' });
+  mobileWeatherQueryStoreMock.retry.mockImplementation(() => {});
 });
 
 afterEach(() => {
@@ -587,5 +615,158 @@ describe('delete', () => {
 
     expect(pressableByLabel(element, 'Synthetic a 선택').props.disabled).toBe(false);
     expect(pressableByLabel(element, 'Synthetic b 선택됨')).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// weather block — `useMobileWeatherQuery` and the production weather-query store's `retry` are
+// mocked (see the top-level `vi.mock` calls); this screen owns only the presentation of whatever
+// snapshot the (separately tested) hook returns, never the hook's own request/reset lifecycle.
+// ---------------------------------------------------------------------------
+
+function successSnapshot(
+  hourlyOverrides: Partial<WeatherSuccessResponseV1['data']['hourly'][number]> = {},
+): { readonly status: 'SUCCESS'; readonly locationId: string; readonly data: WeatherSuccessResponseV1 } {
+  const base = successResponseBody();
+  const baseHourly = base.data.hourly[0]!;
+  return {
+    status: 'SUCCESS',
+    locationId: 'a',
+    data: {
+      ...base,
+      data: {
+        ...base.data,
+        hourly: [{ ...baseHourly, ...hourlyOverrides }],
+      },
+    },
+  };
+}
+
+describe('weather block', () => {
+  it('renders the loading copy while the weather query is LOADING', async () => {
+    mockStoredEnvelope('a');
+    useMobileWeatherQueryMock.mockReturnValue({ status: 'LOADING', locationId: 'a' });
+
+    const render = await loadScreen();
+    await hydrateAndInitialize();
+    const element = render();
+
+    expect(texts(element)).toContain('선택한 지역의 날씨를 불러오는 중입니다.');
+  });
+
+  it('renders the selected location name, hourly forecast, condition label, and precipitation probability on SUCCESS', async () => {
+    mockStoredEnvelope('a');
+    useMobileWeatherQueryMock.mockReturnValue(successSnapshot());
+
+    const render = await loadScreen();
+    await hydrateAndInitialize();
+    const element = render();
+
+    expect(texts(element)).toEqual(
+      expect.arrayContaining([
+        'Synthetic a',
+        '2026-07-15T12:00:00Z',
+        '21°C',
+        '맑음',
+        '강수확률 10%',
+      ]),
+    );
+  });
+
+  it('renders the empty-hourly copy without treating it as an error', async () => {
+    mockStoredEnvelope('a');
+    useMobileWeatherQueryMock.mockReturnValue({
+      status: 'SUCCESS',
+      locationId: 'a',
+      data: noSelectionSuccessResponseBody(),
+    });
+
+    const render = await loadScreen();
+    await hydrateAndInitialize();
+    const element = render();
+
+    expect(texts(element)).toContain('표시할 시간별 예보가 없습니다.');
+  });
+
+  it('treats a null current as a normal success without rendering anything for it', async () => {
+    mockStoredEnvelope('a');
+    const snapshot = successSnapshot();
+    expect(snapshot.data.data.current).toBeNull();
+    useMobileWeatherQueryMock.mockReturnValue(snapshot);
+
+    const render = await loadScreen();
+    await hydrateAndInitialize();
+
+    expect(() => render()).not.toThrow();
+  });
+
+  it.each([
+    ['CLEAR', '맑음'],
+    ['UNKNOWN', '상태 미확인'],
+  ] as const)('maps the %s condition to "%s"', async (condition, label) => {
+    mockStoredEnvelope('a');
+    useMobileWeatherQueryMock.mockReturnValue(successSnapshot({ condition }));
+
+    const render = await loadScreen();
+    await hydrateAndInitialize();
+
+    expect(texts(render())).toContain(label);
+  });
+
+  it('does not render a precipitation probability line when it is null', async () => {
+    mockStoredEnvelope('a');
+    useMobileWeatherQueryMock.mockReturnValue(
+      successSnapshot({ precipitationProbabilityPercent: null }),
+    );
+
+    const render = await loadScreen();
+    await hydrateAndInitialize();
+    const rendered = texts(render()).join('\n');
+
+    expect(rendered).not.toContain('강수확률');
+  });
+
+  it.each([
+    ['CONFIGURATION', '날씨 서비스를 준비하지 못했습니다.'],
+    ['NETWORK', '날씨 정보를 불러오지 못했습니다. 네트워크 연결을 확인해 주세요.'],
+    ['API', '날씨 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.'],
+    ['INVALID_RESPONSE', '날씨 정보를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.'],
+  ] as const)('shows the fixed %s copy with a retry control and no raw detail', async (presentation, copy) => {
+    mockStoredEnvelope('a');
+    useMobileWeatherQueryMock.mockReturnValue({ status: 'ERROR', locationId: 'a', presentation });
+
+    const render = await loadScreen();
+    await hydrateAndInitialize();
+    const element = render();
+    const rendered = texts(element).join('\n');
+
+    expect(rendered).toContain(copy);
+    expect(pressableByLabel(element, '날씨 다시 시도')).toBeDefined();
+    expect(rendered).not.toContain(presentation);
+  });
+
+  it('calls the production store\'s retry exactly once per press and shows no raw error/location detail', async () => {
+    mockStoredEnvelope('a');
+    useMobileWeatherQueryMock.mockReturnValue({
+      status: 'ERROR',
+      locationId: 'a',
+      presentation: 'NETWORK',
+    });
+
+    const render = await loadScreen();
+    await hydrateAndInitialize();
+    press(pressableByLabel(render(), '날씨 다시 시도'));
+
+    expect(mobileWeatherQueryStoreMock.retry).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not render a weather block outside READY, even if the query mock reports SUCCESS', async () => {
+    useMobileWeatherQueryMock.mockReturnValue(successSnapshot());
+
+    const render = await loadScreen();
+    const element = render();
+
+    expect(texts(element)).not.toContain('Synthetic a');
+    expect(texts(element)).not.toContain('2026-07-15T12:00:00Z');
   });
 });

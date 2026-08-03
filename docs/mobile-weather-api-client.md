@@ -154,7 +154,9 @@ forwarding·입력 무변경·호출 간 무공유 상태·raw/URL/secret 비노
 
 ## 범위 제외
 
-화면 연결, navigation, 디자인 시스템, 실제 API base URL/도메인, `EXPO_PUBLIC_*` 변수, 실제 endpoint
-호출, 위치 권한·현재 위치·실제 좌표·지역 저장소, current/daily/AirKorea/alerts, response cache,
-retry/timeout/offline, lifestyle-engine 호출, contracts source/version/export 변경은 이 PR의 범위가
-아닙니다.
+navigation, 디자인 시스템, 실제 API base URL/도메인, 실제 endpoint 호출, 위치 권한·현재 위치·실제
+좌표·지역 저장소, current/daily/AirKorea/alerts, response cache, retry/timeout/offline,
+lifestyle-engine 호출, contracts source/version/export 변경은 이 문서가 다루는 client 자체의 범위가
+아닙니다. 화면 연결(선택된 저장 지역 → request → query 상태 → Today 화면)과
+`EXPO_PUBLIC_API_BASE_URL` production 설정은
+[mobile-weather-query.md](./mobile-weather-query.md)에서 다룹니다.
