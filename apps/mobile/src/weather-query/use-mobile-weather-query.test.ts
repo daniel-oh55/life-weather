@@ -187,9 +187,9 @@ describe('a validated READY selection', () => {
     latestEffect().callback();
 
     expect(mobileWeatherQueryStoreMock.request).toHaveBeenCalledTimes(1);
-    const call = mobileWeatherQueryStoreMock.request.mock.calls[0] as [string, { location: object }];
-    expect(call[0]).toBe('a');
-    expect(Object.keys(call[1].location).sort()).toEqual(
+    const call = mobileWeatherQueryStoreMock.request.mock.calls[0] as [{ location: { id: string } }];
+    expect(call[0].location.id).toBe('a');
+    expect(Object.keys(call[0].location).sort()).toEqual(
       [
         'adminArea1',
         'adminArea2',
@@ -202,9 +202,9 @@ describe('a validated READY selection', () => {
         'timezone',
       ].sort(),
     );
-    expect(call[1].location).not.toHaveProperty('kmaGrid');
-    expect(call[1].location).not.toHaveProperty('isCurrent');
-    expect(call[1].location).not.toHaveProperty('sortOrder');
+    expect(call[0].location).not.toHaveProperty('kmaGrid');
+    expect(call[0].location).not.toHaveProperty('isCurrent');
+    expect(call[0].location).not.toHaveProperty('sortOrder');
   });
 
   it('does not request again when only a non-selected location changes (same status/selectedId)', async () => {
@@ -236,14 +236,20 @@ describe('cleanup and correlation', () => {
 
     useMobileWeatherQuery(readyA);
     const cleanupA = latestEffect().callback();
-    expect(mobileWeatherQueryStoreMock.request).toHaveBeenNthCalledWith(1, 'a', expect.anything());
+    expect(mobileWeatherQueryStoreMock.request).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ location: expect.objectContaining({ id: 'a' }) }),
+    );
 
     cleanupA?.();
     expect(mobileWeatherQueryStoreMock.reset).toHaveBeenCalledTimes(1);
 
     useMobileWeatherQuery(readyB);
     latestEffect().callback();
-    expect(mobileWeatherQueryStoreMock.request).toHaveBeenNthCalledWith(2, 'b', expect.anything());
+    expect(mobileWeatherQueryStoreMock.request).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ location: expect.objectContaining({ id: 'b' }) }),
+    );
   });
 
   it('resets/aborts on unmount', async () => {

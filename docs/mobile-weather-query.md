@@ -11,7 +11,7 @@
 SavedLocationApplicationSnapshot READY
 → selectedLocationId로 저장 지역 record 조회
 → createWeatherRequestFromSavedLocation(record)
-→ mobileWeatherQueryStore.request(selectedLocationId, request)
+→ mobileWeatherQueryStore.request(request)
 → WeatherApiClient.fetchWeather()
 → observable MobileWeatherQuerySnapshot (IDLE/LOADING/SUCCESS/ERROR)
 → apps/mobile/src/app/index.tsx의 weather block
@@ -48,11 +48,37 @@ selectedLocationId와 같은 record가 locations에 존재
 createWeatherRequestFromSavedLocation(record).ok === true
 ```
 
-그 밖의 모든 상태(`NOT_STARTED`/`LOADING`/`SELECTION_LOADING`/`EMPTY`/`ERROR`)와, `READY`이지만 위
-invariant가 깨진 synthetic snapshot(선택 id가 `locations`에 없거나 mapping이 실패하는 경우)은
-request 0회이며 store를 `reset()`합니다. Effect dependency는 semantic key(`savedLocations.status`와
-`READY`일 때의 `selectedLocationId`)만 사용하므로, 선택되지 않은 지역을 추가/삭제해 snapshot object만
-바뀌어도 같은 선택의 weather를 다시 요청하지 않습니다.
+그 밖의 모든 상태와 reset 시점은 다음과 같이 구분됩니다.
+
+- **초기 non-READY mount** (`NOT_STARTED`/`LOADING`/`SELECTION_LOADING`/`EMPTY`/`ERROR`로 처음
+  mount) — request 0회이며, 이전에 시작된 query가 없으므로 `reset()`도 호출하지 않습니다(effect가
+  `return undefined`로 끝남).
+- **`READY` → non-READY로 전이** — 직전 `READY` effect의 cleanup이 이미 store를 `reset()`/abort하며,
+  새 non-READY effect 자신은 추가로 reset하지 않습니다.
+- **`READY`이지만 invariant가 깨진 synthetic snapshot** (선택 id가 `locations`에 없거나
+  `createWeatherRequestFromSavedLocation`의 mapping이 실패하는 경우) — 현재 effect가 request 대신
+  명시적으로 `reset()`을 호출합니다.
+
+Effect dependency는 semantic key(`savedLocations.status`와 `READY`일 때의 `selectedLocationId`)만
+사용하므로, 선택되지 않은 지역을 추가/삭제해 snapshot object만 바뀌어도 같은 선택의 weather를 다시
+요청하지 않습니다.
+
+## Request identity
+
+`mobileWeatherQueryStore.request(request: WeatherRequestV1)`는 `locationId`를 별도 인자로 받지
+않습니다 — `request.location.id`가 이 query의 유일한 identity이며, snapshot의 `locationId`도
+여기서 파생됩니다. 별도 `locationId` 인자가 없으므로 호출자가 서로 다른 `locationId`/`request`
+쌍을 전달할 수 없습니다. `retry()`도 내부에 보관된 동일 `WeatherRequestV1` 하나만 재사용하므로
+같은 이유로 identity 불일치가 구조적으로 불가능합니다.
+
+## Response location correlation
+
+`SUCCESS`를 공개하기 전에 store는 응답의 `data.data.location`이 이 generation을 시작한
+`WeatherRequestV1.location`과 아홉 개 공유 필드(`id`/`displayName`/`countryCode`/`adminArea1`/
+`adminArea2`/`adminArea3`/`latitude`/`longitude`/`timezone`) 모두에서 정확히 일치하는지 explicit
+field-by-field 비교로 검증합니다(`JSON.stringify`나 spread 비교 아님). 하나라도 다르면 client를
+다시 호출하지 않고 `ERROR`/`INVALID_RESPONSE`로 매핑하며, 요청/응답 어느 쪽의 raw 값도 snapshot에
+노출하지 않습니다. 모든 필드가 일치할 때만 `{ status: 'SUCCESS', locationId, data }`를 공개합니다.
 
 ## Single active request, generation guard, abort
 
@@ -65,11 +91,17 @@ reject하는 out-of-contract 상황)는 stale generation으로 감지되어 조�
 무효화 → 활성 request abort → retry용 내부 context 제거 → `IDLE` 공개 순서이며, 이미 `IDLE`이고
 활성 request가 없으면 semantic no-op입니다(listener 알림 없음).
 
+`LOADING` publish는 subscribed listener를 동기적으로 실행할 수 있고, 그 listener가 재진입적으로
+`reset()`/`request()`/`retry()`를 호출해 generation을 다시 증가시킬 수 있습니다. Store는 이
+publish(및 그 직후의 이전 controller abort) 이후, `client.fetchWeather`를 호출하기 *전에* generation을
+한 번 더 확인합니다 — 그래서 이런 재진입 reset/supersede가 발생한 generation은 stale client call을
+전혀 만들지 않습니다(응답이 도착한 뒤 버려지는 것이 아니라 애초에 호출되지 않습니다).
+
 ## Retry 정책
 
-`retry()`는 `ERROR`에서만 store 내부에 보관된 동일 `locationId`/`WeatherRequestV1`으로 새
-generation을 시작합니다. `WeatherRequestV1`은 이 목적에만 보관되며 snapshot이나 오류에 노출되지
-않습니다. `IDLE`/`LOADING`/`SUCCESS`에서는 no-op이고, timer·backoff·자동 retry는 없습니다.
+`retry()`는 `ERROR`에서만 store 내부에 보관된 동일 `WeatherRequestV1`으로 새 generation을
+시작합니다. `WeatherRequestV1`은 이 목적에만 보관되며 snapshot이나 오류에 노출되지 않습니다.
+`IDLE`/`LOADING`/`SUCCESS`에서는 no-op이고, timer·backoff·자동 retry는 없습니다.
 
 ## Safe error presentation
 

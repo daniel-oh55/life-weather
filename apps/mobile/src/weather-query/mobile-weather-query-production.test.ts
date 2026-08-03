@@ -49,12 +49,13 @@ describe('mobile-weather-query-production', () => {
     process.env[ENV_KEY] = '';
     const { mobileWeatherQueryStore } = await import('./mobile-weather-query-production');
 
-    mobileWeatherQueryStore.request('synthetic-location', validWeatherRequest());
+    const request = validWeatherRequest();
+    mobileWeatherQueryStore.request(request);
     await flush();
 
     expect(mobileWeatherQueryStore.getSnapshot()).toEqual({
       status: 'ERROR',
-      locationId: 'synthetic-location',
+      locationId: request.location.id,
       presentation: 'CONFIGURATION',
     });
     expect(fetchSpy).toHaveBeenCalledTimes(0);

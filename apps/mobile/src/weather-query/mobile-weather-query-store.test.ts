@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { WeatherLocation, WeatherRequestV1, WeatherSuccessResponseV1 } from '@life-weather/contracts';
+
 import {
   weatherApiClientError,
   type WeatherApiClient,
@@ -13,6 +15,28 @@ import {
 } from '../weather-api/fixtures';
 
 import { createMobileWeatherQueryStore } from './mobile-weather-query-store';
+
+// ---------------------------------------------------------------------------
+// `validWeatherRequest()`/`successResponseBody()` (from `../weather-api/fixtures`) always carry the
+// same fixed synthetic location. These local helpers build a request for an arbitrary `id` (keeping
+// every other shared field from that same fixture location) and a response body whose `data.location`
+// is pinned to exactly match a given request — so tests can freely use readable ids like `'a'`/`'b'`
+// while staying correlated under the store's response-location check.
+// ---------------------------------------------------------------------------
+
+function requestForLocation(id: string): WeatherRequestV1 {
+  const base = validWeatherRequest();
+  return { location: { ...base.location, id } };
+}
+
+function successResponseBodyFor(request: WeatherRequestV1): WeatherSuccessResponseV1 {
+  const body = successResponseBody();
+  return { ...body, data: { ...body.data, location: request.location } };
+}
+
+function successResultFor(request: WeatherRequestV1): WeatherApiResult {
+  return { kind: 'success', data: successResponseBodyFor(request) };
+}
 
 // ---------------------------------------------------------------------------
 // A `Deferred` lets a test resolve/reject the client's `fetchWeather` promise on its own schedule,
@@ -85,17 +109,19 @@ describe('IDLE -> request -> LOADING -> SUCCESS', () => {
     const deferred = createDeferred<WeatherApiResult>();
     fetchWeather.mockReturnValue(deferred.promise);
 
-    store.request('loc-a', validWeatherRequest());
+    const request = requestForLocation('loc-a');
+    store.request(request);
     expect(store.getSnapshot()).toEqual({ status: 'LOADING', locationId: 'loc-a' });
 
-    deferred.resolve(successResult());
+    const expectedBody = successResponseBodyFor(request);
+    deferred.resolve({ kind: 'success', data: expectedBody });
     await deferred.promise;
 
     const snapshot = store.getSnapshot();
     expect(snapshot.status).toBe('SUCCESS');
     if (snapshot.status === 'SUCCESS') {
       expect(snapshot.locationId).toBe('loc-a');
-      expect(snapshot.data).toEqual(successResponseBody());
+      expect(snapshot.data).toEqual(expectedBody);
     }
   });
 });
@@ -110,7 +136,7 @@ describe('result mapping', () => {
     const deferred = createDeferred<WeatherApiResult>();
     fetchWeather.mockReturnValue(deferred.promise);
 
-    store.request('a', validWeatherRequest());
+    store.request(requestForLocation('a'));
     deferred.resolve(apiErrorResult());
     await deferred.promise;
 
@@ -122,7 +148,7 @@ describe('result mapping', () => {
     const deferred = createDeferred<WeatherApiResult>();
     fetchWeather.mockReturnValue(deferred.promise);
 
-    store.request('a', validWeatherRequest());
+    store.request(requestForLocation('a'));
     deferred.resolve(clientErrorResult('invalidClientConfiguration'));
     await deferred.promise;
 
@@ -138,7 +164,7 @@ describe('result mapping', () => {
     const deferred = createDeferred<WeatherApiResult>();
     fetchWeather.mockReturnValue(deferred.promise);
 
-    store.request('a', validWeatherRequest());
+    store.request(requestForLocation('a'));
     deferred.resolve(clientErrorResult('networkError'));
     await deferred.promise;
 
@@ -154,7 +180,7 @@ describe('result mapping', () => {
     const deferred = createDeferred<WeatherApiResult>();
     fetchWeather.mockReturnValue(deferred.promise);
 
-    store.request('a', validWeatherRequest());
+    store.request(requestForLocation('a'));
     deferred.reject(new Error('synthetic contract violation'));
     await deferred.promise.catch(() => {});
 
@@ -177,7 +203,7 @@ describe('result mapping', () => {
     const deferred = createDeferred<WeatherApiResult>();
     fetchWeather.mockReturnValue(deferred.promise);
 
-    store.request('a', validWeatherRequest());
+    store.request(requestForLocation('a'));
     deferred.resolve(clientErrorResult(kind));
     await deferred.promise;
 
@@ -193,11 +219,181 @@ describe('result mapping', () => {
     const deferred = createDeferred<WeatherApiResult>();
     fetchWeather.mockReturnValue(deferred.promise);
 
-    store.request('a', validWeatherRequest());
+    store.request(requestForLocation('a'));
     deferred.resolve(clientErrorResult('aborted'));
     await deferred.promise;
 
     expect(store.getSnapshot()).toEqual({ status: 'IDLE' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Request identity: `request.location.id` is the sole source of the query's locationId. There is no
+// separate `locationId` parameter a caller could pass out of sync with the request.
+// ---------------------------------------------------------------------------
+
+describe('request identity', () => {
+  it('derives the LOADING/terminal locationId from request.location.id alone', () => {
+    const { store, fetchWeather } = setup();
+    fetchWeather.mockReturnValue(createDeferred<WeatherApiResult>().promise);
+
+    const request = requestForLocation('derived-id');
+    store.request(request);
+
+    expect(store.getSnapshot()).toEqual({ status: 'LOADING', locationId: 'derived-id' });
+  });
+
+  it('retry restarts with the exact retained request, including its location.id', async () => {
+    const { store, fetchWeather } = setup();
+    const deferred1 = createDeferred<WeatherApiResult>();
+    fetchWeather.mockReturnValueOnce(deferred1.promise);
+
+    const request = requestForLocation('retry-id');
+    store.request(request);
+    deferred1.resolve(clientErrorResult('networkError'));
+    await deferred1.promise;
+
+    const deferred2 = createDeferred<WeatherApiResult>();
+    fetchWeather.mockReturnValueOnce(deferred2.promise);
+    store.retry();
+
+    expect(fetchWeather).toHaveBeenNthCalledWith(2, request, expect.anything());
+    expect(store.getSnapshot()).toEqual({ status: 'LOADING', locationId: 'retry-id' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Response location correlation: a SUCCESS is published only when the response's `data.location`
+// exactly matches the requested location on every shared field. Any mismatch is ERROR/INVALID_RESPONSE
+// with no retry and no raw value exposed.
+// ---------------------------------------------------------------------------
+
+describe('response location correlation', () => {
+  it.each<[string, Partial<WeatherLocation>]>([
+    ['id', { id: 'different-location-id' }],
+    ['displayName', { displayName: 'Different City' }],
+    ['countryCode', { countryCode: 'US' }],
+    ['adminArea1', { adminArea1: 'Different Province' }],
+    ['adminArea2', { adminArea2: 'Different District' }],
+    ['adminArea3', { adminArea3: 'Different Area' }],
+    ['latitude', { latitude: 0 }],
+    ['longitude', { longitude: 0 }],
+    ['timezone', { timezone: 'Asia/Tokyo' }],
+  ])(
+    'rejects a SUCCESS response whose %s does not match the requested location',
+    async (_field, override) => {
+      const { store, fetchWeather } = setup();
+      const deferred = createDeferred<WeatherApiResult>();
+      fetchWeather.mockReturnValue(deferred.promise);
+
+      const request = requestForLocation('correlated-id');
+      store.request(request);
+
+      const body = successResponseBodyFor(request);
+      const mismatchedBody: WeatherSuccessResponseV1 = {
+        ...body,
+        data: { ...body.data, location: { ...body.data.location, ...override } },
+      };
+      deferred.resolve({ kind: 'success', data: mismatchedBody });
+      await deferred.promise;
+
+      expect(store.getSnapshot()).toEqual({
+        status: 'ERROR',
+        locationId: 'correlated-id',
+        presentation: 'INVALID_RESPONSE',
+      });
+    },
+  );
+
+  it('does not expose the mismatched raw location values anywhere in the snapshot', async () => {
+    const { store, fetchWeather } = setup();
+    const deferred = createDeferred<WeatherApiResult>();
+    fetchWeather.mockReturnValue(deferred.promise);
+
+    const request = requestForLocation('correlated-id');
+    store.request(request);
+
+    const body = successResponseBodyFor(request);
+    const mismatchedBody: WeatherSuccessResponseV1 = {
+      ...body,
+      data: {
+        ...body.data,
+        location: {
+          ...body.data.location,
+          id: 'attacker-controlled-id',
+          displayName: 'Secret Leak Display Name',
+        },
+      },
+    };
+    deferred.resolve({ kind: 'success', data: mismatchedBody });
+    await deferred.promise;
+
+    const serialized = JSON.stringify(store.getSnapshot());
+    expect(serialized).not.toContain('attacker-controlled-id');
+    expect(serialized).not.toContain('Secret Leak Display Name');
+  });
+
+  it('publishes SUCCESS when every shared field matches exactly', async () => {
+    const { store, fetchWeather } = setup();
+    const deferred = createDeferred<WeatherApiResult>();
+    fetchWeather.mockReturnValue(deferred.promise);
+
+    const request = requestForLocation('correlated-id');
+    store.request(request);
+    deferred.resolve(successResultFor(request));
+    await deferred.promise;
+
+    expect(store.getSnapshot()).toEqual({
+      status: 'SUCCESS',
+      locationId: 'correlated-id',
+      data: successResponseBodyFor(request),
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Reentrant notification guard: a listener may reentrantly reset()/request() during the synchronous
+// LOADING publish. The generation is rechecked after that publish, before `fetchWeather` is called, so
+// a superseded/reset generation never reaches the client.
+// ---------------------------------------------------------------------------
+
+describe('reentrant notification guard', () => {
+  it('a listener that resets on the first LOADING notification prevents any client call and settles IDLE', () => {
+    const { store, fetchWeather } = setup();
+    fetchWeather.mockReturnValue(createDeferred<WeatherApiResult>().promise);
+
+    let notifications = 0;
+    const listener = vi.fn(() => {
+      notifications += 1;
+      if (notifications === 1) {
+        store.reset();
+      }
+    });
+    store.subscribe(listener);
+
+    expect(() => store.request(requestForLocation('a'))).not.toThrow();
+
+    expect(fetchWeather).toHaveBeenCalledTimes(0);
+    expect(store.getSnapshot()).toEqual({ status: 'IDLE' });
+  });
+
+  it('a listener that requests a different location on the first LOADING notification supersedes cleanly', () => {
+    const { store, fetchWeather } = setup();
+    fetchWeather.mockReturnValue(createDeferred<WeatherApiResult>().promise);
+
+    let notifications = 0;
+    const listener = vi.fn(() => {
+      notifications += 1;
+      if (notifications === 1) {
+        store.request(requestForLocation('b'));
+      }
+    });
+    store.subscribe(listener);
+
+    expect(() => store.request(requestForLocation('a'))).not.toThrow();
+
+    expect(fetchWeather).toHaveBeenCalledTimes(1);
+    expect(store.getSnapshot()).toEqual({ status: 'LOADING', locationId: 'b' });
   });
 });
 
@@ -210,8 +406,8 @@ describe('same-id dedupe', () => {
     const { store, fetchWeather } = setup();
     fetchWeather.mockReturnValue(createDeferred<WeatherApiResult>().promise);
 
-    store.request('a', validWeatherRequest());
-    store.request('a', validWeatherRequest());
+    store.request(requestForLocation('a'));
+    store.request(requestForLocation('a'));
 
     expect(fetchWeather).toHaveBeenCalledTimes(1);
   });
@@ -221,11 +417,12 @@ describe('same-id dedupe', () => {
     const deferred = createDeferred<WeatherApiResult>();
     fetchWeather.mockReturnValue(deferred.promise);
 
-    store.request('a', validWeatherRequest());
-    deferred.resolve(successResult());
+    const request = requestForLocation('a');
+    store.request(request);
+    deferred.resolve(successResultFor(request));
     await deferred.promise;
 
-    store.request('a', validWeatherRequest());
+    store.request(requestForLocation('a'));
     expect(fetchWeather).toHaveBeenCalledTimes(1);
   });
 
@@ -234,11 +431,11 @@ describe('same-id dedupe', () => {
     const deferred = createDeferred<WeatherApiResult>();
     fetchWeather.mockReturnValue(deferred.promise);
 
-    store.request('a', validWeatherRequest());
+    store.request(requestForLocation('a'));
     deferred.resolve(clientErrorResult('networkError'));
     await deferred.promise;
 
-    store.request('a', validWeatherRequest());
+    store.request(requestForLocation('a'));
     expect(fetchWeather).toHaveBeenCalledTimes(1);
   });
 });
@@ -256,10 +453,10 @@ describe('A LOADING -> B request supersede', () => {
     const deferredB = createDeferred<WeatherApiResult>();
     fetchWeather.mockReturnValueOnce(deferredA.promise).mockReturnValueOnce(deferredB.promise);
 
-    store.request('a', validWeatherRequest());
+    store.request(requestForLocation('a'));
     const signalA = signalFromCall(fetchWeather, 0);
 
-    store.request('b', validWeatherRequest());
+    store.request(requestForLocation('b'));
     expect(signalA.aborted).toBe(true);
     expect(store.getSnapshot()).toEqual({ status: 'LOADING', locationId: 'b' });
 
@@ -278,14 +475,15 @@ describe('A LOADING -> B request supersede', () => {
     const deferredB = createDeferred<WeatherApiResult>();
     fetchWeather.mockReturnValueOnce(deferredA.promise).mockReturnValueOnce(deferredB.promise);
 
-    store.request('a', validWeatherRequest());
-    store.request('b', validWeatherRequest());
+    store.request(requestForLocation('a'));
+    const requestB = requestForLocation('b');
+    store.request(requestB);
 
     deferredA.resolve(clientErrorResult('networkError'));
     await deferredA.promise;
     expect(store.getSnapshot()).toEqual({ status: 'LOADING', locationId: 'b' });
 
-    deferredB.resolve(successResult());
+    deferredB.resolve(successResultFor(requestB));
     await deferredB.promise;
     const snapshot = store.getSnapshot();
     expect(snapshot.status).toBe('SUCCESS');
@@ -305,7 +503,7 @@ describe('reset', () => {
     const deferred = createDeferred<WeatherApiResult>();
     fetchWeather.mockReturnValue(deferred.promise);
 
-    store.request('a', validWeatherRequest());
+    store.request(requestForLocation('a'));
     const signal = signalFromCall(fetchWeather, 0);
 
     store.reset();
@@ -323,14 +521,15 @@ describe('reset', () => {
     const deferred2 = createDeferred<WeatherApiResult>();
     fetchWeather.mockReturnValueOnce(deferred1.promise).mockReturnValueOnce(deferred2.promise);
 
-    store.request('a', validWeatherRequest());
+    store.request(requestForLocation('a'));
     store.reset();
-    store.request('a', validWeatherRequest());
+    const request = requestForLocation('a');
+    store.request(request);
 
     expect(fetchWeather).toHaveBeenCalledTimes(2);
     expect(store.getSnapshot()).toEqual({ status: 'LOADING', locationId: 'a' });
 
-    deferred2.resolve(successResult());
+    deferred2.resolve(successResultFor(request));
     await deferred2.promise;
     expect(store.getSnapshot().status).toBe('SUCCESS');
   });
@@ -351,12 +550,13 @@ describe('reset', () => {
 // ---------------------------------------------------------------------------
 
 describe('retry', () => {
-  it('retries from ERROR using the retained locationId/request', async () => {
+  it('retries from ERROR using the retained request', async () => {
     const { store, fetchWeather } = setup();
     const deferred1 = createDeferred<WeatherApiResult>();
     fetchWeather.mockReturnValueOnce(deferred1.promise);
 
-    store.request('a', validWeatherRequest());
+    const request = requestForLocation('a');
+    store.request(request);
     deferred1.resolve(clientErrorResult('networkError'));
     await deferred1.promise;
     expect(store.getSnapshot()).toEqual({
@@ -372,7 +572,7 @@ describe('retry', () => {
     expect(fetchWeather).toHaveBeenCalledTimes(2);
     expect(store.getSnapshot()).toEqual({ status: 'LOADING', locationId: 'a' });
 
-    deferred2.resolve(successResult());
+    deferred2.resolve(successResultFor(request));
     await deferred2.promise;
     expect(store.getSnapshot().status).toBe('SUCCESS');
   });
@@ -381,7 +581,7 @@ describe('retry', () => {
     const { store, fetchWeather } = setup();
     const deferred1 = createDeferred<WeatherApiResult>();
     fetchWeather.mockReturnValueOnce(deferred1.promise);
-    store.request('a', validWeatherRequest());
+    store.request(requestForLocation('a'));
     deferred1.resolve(clientErrorResult('networkError'));
     await deferred1.promise;
 
@@ -401,11 +601,12 @@ describe('retry', () => {
 
     const deferred = createDeferred<WeatherApiResult>();
     fetchWeather.mockReturnValue(deferred.promise);
-    store.request('a', validWeatherRequest());
+    const request = requestForLocation('a');
+    store.request(request);
     store.retry(); // LOADING
     expect(fetchWeather).toHaveBeenCalledTimes(1);
 
-    deferred.resolve(successResult());
+    deferred.resolve(successResultFor(request));
     await deferred.promise;
     store.retry(); // SUCCESS
     expect(fetchWeather).toHaveBeenCalledTimes(1);
@@ -442,8 +643,9 @@ describe('snapshot contract', () => {
 
     const deferred = createDeferred<WeatherApiResult>();
     fetchWeather.mockReturnValue(deferred.promise);
-    store.request('a', validWeatherRequest());
-    deferred.resolve(successResult());
+    const request = requestForLocation('a');
+    store.request(request);
+    deferred.resolve(successResultFor(request));
     await deferred.promise;
 
     expect(listener).toHaveBeenCalledTimes(0);
@@ -460,11 +662,12 @@ describe('snapshot contract', () => {
 
     const deferred = createDeferred<WeatherApiResult>();
     fetchWeather.mockReturnValue(deferred.promise);
-    expect(() => store.request('a', validWeatherRequest())).not.toThrow();
+    const request = requestForLocation('a');
+    expect(() => store.request(request)).not.toThrow();
     expect(throwingListener).toHaveBeenCalledTimes(1);
     expect(goodListener).toHaveBeenCalledTimes(1);
 
-    deferred.resolve(successResult());
+    deferred.resolve(successResultFor(request));
     await deferred.promise;
     expect(store.getSnapshot().status).toBe('SUCCESS');
   });
@@ -475,10 +678,11 @@ describe('snapshot contract', () => {
 
     const deferred = createDeferred<WeatherApiResult>();
     fetchWeather.mockReturnValue(deferred.promise);
-    store.request('a', validWeatherRequest());
+    const request = requestForLocation('a');
+    store.request(request);
     expect(Object.isFrozen(store.getSnapshot())).toBe(true);
 
-    deferred.resolve(successResult());
+    deferred.resolve(successResultFor(request));
     await deferred.promise;
     expect(Object.isFrozen(store.getSnapshot())).toBe(true);
   });

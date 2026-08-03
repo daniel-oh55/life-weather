@@ -3,23 +3,34 @@
  *
  * Wraps an injected {@link WeatherApiClient} with the small `IDLE` / `LOADING` / `SUCCESS` / `ERROR`
  * state machine a screen needs to show the weather for one selected saved location: a stable,
- * deep-frozen cached snapshot, a subscribe/notify contract a React `useSyncExternalStore` consumer
- * can read, and a single active request at a time.
+ * top-level-frozen cached snapshot, a subscribe/notify contract a React `useSyncExternalStore`
+ * consumer can read, and a single active request at a time.
  *
  * This module owns no saved-location, persistence, environment, or React concern — it only ever
- * sees a `locationId` and an already-built `WeatherRequestV1`. It never imports React, Expo,
- * `process.env`, the production client singleton, the saved-location store, AsyncStorage, or
+ * sees an already-built `WeatherRequestV1`. `WeatherRequestV1.location.id` is the *sole* location
+ * identity the store knows about: there is no separate `locationId` parameter, so a caller cannot
+ * pass a `locationId` that disagrees with the request it is paired with. It never imports React,
+ * Expo, `process.env`, the production client singleton, the saved-location store, AsyncStorage, or
  * logging/telemetry.
  *
  * Race safety is generation-based: every {@link MobileWeatherQueryStore.request} or
  * {@link MobileWeatherQueryStore.retry} call bumps an internal generation counter *before* aborting
  * the previous in-flight request, so a stale completion (a late success, a late `apiError`/
  * `clientError`, or an out-of-contract rejection) is detected by generation mismatch and dropped —
- * it can never overwrite a newer terminal state. `WeatherRequestV1` is retained internally only for
+ * it can never overwrite a newer terminal state. The generation is also rechecked *after* the
+ * `LOADING` publish (which can run a listener synchronously) and before the client is ever called,
+ * so a listener that reentrantly resets or starts a different request during that notification never
+ * causes a stale `fetchWeather` call. `WeatherRequestV1` is retained internally only for
  * {@link MobileWeatherQueryStore.retry} and is never exposed on the snapshot or in an error.
+ *
+ * A `SUCCESS` result is published only once the response's `data.location` exactly matches the
+ * requested `WeatherRequestV1.location` on every shared field (see {@link locationsCorrelate}); a
+ * mismatch — a stale/misrouted response — is mapped to `ERROR`/`INVALID_RESPONSE` without a retry
+ * and without exposing either location's raw value.
  */
 
 import type {
+  WeatherLocation,
   WeatherRequestV1,
   WeatherSuccessResponseV1,
 } from '@life-weather/contracts';
@@ -71,15 +82,15 @@ export interface MobileWeatherQueryStore {
   subscribe(listener: () => void): () => void;
 
   /**
-   * Start a query for `locationId` using the already-built `request`. A no-op when the current
-   * snapshot is `LOADING`/`SUCCESS`/`ERROR` for the *same* `locationId`; supersedes (aborts) an
-   * in-flight request for a *different* `locationId`.
+   * Start a query for the already-built `request`, whose `request.location.id` is the query's
+   * identity. A no-op when the current snapshot is `LOADING`/`SUCCESS`/`ERROR` for the *same*
+   * `request.location.id`; supersedes (aborts) an in-flight request for a *different* one.
    */
-  request(locationId: string, request: WeatherRequestV1): void;
+  request(request: WeatherRequestV1): void;
 
   /**
    * Retry the request that produced the current `ERROR`, using the internally retained
-   * `locationId`/`WeatherRequestV1`. A no-op outside `ERROR`. No timer, backoff, or automatic retry.
+   * `WeatherRequestV1`. A no-op outside `ERROR`. No timer, backoff, or automatic retry.
    */
   retry(): void;
 
@@ -91,6 +102,26 @@ export interface MobileWeatherQueryStore {
 }
 
 const IDLE_SNAPSHOT: MobileWeatherQuerySnapshot = Object.freeze({ status: 'IDLE' });
+
+/**
+ * Exact equality on every shared {@link WeatherLocation} field between the location that was
+ * requested and the location a `SUCCESS` response describes. Field-by-field on purpose — never
+ * `JSON.stringify` or a spread-based comparison — so key order and incidental extra properties
+ * (there are none on this shared, `.strict()`-validated shape) can never mask a real mismatch.
+ */
+function locationsCorrelate(requested: WeatherLocation, responded: WeatherLocation): boolean {
+  return (
+    requested.id === responded.id &&
+    requested.displayName === responded.displayName &&
+    requested.countryCode === responded.countryCode &&
+    requested.adminArea1 === responded.adminArea1 &&
+    requested.adminArea2 === responded.adminArea2 &&
+    requested.adminArea3 === responded.adminArea3 &&
+    requested.latitude === responded.latitude &&
+    requested.longitude === responded.longitude &&
+    requested.timezone === responded.timezone
+  );
+}
 
 /** Value equality — never a reference comparison, since every non-`IDLE` variant is a fresh object. */
 function snapshotsEqual(
@@ -132,7 +163,7 @@ export function createMobileWeatherQueryStore(
   let generation = 0;
   let activeController: AbortController | null = null;
   // Retained only so `retry()` can restart the exact same query; never exposed on the snapshot.
-  let lastLocationId: string | null = null;
+  // `request.location.id` (derived, never stored separately) is the query's sole identity.
   let lastRequest: WeatherRequestV1 | null = null;
   const listeners = new Set<() => void>();
 
@@ -164,7 +195,6 @@ export function createMobileWeatherQueryStore(
    * Publish `IDLE` rather than leaving the snapshot stuck at `LOADING` or surfacing a spurious error.
    */
   function settleAborted(): void {
-    lastLocationId = null;
     lastRequest = null;
     publish(IDLE_SNAPSHOT);
   }
@@ -195,19 +225,30 @@ export function createMobileWeatherQueryStore(
    * previous controller, install the new controller/context, publish `LOADING`, *then* abort the
    * previous controller — so an immediate synchronous settlement from that abort can never land
    * before the new `LOADING` is visible, and is dropped anyway by the generation guard below.
+   *
+   * The `LOADING` publish can run a subscribed listener synchronously, and that listener may
+   * reentrantly call `reset()`/`request()`/`retry()` — each of which bumps the generation again. The
+   * generation is rechecked immediately after the publish (and after aborting the now-previous
+   * controller), *before* `client.fetchWeather` is ever called, so a reentrant reset/supersede during
+   * that notification produces zero stale client calls for this generation instead of one whose
+   * result is merely discarded on completion.
    */
-  function beginRequest(locationId: string, weatherRequest: WeatherRequestV1): void {
+  function beginRequest(weatherRequest: WeatherRequestV1): void {
+    const locationId = weatherRequest.location.id;
     generation += 1;
     const myGeneration = generation;
     const previousController = activeController;
 
     const controller = new AbortController();
     activeController = controller;
-    lastLocationId = locationId;
     lastRequest = weatherRequest;
 
     publish({ status: 'LOADING', locationId });
     previousController?.abort();
+
+    if (myGeneration !== generation) {
+      return; // superseded or reset by a reentrant listener during the LOADING publish above
+    }
 
     void client.fetchWeather(weatherRequest, { signal: controller.signal }).then(
       (result) => {
@@ -217,6 +258,10 @@ export function createMobileWeatherQueryStore(
         activeController = null;
         switch (result.kind) {
           case 'success':
+            if (!locationsCorrelate(weatherRequest.location, result.data.data.location)) {
+              publish({ status: 'ERROR', locationId, presentation: 'INVALID_RESPONSE' });
+              return;
+            }
             publish({ status: 'SUCCESS', locationId, data: result.data });
             return;
           case 'apiError':
@@ -250,29 +295,29 @@ export function createMobileWeatherQueryStore(
       };
     },
 
-    request(locationId: string, weatherRequest: WeatherRequestV1): void {
+    request(weatherRequest: WeatherRequestV1): void {
+      const locationId = weatherRequest.location.id;
       const current = cachedSnapshot;
       if (current.status !== 'IDLE' && current.locationId === locationId) {
         return;
       }
-      beginRequest(locationId, weatherRequest);
+      beginRequest(weatherRequest);
     },
 
     retry(): void {
       if (cachedSnapshot.status !== 'ERROR') {
         return;
       }
-      if (lastLocationId === null || lastRequest === null) {
+      if (lastRequest === null) {
         return;
       }
-      beginRequest(lastLocationId, lastRequest);
+      beginRequest(lastRequest);
     },
 
     reset(): void {
       generation += 1;
       const controller = activeController;
       activeController = null;
-      lastLocationId = null;
       lastRequest = null;
       controller?.abort();
       publish(IDLE_SNAPSHOT);

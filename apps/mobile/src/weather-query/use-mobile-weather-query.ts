@@ -86,7 +86,7 @@ export function useMobileWeatherQuery(
       return undefined;
     }
 
-    mobileWeatherQueryStore.request(savedLocations.selectedLocationId, requestResult.request);
+    mobileWeatherQueryStore.request(requestResult.request);
 
     return () => {
       mobileWeatherQueryStore.reset();
