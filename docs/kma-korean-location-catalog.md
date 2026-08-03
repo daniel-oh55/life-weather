@@ -35,6 +35,85 @@
 
 다운로드 URL, service key, 로컬 파일 경로는 어디에도 기록하지 않습니다.
 
+### Source TSV line-ending contract
+
+`sourceSha256`은 committed `kma-korean-location-source.tsv`의 **exact byte**에 대한 SHA-256이므로
+line ending도 provenance contract의 일부입니다. 저장소 root의 `.gitattributes`는 이 source TSV
+**한 경로만** `text eol=lf`로 고정합니다 — 저장소 전역 `* text=auto`나 `*.tsv` 전체 규칙은 두지
+않았고, 다른 파일의 EOL 정책은 바꾸지 않습니다. 따라서 Windows에서 `core.autocrlf=true`를 써도
+exact-path 규칙이 우선하므로, **새 clean checkout에서는 이 파일이 LF로 checkout되며 별도의 수동
+변환이 필요하지 않습니다.**
+
+이 규칙이 없으면 `core.autocrlf=true` checkout이 파일을 CRLF로 바꿔 raw-byte SHA-256만 달라지고,
+manifest integrity 테스트가 실패합니다(전수 대조 verifier는 행 끝 `\r`을 제거하므로 그대로
+통과합니다 — 즉 값이 아니라 byte만 어긋납니다).
+
+검증에 사용한 Windows `core.autocrlf=true` working tree에서는 기존 CRLF 파일에
+`git checkout-index --force`만 실행했을 때 파일이 LF로 다시 작성되지 않는 사례가 확인됐습니다.
+환경이나 Git 버전에 따라 동작을 추정하지 않고, 아래 복구 절차는 파일을 제거한 뒤 index에서
+다시 checkout하는 결정론적 방법을 사용합니다.
+
+이 복구 절차는 다음 전제에서만 실행합니다.
+
+- 이 PR(#53)이 merge되어 현재 checkout의 index에 `.gitattributes`가 이미 존재합니다.
+- source TSV에 사용자 수정이 없습니다.
+- 아래 exact-path `git status` 출력이 비어 있습니다.
+
+이 규칙이 추가되기 전에 만든 working tree에는 CRLF checkout이 남아 있을 수 있습니다. 이때는 먼저
+해당 파일에 **사용자 수정이 없는지** 확인한 뒤,
+
+```bash
+git status --short -- \
+  apps/mobile/src/locations/catalog/kma-korean-location-source.tsv
+```
+
+출력이 있으면 삭제하거나 checkout하지 말고 중단합니다. 출력이 비어 있으면 그 파일만 index에서
+다시 checkout합니다.
+
+```bash
+rm apps/mobile/src/locations/catalog/kma-korean-location-source.tsv
+git checkout-index --force -- \
+  apps/mobile/src/locations/catalog/kma-korean-location-source.tsv
+```
+
+다시 쓴 뒤 다음 안전 절차를 반드시 거칩니다.
+
+```bash
+git ls-files --eol \
+  apps/mobile/src/locations/catalog/kma-korean-location-source.tsv
+
+git diff --exit-code -- \
+  apps/mobile/src/locations/catalog/kma-korean-location-source.tsv
+```
+
+`git ls-files --eol`는 `i/lf w/lf attr/text eol=lf`를 보고해야 하고, `git diff`는 working-tree
+content와 index가 동일함을 보여야(즉 diff 없음) 합니다. `git status`가 modified로 표시되지만 위
+`git diff`가 비어 있는 경우에만, working-tree content가 index와 동일하다는 검증을 마친 뒤
+관찰된 stale index 상태를 정리하기 위해 같은 경로만 다시 stage합니다 — 단순 stat-refresh 전용
+명령이 아니라, diff 검증을 거친 뒤에만 허용되는 명시적 단계입니다.
+
+```bash
+git add -- \
+  apps/mobile/src/locations/catalog/kma-korean-location-source.tsv
+```
+
+그 후 다음을 검증합니다.
+
+```bash
+git diff --cached --exit-code -- \
+  apps/mobile/src/locations/catalog/kma-korean-location-source.tsv
+
+git status --short -- \
+  apps/mobile/src/locations/catalog/kma-korean-location-source.tsv
+```
+
+cached diff와 status 출력이 모두 없어야 합니다. diff가 있으면 manifest hash를 바꾸거나 commit하지
+말고 중단합니다.
+
+source를 갱신할 때는 **CRLF 변환에 맞춰 `sourceSha256`만 바꾸거나 generated catalog를 다시
+생성해서는 안 됩니다** — 정규화된 TSV는 LF로 유지하고, hash는 그 LF 원본에서 계산합니다. 이
+line-ending 규칙은 source 내용이나 generated catalog를 전혀 바꾸지 않습니다.
+
 ## XLSX → TSV → generated catalog 파이프라인
 
 ```text

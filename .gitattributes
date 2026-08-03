@@ -1,0 +1,2 @@
+# The source manifest hashes exact bytes; keep this normalized source LF on every platform.
+/apps/mobile/src/locations/catalog/kma-korean-location-source.tsv text eol=lf
