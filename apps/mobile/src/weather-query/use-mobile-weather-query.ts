@@ -40,8 +40,13 @@ function getMobileWeatherQuerySnapshot(): MobileWeatherQuerySnapshot {
  *
  * An effect requests a query only when `savedLocations.status === 'READY'`, the selected id names a
  * record actually present in `locations`, and mapping that record through
- * `createWeatherRequestFromSavedLocation` succeeds — any other case (including one that violates the
- * `READY` invariant) resets the store instead of requesting, without ever throwing. The effect's
+ * `createWeatherRequestFromSavedLocation` succeeds. Otherwise the effect never throws, and what it
+ * does instead depends on which case applies: on an initial non-`READY` mount it starts no request
+ * and calls no reset (there is no previous query to tear down yet); on a transition away from a
+ * requesting `READY` state (to non-`READY`, or to a different selection) the *previous* effect's own
+ * cleanup already reset the store, so the new effect does not reset again; only a `READY` snapshot
+ * that itself violates the invariant (an unresolvable selected id, or a mapping failure) makes the
+ * current effect call `reset()` explicitly instead of requesting. The effect's
  * dependencies are the semantic key only (`savedLocations.status`, and the selected id while
  * `READY`), so adding/removing a *non-selected* location — which only changes the snapshot object,
  * not that key — never re-requests the same selection's weather. Every cleanup (selection change,

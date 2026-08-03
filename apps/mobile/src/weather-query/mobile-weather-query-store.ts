@@ -106,8 +106,8 @@ const IDLE_SNAPSHOT: MobileWeatherQuerySnapshot = Object.freeze({ status: 'IDLE'
 /**
  * Exact equality on every shared {@link WeatherLocation} field between the location that was
  * requested and the location a `SUCCESS` response describes. Field-by-field on purpose — never
- * `JSON.stringify` or a spread-based comparison — so key order and incidental extra properties
- * (there are none on this shared, `.strict()`-validated shape) can never mask a real mismatch.
+ * `JSON.stringify` or a spread-based comparison — so key order and incidental extra properties on
+ * this validated shared `WeatherLocation` shape can never mask a real mismatch.
  */
 function locationsCorrelate(requested: WeatherLocation, responded: WeatherLocation): boolean {
   return (
