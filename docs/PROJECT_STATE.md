@@ -30,8 +30,17 @@
 - alerts
 - response cache
 - mobile API client의 화면 연결 (contract-safe `POST /weather` client boundary
-  `apps/mobile/src/weather-api`는 구현됨 — 요청·응답 계약 소비와 typed 오류 경계까지; 화면 연결·실제
-  호출은 미구현)
+  `apps/mobile/src/weather-api`는 구현됨 — 요청·응답 계약 소비와 typed 오류 경계까지. 이어서
+  **PR #54**에서 선택된 저장 지역을 이 client에 연결하는 provider-neutral **weather-query 경계**
+  (`apps/mobile/src/weather-query`)를 구현했습니다 — generation 기반 abort/stale-completion guard를
+  가진 observable store(`createMobileWeatherQueryStore`, `IDLE`/`LOADING`/`SUCCESS`/`ERROR`, 단일
+  active request, explicit `retry()`/`reset()`), `EXPO_PUBLIC_API_BASE_URL`(빈
+  `apps/mobile/.env.example` placeholder)만 읽는 production composition, 그리고 화면이 이미 읽은
+  saved-location snapshot을 인자로 받아 재구독 없이 request 시점을 결정하는 React hook
+  (`useMobileWeatherQuery`). 홈 화면(`apps/mobile/src/app/index.tsx`)이 이를 소비해 선택된 저장
+  지역이 `READY`일 때 loading/최소 hourly 요약(첫 시간대, 조건 한국어 라벨, 강수확률)/네 가지 고정
+  오류 문구·재시도 버튼을 표시합니다. 실제 endpoint 호출과 실기기 QA는 미수행입니다. 자세한 내용은
+  [mobile-weather-query.md](./mobile-weather-query.md) 참고)
 - location permission/storage model (기기 저장 지역 로컬 경계 `apps/mobile/src/locations`는 구현됨 —
   지역 한 건의 공유 `weatherLocation` 확장 strict schema(로컬 전용 `kmaGrid`/`isCurrent`/`sortOrder`)와
   explicit `WeatherRequestV1` 변환 경계, 여러 지역을 canonical collection으로 다루는 순수 경계
@@ -123,8 +132,9 @@
   홈 화면(`apps/mobile/src/app/index.tsx`)은 각 저장 지역 행에 `선택됨`(비활성)/`선택` 컨트롤을
   추가했습니다. 자세한 내용은 [mobile-selected-location.md](./mobile-selected-location.md) 참고.
   반면 선택 지역 삭제 fallback과 첫 지역 자동 선택은 이제 구현됐지만, reorder UI: 미구현, React
-  Context/Provider: 미구현, migration execution: 미구현, 위치 권한: 미구현, 실제 weather API
-  연결: 미구현이고, development client rebuild 및 실제 기기 QA: 미수행입니다)
+  Context/Provider: 미구현, migration execution: 미구현, 위치 권한: 미구현이고, development client
+  rebuild 및 실제 기기 QA: 미수행입니다. 선택 지역을 실제 weather API client에 연결하는 작업은 위
+  weather-query 경계 항목(PR #54)에서 다룹니다)
 - 디자인 시스템과 주요 화면
 - Android widget
 - AdMob
@@ -149,8 +159,10 @@
 - PR #51의 KMA 대한민국 지역 검색 카탈로그는 공공저작물 출처표시 제1유형을 따릅니다 — 이 출처
   표시는 향후 앱 설정의 "데이터 출처" 화면에도 노출되어야 하며, 그 설정 화면 자체는 아직
   구현되지 않았습니다.
-- PR #52는 선택 지역 상태(`selectedLocationId`)의 저장·복원·fallback만 구현했습니다. 다음은 아직
-  구현되지 않았습니다: 선택 지역을 실제 weather API client에 연결, mobile API base URL production
-  configuration, request loading/error/stale lifecycle, 실제 Android QA.
+- PR #52는 선택 지역 상태(`selectedLocationId`)의 저장·복원·fallback만 구현했습니다. 이어서 **PR
+  #54**가 선택 지역을 실제 weather API client에 연결하는 provider-neutral weather-query 경계와
+  Today 화면의 최소 loading/success/error 렌더링을 구현했습니다. 다음은 여전히 구현되지 않았습니다:
+  실제 `EXPO_PUBLIC_API_BASE_URL` production 값 설정, 실제 endpoint 검증, 완성형 Today 디자인, 실제
+  Android QA.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
