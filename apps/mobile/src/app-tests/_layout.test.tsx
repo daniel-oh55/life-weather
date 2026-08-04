@@ -75,7 +75,7 @@ afterEach(() => {
 
 describe('RootLayout call', () => {
   it('returns Stack, registers exactly one mount effect, and performs no storage I/O before the effect runs', async () => {
-    const { default: RootLayout } = await import('./_layout');
+    const { default: RootLayout } = await import('../app/_layout');
     const { Stack } = await import('expo-router');
     const { mobileSavedLocationHydrationManager } = await import(
       '../locations/mobile-saved-location-hydration-production'
@@ -115,7 +115,7 @@ describe('mount effect execution', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     const consoleInfo = vi.spyOn(console, 'info').mockImplementation(() => {});
 
-    const { default: RootLayout } = await import('./_layout');
+    const { default: RootLayout } = await import('../app/_layout');
     const { SAVED_LOCATION_PERSISTENCE_KEY, SELECTED_LOCATION_PERSISTENCE_KEY } = await import(
       '../locations'
     );
@@ -168,7 +168,7 @@ describe('mount effect execution', () => {
   it('does not start selected-location initialization when saved-location hydration fails', async () => {
     asyncStorageMock.getItem.mockRejectedValueOnce(new Error('synthetic storage failure'));
 
-    const { default: RootLayout } = await import('./_layout');
+    const { default: RootLayout } = await import('../app/_layout');
     const { mobileSavedLocationApplicationStore } = await import(
       '../locations/mobile-saved-location-application-production'
     );
