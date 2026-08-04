@@ -5,7 +5,7 @@
   "engines": {
     "node": "22.x"
   },
-  "packageManager": "pnpm@11.13.0",
+  "packageManager": "pnpm@11.13.1",
   "scripts": {
     "dev:mobile": "pnpm --filter @life-weather/mobile dev",
     "dev:api": "pnpm run build:api-runtime-packages && pnpm --filter @life-weather/api dev",
