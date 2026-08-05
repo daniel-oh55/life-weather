@@ -213,5 +213,26 @@
   Today, weather-query store/production, saved-location, API/contracts는 이 PR에서 변경되지
   않았습니다. AirKorea, current/daily/alerts, response cache는 여전히 이번 PR 범위가 아니고, 실제
   endpoint 호출과 Development Build, 실기기 QA도 미수행입니다.
+- **PR #60**은 Lifestyle tab(`생활날씨`)의 placeholder를 최소 실제 생활날씨 화면으로 교체했습니다
+  — `apps/mobile`에 기존 `packages/lifestyle-engine`을 `@life-weather/lifestyle-engine:
+  workspace:*` 정식 dependency로 추가하고(외부 dependency 추가 없음), 새 pure mobile presentation
+  boundary(`apps/mobile/src/lifestyle/create-mobile-lifestyle-overview.ts`,
+  `createMobileLifestyleOverview`)가 이미 검증된 weather-query `SUCCESS` 응답을 기존 네 정책
+  (`assessUmbrellaNeed`/`assessOutfitRecommendation`/`assessMaskNeed`/
+  `assessLaundryDryingSuitability`)에 연결합니다. 네 정책 모두 `evaluatedAt`으로
+  `response.meta.generatedAt`을 그대로 쓰고(기기 시각이나 `Date.now()` 없음), 우산·옷차림·빨래는
+  `response.data.hourly`를, 마스크는 `response.data.airQuality.current`를(그대로, `null`이면
+  `null`) 입력으로 사용합니다. `reason`/`recommendation`은 engine 출력을 그대로 쓰고, status
+  라벨만 이 경계 안의 exhaustive `Record`로 매핑하며, `reasonCode`/`policyVersion`/evidence/
+  provider-native 값은 카드에 없습니다. `apps/mobile/src/app/(tabs)/lifestyle.tsx`가 기존
+  `useMobileSavedLocations()`/`useMobileWeatherQuery(savedLocations)` 두 read-only 입력만 사용해
+  우산·옷차림·마스크·빨래 네 카드를 고정 순서로 표시하며, weather-query request/reset
+  lifecycle은 이 PR에서도 여전히 `(tabs)/_layout.tsx` 한 곳이 소유합니다. `hourly`가 비어 있거나
+  `airQuality.current`가 `null`이면 관련 카드가 engine의 `INSUFFICIENT_DATA`(판단 보류)를 그대로
+  표시하며 화면이 별도로 숨기지 않습니다 — 현재 AirKorea가 미구현이므로 production KMA 응답에서는
+  마스크 카드가 항상 판단 보류로 표시될 수 있습니다. `packages/lifestyle-engine`, contracts,
+  weather-core, API, weather-query, saved-location 경계는 이 PR에서 변경되지 않았습니다. 자세한
+  내용은 [mobile-lifestyle-overview.md](./mobile-lifestyle-overview.md) 참고. 실제 API 호출,
+  Development Build와 실기기 QA는 이번 PR에서도 미수행입니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
