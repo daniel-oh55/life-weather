@@ -249,5 +249,31 @@
   남습니다. 설정 persistence나 toggle은 없고, `apps/api`/`packages`/`app.json`/`package.json`/
   lockfile은 이 PR에서 변경되지 않았습니다. 자세한 내용은 [mobile-settings.md](./mobile-settings.md)
   참고. 실제 API 호출, Development Build와 실기기 QA는 이번 PR에서도 미수행입니다.
+- **PR #62**는 Details tab(`상세기상`)의 마지막 placeholder를 최소 실제 상세기상 화면으로
+  교체했습니다 — SUCCESS content는 항상 기상특보를 먼저, 현재 관측을 다음으로 표시합니다. 새 pure
+  mobile presentation boundary(`apps/mobile/src/details/create-mobile-weather-details.ts`,
+  `createMobileWeatherDetails`)가 이미 검증된 weather-query `SUCCESS` 응답의
+  `response.data.current`/`response.data.alerts`/`response.data.missingSections`만 읽습니다.
+  `missingSections`에 `ALERTS`가 있으면 UNAVAILABLE("기상특보 정보를 제공하지 못했습니다."),
+  `ALERTS`가 없고 `alerts`가 빈 배열이면 NONE("현재 발표된 기상특보가 없습니다."), 하나 이상이면
+  AVAILABLE로 응답 순서 그대로 모든 alert를 카드로 변환합니다(sort/filter/dedupe 없음). `current`가
+  `null`이면 UNAVAILABLE("현재 관측 정보를 제공하지 못했습니다.")이고, 존재하면 관측
+  시각·상태·기온을 항상 표시하며 optional 필드(체감온도/습도/풍속/풍향/최근 1시간 강수량/가시거리)는
+  `null`이 아닐 때만 표시합니다(`0`은 항상 표시). `WeatherAlertSeverity`/`WeatherAlertType`/
+  `WeatherCondition` 모두 이 경계 안의 독립적인 exhaustive 한국어 `Record`로만 매핑되고, alert
+  `title`/non-null `description`은 그대로 보존되며, alert id/sourceId/provider/requestId/raw
+  missingSections는 카드에 없습니다. `current.observedAt`/`alert.issuedAt`/non-null
+  `alert.effectiveAt`/`alert.expiresAt`은 선택된 저장 지역의 `timezone`(기기 timezone 아님)으로
+  포맷하며, formatter 실패 시 raw ISO 문자열로 대체해 화면을 crash시키지 않습니다.
+  `apps/mobile/src/app/(tabs)/details.tsx`가 기존 `useMobileSavedLocations()`/
+  `useMobileWeatherQuery(savedLocations)` 두 read-only 입력만 사용해 `createMobileWeatherDetails`를
+  정확히 한 번 호출하고, weather-query request/reset lifecycle은 이 PR에서도 여전히
+  `(tabs)/_layout.tsx` 한 곳이 소유합니다. `apps/mobile/src/app-tests/placeholder-screens.test.tsx`
+  (마지막 placeholder test였던 details 케이스)를 삭제했습니다. `packages/contracts`,
+  `packages/weather-core`, `apps/api`, weather-query, saved-location 경계는 이 PR에서 변경되지
+  않았습니다. 자세한 내용은 [mobile-weather-details.md](./mobile-weather-details.md) 참고. 현재
+  production KMA pipeline은 여전히 hourly-only이므로 `current`와 `alerts`는 실제 응답에서 계속
+  missing으로 표시될 수 있습니다 — 실제 current/alert backend는 아직 미구현이며, 실제 API 호출과
+  Development Build, 실기기 QA는 이번 PR에서도 미수행입니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
