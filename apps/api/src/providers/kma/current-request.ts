@@ -21,7 +21,12 @@ import {
   KMA_FIXED_NUM_OF_ROWS,
   KMA_FIXED_PAGE_NO,
 } from './request.js';
-import { isCalendarDate, isClockTime, isNonNegativeSafeInteger } from './validation.js';
+import {
+  isCalendarDate,
+  isKmaCurrentObservationBaseTime,
+  isKmaCurrentObservationGridNx,
+  isKmaCurrentObservationGridNy,
+} from './validation.js';
 
 /** A current-observation request. All four fields vary per call; pagination/format are fixed. */
 export interface KmaCurrentObservationRequest {
@@ -85,10 +90,14 @@ function createNonObjectCurrentRequestIssues(): KmaCurrentRequestIssue[] {
  *
  * For an object input, collects every problem in a fixed field order (`baseDate`, `baseTime`,
  * `nx`, `ny`). No numeric coercion: a numeric-string date/time or a string `nx`/`ny` is rejected,
- * not converted. `baseDate`/`baseTime` reuse the exact same `isCalendarDate`/`isClockTime`
- * predicates the forecast request and response boundaries use, so all three layers agree on what a
- * valid KMA date/time looks like. The request object is only read, never mutated. Every call
- * returns freshly-allocated issues, so mutating one result never leaks into a later call.
+ * not converted. `baseDate` reuses the exact same `isCalendarDate` predicate the forecast request
+ * and response boundaries use. `baseTime` and the grid coordinates use the **current-observation-
+ * only**, stricter predicates from `validation.ts`: `isKmaCurrentObservationBaseTime` (the
+ * `HHmm` must fall exactly on the hour — 초단기실황's actual issuance policy) and
+ * `isKmaCurrentObservationGridNx`/`Ny` (the official `[1, 149] × [1, 253]` forecast grid, not the
+ * forecast request's unbounded `isNonNegativeSafeInteger`). The request object is only read, never
+ * mutated. Every call returns freshly-allocated issues, so mutating one result never leaks into a
+ * later call.
  */
 export function validateKmaCurrentObservationRequest(
   input: unknown,
@@ -102,13 +111,13 @@ export function validateKmaCurrentObservationRequest(
   if (typeof input.baseDate !== 'string' || !isCalendarDate(input.baseDate)) {
     issues.push({ field: 'baseDate', reason: 'INVALID' });
   }
-  if (typeof input.baseTime !== 'string' || !isClockTime(input.baseTime)) {
+  if (typeof input.baseTime !== 'string' || !isKmaCurrentObservationBaseTime(input.baseTime)) {
     issues.push({ field: 'baseTime', reason: 'INVALID' });
   }
-  if (!isNonNegativeSafeInteger(input.nx)) {
+  if (!isKmaCurrentObservationGridNx(input.nx)) {
     issues.push({ field: 'nx', reason: 'INVALID' });
   }
-  if (!isNonNegativeSafeInteger(input.ny)) {
+  if (!isKmaCurrentObservationGridNy(input.ny)) {
     issues.push({ field: 'ny', reason: 'INVALID' });
   }
 

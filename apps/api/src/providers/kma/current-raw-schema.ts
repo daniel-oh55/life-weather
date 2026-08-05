@@ -23,17 +23,30 @@
 import { z } from 'zod';
 
 import { kmaResponseHeaderSchema } from './raw-schema.js';
-import { isCalendarDate, isClockTime } from './validation.js';
+import {
+  isCalendarDate,
+  isKmaCurrentObservationBaseTime,
+  KMA_CURRENT_OBSERVATION_GRID_NX_MAX,
+  KMA_CURRENT_OBSERVATION_GRID_NX_MIN,
+  KMA_CURRENT_OBSERVATION_GRID_NY_MAX,
+  KMA_CURRENT_OBSERVATION_GRID_NY_MIN,
+} from './validation.js';
 
 /** `baseDate` — an official `YYYYMMDD` string that is also a real calendar date. */
 const kmaCurrentDate = z
   .string()
   .refine(isCalendarDate, { message: 'must be a valid YYYYMMDD calendar date' });
 
-/** `baseTime` — an official `HHmm` (`HH24MI`) clock time. */
-const kmaCurrentTime = z
-  .string()
-  .refine(isClockTime, { message: 'must be a valid HHmm (HH24MI) time' });
+/**
+ * `baseTime` — an official on-the-hour `HHmm` (`HH24MI`) clock time. Stricter than the forecast
+ * boundary's `isClockTime`: 초단기실황 is issued only on the hour (`'0000'`..`'2300'`), so this uses
+ * the current-observation-only `isKmaCurrentObservationBaseTime` from `validation.ts` (the single
+ * source shared with `current-request.ts` / `normalize-current.ts`) rather than the general
+ * `isClockTime` forecast still uses.
+ */
+const kmaCurrentTime = z.string().refine(isKmaCurrentObservationBaseTime, {
+  message: 'must be a valid on-the-hour HHmm (HH24MI) time',
+});
 
 /**
  * `category` (자료구분문자) — the same ASCII-uppercase/digit character class as the forecast
@@ -59,10 +72,21 @@ const kmaCurrentCategory = z.string().regex(/^[A-Z0-9]+$/, {
 const kmaCurrentObservationValue = z.string().nullable();
 
 /**
- * A current-observation grid coordinate (`nx` / `ny`). Same policy as the forecast boundary:
- * finite, integer, non-negative, no upper bound imposed (no reliable official maximum documented).
+ * Current-observation grid coordinates (`nx` / `ny`). Unlike the forecast boundary's unbounded
+ * `z.number().int().min(0)`, these enforce the official KMA 동네예보 grid extent — `nx` within
+ * `[1, 149]`, `ny` within `[1, 253]` — using the same `KMA_CURRENT_OBSERVATION_GRID_*` constants
+ * `current-request.ts` validates a request against, so the two layers cannot silently drift apart.
  */
-const kmaCurrentGridCoordinate = z.number().int().min(0);
+const kmaCurrentGridNx = z
+  .number()
+  .int()
+  .min(KMA_CURRENT_OBSERVATION_GRID_NX_MIN)
+  .max(KMA_CURRENT_OBSERVATION_GRID_NX_MAX);
+const kmaCurrentGridNy = z
+  .number()
+  .int()
+  .min(KMA_CURRENT_OBSERVATION_GRID_NY_MIN)
+  .max(KMA_CURRENT_OBSERVATION_GRID_NY_MAX);
 
 /** A 1-based page index (`pageNo`). */
 const kmaCurrentPageNumber = z.number().int().min(1);
@@ -84,8 +108,8 @@ export const kmaCurrentObservationItemSchema = z.object({
   baseTime: kmaCurrentTime,
   category: kmaCurrentCategory,
   obsrValue: kmaCurrentObservationValue,
-  nx: kmaCurrentGridCoordinate,
-  ny: kmaCurrentGridCoordinate,
+  nx: kmaCurrentGridNx,
+  ny: kmaCurrentGridNy,
 });
 
 export type KmaCurrentObservationItem = z.infer<typeof kmaCurrentObservationItemSchema>;

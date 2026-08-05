@@ -157,6 +157,109 @@ function tick(ms = 10): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// ---------------------------------------------------------------------------
+// Non-cooperative fetch/body mocks (P2 remediation — transport termination guarantee).
+//
+// Unlike `fetchHangingUntilAbort` and `fetchHeaderThenBodyTiedToSignal` above (which *cooperate*
+// by rejecting/erroring once the abort signal fires), everything below ignores the abort signal
+// completely: no listener is ever attached to it. These exist to prove the provider still
+// terminates within the timeout/caller-abort — and never leaks an unhandled rejection from a late
+// settlement — even when the injected fetch/body genuinely never reacts to being aborted.
+// ---------------------------------------------------------------------------
+
+/** A fetch that never settles and never even looks at `init`/the signal. */
+function fetchIgnoringAbortForever(): typeof fetch {
+  return (() =>
+    new Promise<Response>(() => {
+      // Intentionally never resolves/rejects and never inspects the signal.
+    })) as unknown as typeof fetch;
+}
+
+/**
+ * A fetch whose settlement is driven manually via `resolveWith`/`rejectWith`, and which never looks
+ * at the signal. Lets a test simulate a fetch that settles *late* — after the provider has already
+ * returned a TIMEOUT/ABORTED result — without a real hang.
+ */
+function controllableFetch(): {
+  fetchImpl: typeof fetch;
+  resolveWith: (response: Response) => void;
+  rejectWith: (reason: unknown) => void;
+} {
+  let resolveFn!: (response: Response) => void;
+  let rejectFn!: (reason: unknown) => void;
+  const fetchImpl = (() =>
+    new Promise<Response>((resolve, reject) => {
+      resolveFn = resolve;
+      rejectFn = reject;
+    })) as unknown as typeof fetch;
+  return {
+    fetchImpl,
+    resolveWith: (response) => resolveFn(response),
+    rejectWith: (reason) => rejectFn(reason),
+  };
+}
+
+/** A 200 Response whose body stream never enqueues/closes/errors, so `reader.read()` hangs forever. */
+function fetchWithHangingBody(): typeof fetch {
+  const stream = new ReadableStream<Uint8Array>({
+    pull() {
+      // Intentionally never enqueue/close/error, and never inspects any signal.
+    },
+  });
+  return (async () => new Response(stream, { status: 200 })) as unknown as typeof fetch;
+}
+
+/**
+ * A 200 Response whose body is controlled manually via `push`/`close`, and which never inspects any
+ * signal. Starts pending (nothing enqueued) so a test can drive a real timeout/abort first, then
+ * complete the body *late* to exercise a late body success without a real hang. `wasCancelled()`
+ * reports whether anything called `cancel()` on the underlying stream.
+ */
+function controllableHangingBodyResponse(): {
+  response: Response;
+  push: (chunk: string) => void;
+  close: () => void;
+  wasCancelled: () => boolean;
+} {
+  let cancelled = false;
+  let controllerRef!: ReadableStreamDefaultController<Uint8Array>;
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controllerRef = controller;
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  return {
+    response: new Response(stream, { status: 200 }),
+    push: (chunk) => controllerRef.enqueue(encoder.encode(chunk)),
+    close: () => controllerRef.close(),
+    wasCancelled: () => cancelled,
+  };
+}
+
+/**
+ * Run `run`, then give any late microtask/timer-driven settlement a moment to surface before
+ * asserting it never became a process-level `unhandledRejection` — the concrete way to verify that
+ * a fetch/body promise settling *after* the provider has already returned cannot leak one.
+ */
+async function assertNoUnhandledRejection(run: () => Promise<void>): Promise<void> {
+  const captured: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown): void => {
+    captured.push(reason);
+  };
+  process.on('unhandledRejection', onUnhandledRejection);
+  try {
+    await run();
+    await tick(20);
+  } finally {
+    process.off('unhandledRejection', onUnhandledRejection);
+  }
+  expect(captured).toEqual([]);
+}
+
 function providerWith(
   fetchImpl: typeof fetch,
   options: { timeoutMs?: number; maxResponseBytes?: number } = {},
@@ -350,6 +453,91 @@ describe('fetchForecast — timeout & caller abort cover the body read', () => {
     controller.abort();
     expect(await promise).toEqual({ ok: false, error: { kind: 'ABORTED' } });
     expect(bodyObservedAbort()).toBe(true);
+  });
+});
+
+describe('fetchForecast — transport terminates even when fetchImpl/body ignores the abort signal', () => {
+  it('a pending fetch that ignores the signal still resolves TIMEOUT within the timeout', async () => {
+    const result = await providerWith(fetchIgnoringAbortForever(), {
+      timeoutMs: 10,
+    }).fetchForecast(REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+  });
+
+  it('a pending fetch that ignores the signal still resolves ABORTED on caller abort', async () => {
+    const controller = new AbortController();
+    const promise = providerWith(fetchIgnoringAbortForever(), {
+      timeoutMs: 10_000,
+    }).fetchForecast(REQUEST, { signal: controller.signal });
+    controller.abort();
+    expect(await promise).toEqual({ ok: false, error: { kind: 'ABORTED' } });
+  });
+
+  it('resolves the timeout-vs-abort race deterministically with a non-cooperative pending fetch', async () => {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const controller = new AbortController();
+      const promise = providerWith(fetchIgnoringAbortForever(), {
+        timeoutMs: 10_000,
+      }).fetchForecast(REQUEST, { signal: controller.signal });
+      controller.abort();
+      expect(await promise).toEqual({ ok: false, error: { kind: 'ABORTED' } });
+    }
+  });
+
+  it('a fetch that resolves late (after TIMEOUT) never changes the result and its body is cancelled', async () => {
+    const { fetchImpl, resolveWith } = controllableFetch();
+    const result = await providerWith(fetchImpl, { timeoutMs: 10 }).fetchForecast(REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+
+    const late = controllableHangingBodyResponse();
+    await assertNoUnhandledRejection(async () => {
+      resolveWith(late.response);
+      await tick(20);
+    });
+    expect(late.wasCancelled()).toBe(true);
+  });
+
+  it('a fetch that rejects late (after TIMEOUT) never becomes an unhandled rejection', async () => {
+    const { fetchImpl, rejectWith } = controllableFetch();
+    const result = await providerWith(fetchImpl, { timeoutMs: 10 }).fetchForecast(REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+
+    await assertNoUnhandledRejection(async () => {
+      rejectWith(new Error('SECRET_LATE_FETCH_REJECTION_MARKER'));
+      await tick(20);
+    });
+  });
+
+  it('a pending body read that ignores the signal still resolves TIMEOUT within the timeout', async () => {
+    const result = await providerWith(fetchWithHangingBody(), { timeoutMs: 10 }).fetchForecast(
+      REQUEST,
+    );
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+  });
+
+  it('a pending body read that ignores the signal still resolves ABORTED on caller abort', async () => {
+    const controller = new AbortController();
+    const promise = providerWith(fetchWithHangingBody(), { timeoutMs: 10_000 }).fetchForecast(
+      REQUEST,
+      { signal: controller.signal },
+    );
+    await tick();
+    controller.abort();
+    expect(await promise).toEqual({ ok: false, error: { kind: 'ABORTED' } });
+  });
+
+  it('a body that completes late (after TIMEOUT) never becomes an unhandled rejection', async () => {
+    const late = controllableHangingBodyResponse();
+    const result = await providerWith(fetchReturning(late.response), {
+      timeoutMs: 10,
+    }).fetchForecast(REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+
+    await assertNoUnhandledRejection(async () => {
+      late.push(body());
+      late.close();
+      await tick(20);
+    });
   });
 });
 
@@ -1034,6 +1222,37 @@ describe('fetchCurrentObservation — timeout & caller abort (shared transport)'
     controller.abort();
     expect(await promise).toEqual({ ok: false, error: { kind: 'ABORTED' } });
     expect(bodyObservedAbort()).toBe(true);
+  });
+});
+
+describe('fetchCurrentObservation — transport terminates even when fetchImpl/body ignores the abort signal (shared transport)', () => {
+  it('a pending fetch that ignores the signal still resolves TIMEOUT within the timeout', async () => {
+    const result = await currentProviderWith(fetchIgnoringAbortForever(), {
+      timeoutMs: 10,
+    }).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+  });
+
+  it('a pending body read that ignores the signal still resolves TIMEOUT within the timeout', async () => {
+    const result = await currentProviderWith(fetchWithHangingBody(), {
+      timeoutMs: 10,
+    }).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+  });
+
+  it('a fetch that resolves late (after TIMEOUT) never changes the result and its body is cancelled', async () => {
+    const { fetchImpl, resolveWith } = controllableFetch();
+    const result = await currentProviderWith(fetchImpl, {
+      timeoutMs: 10,
+    }).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+
+    const late = controllableHangingBodyResponse();
+    await assertNoUnhandledRejection(async () => {
+      resolveWith(late.response);
+      await tick(20);
+    });
+    expect(late.wasCancelled()).toBe(true);
   });
 });
 

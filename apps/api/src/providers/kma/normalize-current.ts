@@ -41,7 +41,7 @@ import {
   type KmaCurrentObservationSlot,
 } from './group-current-observation-items.js';
 import type { KmaCurrentObservationProviderSuccess } from './provider.js';
-import { isCalendarDate, isClockTime } from './validation.js';
+import { isCalendarDate, isKmaCurrentObservationBaseTime } from './validation.js';
 
 /**
  * One deterministic normalization problem. `field` says *which* part failed and `reason` *why*:
@@ -143,11 +143,15 @@ function parseNullableField(
  * Build the KST ISO `observedAt` (`YYYY-MM-DDTHH:mm:00+09:00`) from the observation's own
  * `baseDate`/`baseTime`, or `null` if either is malformed. KST has no DST, so the offset is the
  * fixed `+09:00` and seconds are always `00`. Pure string composition guarded by the same
- * calendar/clock predicates the raw boundary and request layer use — no `Date`, no system clock, no
- * host timezone. The output passes the contracts `isoDateTime` schema.
+ * calendar predicate the raw boundary and request layer use, plus the current-observation-only
+ * `isKmaCurrentObservationBaseTime` (not the general `isClockTime`) — this defensive re-check
+ * matches the stricter on-the-hour policy the raw schema and request validator already enforce, so
+ * a non-hour `baseTime` that somehow reaches this normalizer directly still fails `observedAt`
+ * rather than composing a KST string the request layer would never have accepted. No `Date`, no
+ * system clock, no host timezone. The output passes the contracts `isoDateTime` schema.
  */
 function buildObservedAtKst(baseDate: string, baseTime: string): string | null {
-  if (!isCalendarDate(baseDate) || !isClockTime(baseTime)) {
+  if (!isCalendarDate(baseDate) || !isKmaCurrentObservationBaseTime(baseTime)) {
     return null;
   }
   const year = baseDate.slice(0, 4);

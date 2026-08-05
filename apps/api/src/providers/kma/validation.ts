@@ -1,20 +1,30 @@
 /**
  * Shared, dependency-free validation predicates for KMA (기상청) date, time, and grid values.
  *
- * These are the *single source* of the calendar-date and clock-time rules used by two layers:
+ * These are the *single source* of the calendar-date and clock-time rules used by several layers:
  *
- * - `raw-schema.ts` — validating the shape of an already-parsed *response* item (`baseDate`,
- *   `baseTime`, `fcstDate`, `fcstTime`).
- * - `request.ts` — validating a caller's forecast *request* before a URL is built.
+ * - `raw-schema.ts` / `current-raw-schema.ts` — validating the shape of an already-parsed
+ *   *response* item (`baseDate`, `baseTime`, `fcstDate`, `fcstTime`).
+ * - `request.ts` / `current-request.ts` — validating a caller's *request* before a URL is built.
+ * - `normalize-current.ts` — the current-observation normalizer's defensive re-check before
+ *   composing `observedAt`.
  *
- * Extracting them here (rather than re-deriving the leap-year / HHmm logic in `request.ts`) keeps
- * the two layers provably consistent: a date the response boundary accepts is validated by the
- * exact same code that validates a request date. Pure arithmetic only — no `Date`, no system
- * clock, no environment access — so validation is deterministic across machines and time.
+ * Extracting them here (rather than re-deriving the leap-year / HHmm logic per layer) keeps every
+ * layer provably consistent: a date the response boundary accepts is validated by the exact same
+ * code that validates a request date. Pure arithmetic only — no `Date`, no system clock, no
+ * environment access — so validation is deterministic across machines and time.
  *
  * `isCalendarDate` / `isClockTime` are unchanged in behavior from their PR #4 home in
- * `raw-schema.ts`; only their location moved. `isNonNegativeSafeInteger` is *new* and is used only
- * by the request layer (see the note on its stricter `safe`-integer rule below).
+ * `raw-schema.ts`; only their location moved. `isNonNegativeSafeInteger` is used by the forecast
+ * request layer (see the note on its stricter `safe`-integer rule below).
+ *
+ * `isKmaCurrentObservationBaseTime` and the `isKmaCurrentObservationGrid{Nx,Ny}` pair are
+ * **current-observation-only** — 초단기실황 (`getUltraSrtNcst`) is issued strictly on the hour and
+ * only within the official 149×253 forecast grid, which is stricter than the general `HHmm`/
+ * unbounded-integer rules forecast still relies on. They are the single provider-local source of
+ * truth for that stricter policy, shared by `current-request.ts`, `current-raw-schema.ts`, and
+ * `normalize-current.ts` so the three layers cannot silently drift apart. Forecast's `isClockTime`
+ * / `isNonNegativeSafeInteger` behavior is unchanged by their addition.
  */
 
 /** `YYYYMMDD` structural matcher (calendar validity is checked separately in {@link isCalendarDate}). */
@@ -76,8 +86,61 @@ export function isClockTime(value: string): boolean {
  * numeric string — no coercion), finite, an integer, non-negative, and within the safe-integer
  * range so it round-trips through `String(...)` into the URL without precision loss. `typeof`
  * guards the runtime input because a request object crosses a trust boundary even though its
- * TypeScript type says `number`.
+ * TypeScript type says `number`. Declared as a type predicate purely so callers that need the
+ * narrowed `number` type (the current-observation grid predicates below) can build on it without
+ * re-deriving the same runtime check; the check itself is unchanged.
  */
-export function isNonNegativeSafeInteger(value: unknown): boolean {
+export function isNonNegativeSafeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+/** `HHmm` (`HH24MI`) matcher requiring the minute component to be exactly `00`. */
+const ON_THE_HOUR_MINUTE = '00';
+
+/**
+ * Whether `value` is a valid current-observation (초단기실황, `getUltraSrtNcst`) `baseTime`: a
+ * structurally valid `isClockTime` value that additionally falls exactly on the hour (`mm ===
+ * '00'`) — `'0000'`..`'2300'` in steps of 100, never e.g. `'0030'`/`'0530'`/`'2359'`. 초단기실황 is
+ * issued only on the hour, unlike forecast's `HHmm` base/forecast times, which keep using the
+ * general `isClockTime` unchanged.
+ */
+export function isKmaCurrentObservationBaseTime(value: string): boolean {
+  return isClockTime(value) && value.slice(2) === ON_THE_HOUR_MINUTE;
+}
+
+/**
+ * The official KMA 동네예보 forecast grid extent (inclusive) — the same `[1, 149] × [1, 253]` range
+ * as `packages/weather-core`'s `grid.ts`. Duplicated here as the provider-local single source of
+ * truth for current-observation request/raw-schema range enforcement: this `apps/api` module does
+ * not import `packages/weather-core`, and forecast's own request/raw-schema validation stays
+ * unbounded (`isNonNegativeSafeInteger` / `z.number().int().min(0)`) — only current observation
+ * enforces this stricter range.
+ */
+export const KMA_CURRENT_OBSERVATION_GRID_NX_MIN = 1;
+export const KMA_CURRENT_OBSERVATION_GRID_NX_MAX = 149;
+export const KMA_CURRENT_OBSERVATION_GRID_NY_MIN = 1;
+export const KMA_CURRENT_OBSERVATION_GRID_NY_MAX = 253;
+
+/**
+ * Whether `value` is a valid current-observation `nx`: a non-negative safe integer within
+ * `[1, 149]`. No coercion — a numeric string is rejected, matching `isNonNegativeSafeInteger`.
+ */
+export function isKmaCurrentObservationGridNx(value: unknown): value is number {
+  return (
+    isNonNegativeSafeInteger(value) &&
+    value >= KMA_CURRENT_OBSERVATION_GRID_NX_MIN &&
+    value <= KMA_CURRENT_OBSERVATION_GRID_NX_MAX
+  );
+}
+
+/**
+ * Whether `value` is a valid current-observation `ny`: a non-negative safe integer within
+ * `[1, 253]`. No coercion — a numeric string is rejected, matching `isNonNegativeSafeInteger`.
+ */
+export function isKmaCurrentObservationGridNy(value: unknown): value is number {
+  return (
+    isNonNegativeSafeInteger(value) &&
+    value >= KMA_CURRENT_OBSERVATION_GRID_NY_MIN &&
+    value <= KMA_CURRENT_OBSERVATION_GRID_NY_MAX
+  );
 }

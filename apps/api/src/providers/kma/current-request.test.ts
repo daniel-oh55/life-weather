@@ -109,6 +109,26 @@ describe('buildKmaCurrentObservationRequestUrl — service key encoding', () => 
   });
 });
 
+describe('buildKmaCurrentObservationRequestUrl — current-only stricter policy rejects at the URL builder too', () => {
+  it('fails for a structurally valid but non-hour baseTime (e.g. 0530)', () => {
+    const result = buildKmaCurrentObservationRequestUrl(FAKE_KEY, validRequest({ baseTime: '0530' }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues).toContainEqual({ field: 'baseTime', reason: 'INVALID' });
+    }
+  });
+
+  it.each([
+    ['nx=0', { nx: 0 }],
+    ['nx=150', { nx: 150 }],
+    ['ny=0', { ny: 0 }],
+    ['ny=254', { ny: 254 }],
+  ])('fails for an out-of-grid %s', (_label, overrides) => {
+    const result = buildKmaCurrentObservationRequestUrl(FAKE_KEY, validRequest(overrides));
+    expect(result.ok).toBe(false);
+  });
+});
+
 describe('validateKmaCurrentObservationRequest — invalid inputs', () => {
   it('rejects a malformed date', () => {
     expect(
@@ -134,12 +154,53 @@ describe('validateKmaCurrentObservationRequest — invalid inputs', () => {
     );
   });
 
+  it.each(['0000', '2300'])(
+    'accepts the on-the-hour boundary base time %s (current observation is hourly-only)',
+    (baseTime) => {
+      expect(validateKmaCurrentObservationRequest(validRequest({ baseTime })).ok).toBe(true);
+    },
+  );
+
+  it.each(['0030', '0530', '2359'])(
+    'rejects a structurally valid but non-hour baseTime %s (초단기실황 is issued only on the hour)',
+    (baseTime) => {
+      const result = validateKmaCurrentObservationRequest(validRequest({ baseTime }));
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.issues).toContainEqual({ field: 'baseTime', reason: 'INVALID' });
+      }
+    },
+  );
+
   it.each([
     ['negative nx', { nx: -1 }],
     ['non-integer ny', { ny: 12.5 }],
     ['unsafe integer nx', { nx: 2 ** 53 }],
   ])('rejects %s', (_label, overrides) => {
     expect(validateKmaCurrentObservationRequest(validRequest(overrides)).ok).toBe(false);
+  });
+
+  it.each([
+    ['nx below the grid minimum', { nx: 0 }],
+    ['nx above the grid maximum', { nx: 150 }],
+    ['ny below the grid minimum', { ny: 0 }],
+    ['ny above the grid maximum', { ny: 254 }],
+  ])('rejects %s (outside the official [1,149]x[1,253] KMA grid)', (_label, overrides) => {
+    const result = validateKmaCurrentObservationRequest(validRequest(overrides));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const field = 'nx' in overrides ? 'nx' : 'ny';
+      expect(result.issues).toContainEqual({ field, reason: 'INVALID' });
+    }
+  });
+
+  it.each([
+    ['nx at the grid minimum', { nx: 1 }],
+    ['nx at the grid maximum', { nx: 149 }],
+    ['ny at the grid minimum', { ny: 1 }],
+    ['ny at the grid maximum', { ny: 253 }],
+  ])('accepts %s', (_label, overrides) => {
+    expect(validateKmaCurrentObservationRequest(validRequest(overrides)).ok).toBe(true);
   });
 
   it('rejects a string coordinate (no coercion)', () => {

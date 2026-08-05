@@ -288,7 +288,15 @@
   provider는 기존 forecast provider의 timeout/abort/HTTP-status/response-size transport
   정책을 공유 helper로 재사용하며, `fetchForecast()`의 기존 계약과 테스트는 회귀 없이
   그대로 유지됩니다. current를 `POST /weather`에 연결하는 application service/composition/
-  route는 이 PR 범위가 아닙니다. 자세한 내용은
+  route는 이 PR 범위가 아닙니다. 이어서 Codex HIGH 독립 검토의 P2 findings 3건을 focused
+  remediation으로 보정했습니다 — (1) current `baseTime`이 request/raw schema/normalization
+  세 경계 모두에서 정시 `HH00`만 허용하도록 강제(`isKmaCurrentObservationBaseTime`), (2)
+  current `nx`/`ny`가 request/raw schema 모두에서 공식 `[1,149]×[1,253]` 격자 범위로 제한
+  (`KMA_CURRENT_OBSERVATION_GRID_*`, `validation.ts`의 provider-local single source), (3)
+  공유 transport(`performKmaGetRequest`)가 `fetchImpl`/body reader가 abort signal을 완전히
+  무시해도 timeout/caller-abort로 provider promise 자체를 확정 종료하도록 `raceAgainstAbort`
+  helper로 보강(늦게 도착하는 settlement는 결과를 바꾸지 않고 raw error·unhandled rejection도
+  없음). forecast의 공개 계약과 기존 회귀는 변경되지 않았습니다. 자세한 내용은
   [kma-current-observation-provider.md](./kma-current-observation-provider.md) 참고.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.

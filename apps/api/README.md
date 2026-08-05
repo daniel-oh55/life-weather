@@ -107,14 +107,26 @@ a project on first run; that step is intentionally deferred to a later PR.
   `getUltraSrtNcst` (`current-request.ts`/`current-raw-schema.ts`/`parse-current-response.ts`/
   `group-current-observation-items.ts`/`normalize-current.ts`), separate from the forecast boundary
   above because the request/item shape genuinely differs (`obsrValue`, no `fcstDate`/`fcstTime`).
-  It reuses the shared `response.header` schema/success-code constant, the shared
-  `isCalendarDate`/`isClockTime` predicates, and — via a private `performKmaGetRequest` helper
-  extracted in `provider.ts` — the exact same timeout/caller-abort/HTTP-status/response-size
-  transport policy as `fetchForecast` (whose own public contract and tests are unchanged).
+  It reuses the shared `response.header` schema/success-code constant and the shared
+  `isCalendarDate` predicate, and — via a private `performKmaGetRequest` helper extracted in
+  `provider.ts` — the exact same timeout/caller-abort/HTTP-status/response-size transport policy as
+  `fetchForecast` (whose own public contract and tests are unchanged).
   `createKmaCurrentObservationProvider`/`…FromEnv` and `normalizeKmaCurrentObservation` (→ the
   shared `CurrentWeather` contract) are **not** wired into `POST /weather`, `services`,
-  `composition`, or `routes` in this PR. See
-  [docs/kma-current-observation-provider.md](../../docs/kma-current-observation-provider.md).
+  `composition`, or `routes` in this PR.
+  - **P2 focused remediation.** `baseTime` is current-observation-only, stricter than forecast's
+    `isClockTime`: `isKmaCurrentObservationBaseTime` (`validation.ts`) requires an exact on-the-hour
+    `HH00` value, enforced identically in `current-request.ts`, `current-raw-schema.ts`, and
+    `normalize-current.ts`'s defensive `observedAt` re-check. `nx`/`ny` are bounded to the official
+    `[1, 149] × [1, 253]` KMA grid (`KMA_CURRENT_OBSERVATION_GRID_*` constants), unlike forecast's
+    unbounded `isNonNegativeSafeInteger`/`z.number().int().min(0)`. And `performKmaGetRequest` now
+    races the `fetchImpl` call and the body read each against the shared timeout/caller-abort
+    signal, so a `fetchImpl` or body reader that ignores `AbortSignal` entirely and never settles
+    still cannot block the provider past the timeout/caller-abort; a late settlement afterward
+    never changes the already-returned result, best-effort cancels a late `Response` body, and
+    cannot surface as a raw error or unhandled rejection. None of this touches forecast's own
+    request/raw-schema policy or `fetchForecast`'s public contract.
+  See [docs/kma-current-observation-provider.md](../../docs/kma-current-observation-provider.md).
 - **KMA hourly forecast application service** — PR #7 adds `createKmaHourlyForecastService`
   (`src/services/`), the thin orchestration layer that runs the PR #5 provider and the PR #6
   normalizer in sequence. See [docs/kma-hourly-service.md](../../docs/kma-hourly-service.md).

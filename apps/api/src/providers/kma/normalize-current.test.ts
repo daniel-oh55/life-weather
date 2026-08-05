@@ -297,6 +297,28 @@ describe('normalizeKmaCurrentObservation — invalid observedAt → failure', ()
       expect(result.issues).toContainEqual({ field: 'observedAt', reason: 'INVALID' });
     }
   });
+
+  it.each(['0030', '0530', '2359'])(
+    'fails on a structurally valid but non-hour baseTime %s (defensive: raw schema normally already rejects this)',
+    (baseTime) => {
+      const result = normalizeKmaCurrentObservation(makeObservation(makeSlot({ baseTime })));
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.issues).toContainEqual({ field: 'observedAt', reason: 'INVALID' });
+      }
+    },
+  );
+
+  it.each([
+    ['0000', '2026-07-17T00:00:00+09:00'],
+    ['2300', '2026-07-17T23:00:00+09:00'],
+  ])('builds a valid KST observedAt for the on-the-hour boundary baseTime %s', (baseTime, expected) => {
+    const result = normalizeKmaCurrentObservation(makeObservation(makeSlot({ baseTime })));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.current.observedAt).toBe(expected);
+    }
+  });
 });
 
 describe('normalizeKmaCurrentObservation — PTY precipitation mappings', () => {

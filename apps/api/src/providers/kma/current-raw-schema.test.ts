@@ -133,6 +133,21 @@ describe('kmaCurrentObservationItemSchema — time validation (HHmm)', () => {
         .success,
     ).toBe(true);
   });
+
+  it.each(['0000', '2300'])('accepts the on-the-hour boundary baseTime %s', (baseTime) => {
+    expect(
+      kmaCurrentObservationItemSchema.safeParse({ ...validCurrentItem(), baseTime }).success,
+    ).toBe(true);
+  });
+
+  it.each(['0030', '0530', '2359'])(
+    'rejects a structurally valid but non-hour baseTime %s (초단기실황 is issued only on the hour)',
+    (baseTime) => {
+      expect(
+        kmaCurrentObservationItemSchema.safeParse({ ...validCurrentItem(), baseTime }).success,
+      ).toBe(false);
+    },
+  );
 });
 
 describe('kmaCurrentObservationItemSchema — category validation', () => {
@@ -163,6 +178,59 @@ describe('kmaCurrentObservationItemSchema — grid coordinates', () => {
     expect(
       kmaCurrentObservationItemSchema.safeParse({ ...validCurrentItem(), nx: '61' }).success,
     ).toBe(false);
+  });
+
+  it.each([
+    ['nx at the minimum (1)', { nx: 1 }],
+    ['nx at the maximum (149)', { nx: 149 }],
+    ['ny at the minimum (1)', { ny: 1 }],
+    ['ny at the maximum (253)', { ny: 253 }],
+  ])('accepts %s (official KMA grid boundary)', (_label, overrides) => {
+    expect(
+      kmaCurrentObservationItemSchema.safeParse({ ...validCurrentItem(), ...overrides }).success,
+    ).toBe(true);
+  });
+
+  it.each([
+    ['nx below the minimum (0)', { nx: 0 }],
+    ['nx above the maximum (150)', { nx: 150 }],
+    ['ny below the minimum (0)', { ny: 0 }],
+    ['ny above the maximum (254)', { ny: 254 }],
+    ['a numeric-string nx', { nx: '61' }],
+    ['a fractional nx within range', { nx: 61.5 }],
+    ['a non-finite nx', { nx: Infinity }],
+  ])('rejects %s (outside the official [1,149]x[1,253] KMA grid)', (_label, overrides) => {
+    expect(
+      kmaCurrentObservationItemSchema.safeParse({ ...validCurrentItem(), ...overrides }).success,
+    ).toBe(false);
+  });
+});
+
+describe('kmaCurrentObservationItemSchema — grid range matches the request-side range', () => {
+  it('accepts the same nx/ny boundary values the request validator accepts (single source of truth)', () => {
+    for (const nx of [1, 149]) {
+      expect(
+        kmaCurrentObservationItemSchema.safeParse({ ...validCurrentItem(), nx }).success,
+      ).toBe(true);
+    }
+    for (const ny of [1, 253]) {
+      expect(
+        kmaCurrentObservationItemSchema.safeParse({ ...validCurrentItem(), ny }).success,
+      ).toBe(true);
+    }
+  });
+
+  it('rejects the same out-of-range nx/ny values the request validator rejects (single source of truth)', () => {
+    for (const nx of [0, 150]) {
+      expect(
+        kmaCurrentObservationItemSchema.safeParse({ ...validCurrentItem(), nx }).success,
+      ).toBe(false);
+    }
+    for (const ny of [0, 254]) {
+      expect(
+        kmaCurrentObservationItemSchema.safeParse({ ...validCurrentItem(), ny }).success,
+      ).toBe(false);
+    }
   });
 });
 

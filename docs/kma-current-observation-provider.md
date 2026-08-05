@@ -40,7 +40,9 @@ category grouping과 field-presence 모델, 기존 KMA HTTP transport 정책을 
   `fcstDate`/`fcstTime`/`fcstValue`가 없습니다 — 초단기실황은 예보 대상 시각이 아니라 **관측
   자체의 시각**(`baseDate`+`baseTime`)만 가집니다.
 * `base_time`은 정시 단위 `HHmm`입니다(예보의 3시간/1시간 발표 스케줄과 다른 정시 관측
-  스케줄).
+  스케줄). **P2 remediation (이 문서 갱신 시점)**: 이 정시 제약은 이제 request/raw
+  schema/normalization 세 경계 모두에서 실제로 강제됩니다 — 아래 "Request 계약"과
+  "CurrentWeather normalization 계약" 참고.
 
 이 차이 때문에 기존 forecast raw schema(`raw-schema.ts`)·parser(`parse-response.ts`)·grouping
 (`group-forecast-items.ts`)을 current 전용 필드로 확장하거나 union으로 바꾸지 않고, **독립된
@@ -52,9 +54,13 @@ category grouping과 field-presence 모델, 기존 KMA HTTP transport 정책을 
 
 * `response.header`(`resultCode`/`resultMsg`) 스키마와 성공 코드(`KMA_SUCCESS_RESULT_CODE`) —
   `raw-schema.ts`의 `kmaResponseHeaderSchema`/`kmaResponseEnvelopeSchema`를 그대로 import.
-* `baseDate`(`YYYYMMDD`)·`baseTime`(`HHmm`) 검증 predicate — `validation.ts`의
-  `isCalendarDate`/`isClockTime`을 그대로 재사용(현재 예보·실황 모두 같은 KST 달력·시각
-  규칙을 씀).
+* `baseDate`(`YYYYMMDD`) 검증 predicate — `validation.ts`의 `isCalendarDate`를 forecast와
+  그대로 공유(같은 KST 달력 규칙). `baseTime`은 forecast의 일반 `isClockTime`이 아니라
+  current-observation 전용 `isKmaCurrentObservationBaseTime`(정시 `HH00`만 허용)을 쓰며,
+  `nx`/`ny`도 forecast의 무제한 `isNonNegativeSafeInteger`가 아니라 current 전용
+  `isKmaCurrentObservationGridNx`/`Ny`(공식 `[1,149]×[1,253]` 격자)를 씁니다 — 세 predicate
+  모두 `validation.ts`에 있는 하나의 provider-local single source of truth이며, request/raw
+  schema/normalization 세 경계가 이 값을 공유합니다.
 * HTTPS endpoint, 고정 pagination(`pageNo=1`/`numOfRows=1000`/`dataType=JSON`) 값,
   timeout/abort/response-size/gateway-XML transport 정책 — 아래 "provider와 transport 재사용"
   참고.
@@ -89,6 +95,13 @@ interface KmaCurrentObservationRequest {
   상수를 그대로 재사용합니다 — 두 request가 실제로 같은 공식 값을 쓰기 때문입니다.
 * `ServiceKey`는 `URLSearchParams`로 정확히 한 번 encode됩니다(forecast와 동일한 encoding
   정책). URL·query·service key·invalid raw value는 오류에 절대 포함하지 않습니다.
+* **정시 `baseTime`과 격자 범위는 실제로 강제됩니다.** `0530`처럼 구조적으로는 `HHmm`
+  형식이어도 정시가 아닌 값, 또는 공식 `[1,149]×[1,253]` 격자를 벗어난 `nx`/`ny`(`0`, `150`,
+  `254` 등)는 `INVALID_REQUEST`로 거부되고 `buildKmaCurrentObservationRequestUrl`도 URL을
+  만들지 않습니다 — provider는 이 경우 `fetch`를 호출하지 않습니다. 실제 정시 발표 스케줄
+  *선택*(예: 현재 시각으로부터 최신 정시를 자동 계산하는 것) 자체는 여전히 이 PR 범위가
+  아닙니다(후속 base-time selector PR) — 여기서 강제하는 것은 caller가 제공한 `baseTime`이
+  이미 정시 형식이어야 한다는 값 검증일 뿐입니다.
 
 ## Raw schema와 response parser 계약
 
@@ -123,8 +136,11 @@ interface KmaCurrentObservationRequest {
 * `z.coerce`를 쓰지 않습니다. `obsrValue`는 forecast의 `fcstValue`와 동일한 근거 수준으로
   **문자열**로 모델링합니다(공식 명세는 문자열 인코딩, 공식 JSON literal `null` 사례는
   forecast와 마찬가지로 미확인 — field-presence 모델을 위한 방어적 허용이며 후속 live
-  검증 대상). `category`는 forecast와 동일한 `/^[A-Z0-9]+$/` 문자 클래스(enum 아님)로,
-  `nx`/`ny`는 정수 `>= 0`으로 검증합니다.
+  검증 대상). `category`는 forecast와 동일한 `/^[A-Z0-9]+$/` 문자 클래스(enum 아님)입니다.
+  `baseTime`은 current 전용 `isKmaCurrentObservationBaseTime`(정시 `HH00`)으로, `nx`/`ny`는
+  forecast의 무제한 정수 `>= 0`이 아니라 공식 격자 범위 `nx ∈ [1,149]`/`ny ∈ [1,253]`으로
+  검증합니다(`validation.ts`의 `KMA_CURRENT_OBSERVATION_GRID_*` 상수 — request 검증과 같은
+  source).
 * `response.header`와 성공 코드 정책은 `raw-schema.ts`의 `kmaResponseHeaderSchema`/
   `KMA_SUCCESS_RESULT_CODE`/`kmaResponseEnvelopeSchema`를 **그대로** import해 재사용합니다 —
   별도 정의를 만들지 않으므로 두 경계가 header 판정에서 항상 일치합니다.
@@ -272,6 +288,16 @@ provider가 함께 호출하도록 했습니다. 이 helper는 다음을 소유�
 * size-limited body reading(`read-response.ts` 재사용) — `RESPONSE_TOO_LARGE`가 동시 발생한
   abort보다 우선하고, `BODY_READ_ERROR`는 abort reason에 따라 `TIMEOUT`/`ABORTED`/
   `NETWORK_ERROR`로 매핑.
+* **종료 보장 (P2 remediation).** 위 lifecycle은 `controller.abort()`가 호출되면 주입된
+  `fetchImpl`이나 body reader가 **실제로 반응한다는 것**에 의존하지 않습니다. `fetchImpl`
+  호출과 body read 각각은 내부 `raceAgainstAbort` helper로 "timeout/caller-abort가 발생했다"는
+  별도 promise와 경쟁합니다 — signal을 완전히 무시하고 영구히 pending인 `fetchImpl`이나 body
+  reader라도, 이 경쟁에서 timeout/abort 쪽이 이기면 provider는 그 즉시 `TIMEOUT`/`ABORTED`로
+  반환합니다. 경쟁에서 진 원래 promise가 나중에(또는 다시는) settle되더라도: 이미 결정된 결과는
+  바뀌지 않고, 늦게 도착한 `Response`의 body는 best-effort로 cancel되며, 늦은 rejection은 raw
+  error나 unhandled rejection으로 노출되지 않습니다(둘 다 late-settlement 전용 handler가
+  붙습니다). `fetchForecast`/`fetchCurrentObservation`의 기존 공개 결과·오류 union은 이 remediation
+  으로 변경되지 않았습니다 — 오직 "얼마나 오래 pending 상태로 남을 수 있는가"만 달라집니다.
 
 이 helper 이후의 로직 — JSON parse, gateway XML 탐지, KMA response parser 호출, request/response
 correlation, slot grouping — 은 operation마다 분리된 채로 유지됩니다(forecast:

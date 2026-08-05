@@ -101,6 +101,75 @@ async function cancelBody(response: Response): Promise<void> {
   }
 }
 
+/** The outcome of {@link raceAgainstAbort}: either `work` settled first, or `abortWait` did. */
+type AbortRaceOutcome<T> = { readonly aborted: true } | { readonly aborted: false; readonly value: T };
+
+/**
+ * Race `work` against `abortWait` (a promise that resolves the instant the shared timeout/
+ * caller-abort fires) and return as soon as either side settles.
+ *
+ * This is what makes {@link performKmaGetRequest} immune to a `fetchImpl` or body reader that
+ * *ignores* the abort signal entirely and never settles: awaiting `work` directly would then block
+ * this function forever, no matter how the timeout/caller-abort logic is written, because nothing
+ * external can force an unsettled promise to resolve. Racing against `abortWait` instead means this
+ * function's own return is bounded by the timeout/caller-abort regardless of whether the thing it
+ * is waiting on cooperates.
+ *
+ * If `abortWait` wins, `work` may still settle later (or never). `onLateSettle` is attached to it
+ * right away (before this function returns) so that a late settlement is *handled* — e.g. best-effort
+ * cancelling a late `Response` body — rather than left dangling. `work` itself must never reject
+ * (both call sites below guarantee this by folding their own failures into a value), and the
+ * `.catch` here is a defensive backstop so a violation of that contract still cannot surface as an
+ * unhandled rejection.
+ */
+function raceAgainstAbort<T>(
+  work: Promise<T>,
+  abortWait: Promise<void>,
+  onLateSettle: (value: T) => void,
+): Promise<AbortRaceOutcome<T>> {
+  const settled: Promise<AbortRaceOutcome<T>> = work.then((value) => ({ aborted: false, value }));
+  const aborted: Promise<AbortRaceOutcome<T>> = abortWait.then(() => ({ aborted: true }));
+
+  return Promise.race([settled, aborted]).then((outcome) => {
+    if (outcome.aborted) {
+      work.then(onLateSettle).catch(() => {
+        // `work` is documented to never reject; this is only a backstop against that contract
+        // being violated, so a late rejection still cannot become an unhandled rejection.
+      });
+    }
+    return outcome;
+  });
+}
+
+/** The result of invoking `fetchImpl`, folded into a value that never rejects (see {@link invokeFetch}). */
+type KmaFetchOutcome =
+  | { readonly ok: true; readonly response: Response }
+  | { readonly ok: false };
+
+/**
+ * Call `config.fetchImpl` and never reject: a network failure or a synchronous throw is folded into
+ * `{ ok: false }`. Guaranteeing this promise never rejects is what makes it safe to hand to
+ * {@link raceAgainstAbort} — a late rejection could otherwise become an unhandled rejection once
+ * this function's caller has stopped awaiting it.
+ */
+async function invokeFetch(
+  config: ResolvedKmaProviderConfig,
+  url: URL,
+  signal: AbortSignal,
+): Promise<KmaFetchOutcome> {
+  try {
+    const response = await config.fetchImpl(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      redirect: 'error',
+      signal,
+    });
+    return { ok: true, response };
+  } catch {
+    return { ok: false };
+  }
+}
+
 /**
  * Perform one GET request under the shared KMA transport policy and return its raw response text
  * (or a transport error) — it never parses or classifies the KMA JSON payload, which stays each
@@ -119,8 +188,14 @@ async function cancelBody(response: Response): Promise<void> {
  *
  * A fetch implementation that ignores the abort signal and resolves a `Response` (or a body chunk)
  * anyway is still checked against the already-fixed abort reason before being treated as success.
- * Never throws for an expected transport failure; the raw exception, its message, and its `cause`
- * are never surfaced.
+ * Beyond that, the `fetchImpl` call and the body read are each raced against the shared
+ * timeout/caller-abort via {@link raceAgainstAbort} (see its docblock): even a `fetchImpl` or body
+ * reader that *ignores the signal outright* and never settles cannot block this function past the
+ * timeout/caller-abort. A late settlement (a Response that resolves, or a body read that completes,
+ * after the abort reason is already fixed) never changes the already-decided result — a late
+ * `Response`'s body is best-effort cancelled and a late body-read result is simply discarded — and
+ * can never surface as an unhandled rejection. Never throws for an expected transport failure; the
+ * raw exception, its message, and its `cause` are never surfaced.
  */
 async function performKmaGetRequest(
   config: ResolvedKmaProviderConfig,
@@ -136,18 +211,21 @@ async function performKmaGetRequest(
   // The first firing (timeout vs. caller abort) wins and fixes the reason deterministically; the
   // second sees a non-null reason and does not overwrite it. JS runs these callbacks one at a time.
   let abortReason: 'TIMEOUT' | 'ABORTED' | null = null;
-  const onCallerAbort = (): void => {
+  // Resolves the instant either fires, independently of whether `controller.abort()` itself causes
+  // `fetchImpl`/the body reader to react — see `raceAgainstAbort`.
+  let signalAbortWait!: () => void;
+  const abortWait = new Promise<void>((resolve) => {
+    signalAbortWait = resolve;
+  });
+  const fireAbort = (reason: 'TIMEOUT' | 'ABORTED'): void => {
     if (abortReason === null) {
-      abortReason = 'ABORTED';
+      abortReason = reason;
     }
     controller.abort();
+    signalAbortWait();
   };
-  const timeoutId = setTimeout(() => {
-    if (abortReason === null) {
-      abortReason = 'TIMEOUT';
-    }
-    controller.abort();
-  }, config.timeoutMs);
+  const onCallerAbort = (): void => fireAbort('ABORTED');
+  const timeoutId = setTimeout(() => fireAbort('TIMEOUT'), config.timeoutMs);
   if (callerSignal !== undefined) {
     callerSignal.addEventListener('abort', onCallerAbort, { once: true });
   }
@@ -163,12 +241,23 @@ async function performKmaGetRequest(
   };
 
   try {
-    const response = await config.fetchImpl(url, {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-      redirect: 'error',
-      signal: controller.signal,
-    });
+    const fetchRace = await raceAgainstAbort(
+      invokeFetch(config, url, controller.signal),
+      abortWait,
+      (outcome) => {
+        if (outcome.ok) {
+          void cancelBody(outcome.response);
+        }
+      },
+    );
+    if (fetchRace.aborted) {
+      return toAbortResult();
+    }
+    if (!fetchRace.value.ok) {
+      // fetchImpl rejected and it was not (yet) an abort: a genuine network failure.
+      return toAbortResult();
+    }
+    const response = fetchRace.value.response;
 
     // A fetch impl that ignores the abort signal and resolves a Response anyway must not slip past
     // a timeout/abort that has already fired: honour the fixed reason before touching the body.
@@ -182,7 +271,18 @@ async function performKmaGetRequest(
       return { ok: false, error: { kind: 'HTTP_ERROR', status: response.status } };
     }
 
-    const read = await readResponseTextWithLimit(response, config.maxResponseBytes);
+    const readRace = await raceAgainstAbort(
+      readResponseTextWithLimit(response, config.maxResponseBytes),
+      abortWait,
+      () => {
+        // Nothing further to do: readResponseTextWithLimit already cancels/releases its own
+        // reader internally on every path it settles through, and never rejects.
+      },
+    );
+    if (readRace.aborted) {
+      return toAbortResult();
+    }
+    const read = readRace.value;
     if (!read.ok) {
       // RESPONSE_TOO_LARGE is a hard cap and outranks a concurrent abort. A BODY_READ_ERROR is an
       // internal transport failure mapped by whichever abort (if any) fired during the read.
@@ -199,8 +299,10 @@ async function performKmaGetRequest(
 
     return { ok: true, text: read.text };
   } catch {
-    // fetch (or a synchronous throw) failed: classify by which internal abort (if any) fired —
-    // never by the raw exception.
+    // Neither raceAgainstAbort nor its two call sites here are expected to reject/throw (both
+    // `invokeFetch` and `readResponseTextWithLimit` fold their own failures into a value) — this
+    // is a defensive backstop, not a documented path, so it classifies by abort reason like every
+    // other transport failure rather than by the raw exception.
     return toAbortResult();
   } finally {
     clearTimeout(timeoutId);
