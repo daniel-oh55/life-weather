@@ -181,7 +181,7 @@ let hookSlots: unknown[] = [];
 let hookCursor = 0;
 
 async function loadScreen() {
-  const { default: LocationSearchScreen } = await import('./locations');
+  const { default: LocationSearchScreen } = await import('../app/locations');
   return function render() {
     hookCursor = 0;
     return LocationSearchScreen();

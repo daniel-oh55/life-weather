@@ -164,5 +164,12 @@
   Today 화면의 최소 loading/success/error 렌더링을 구현했습니다. 다음은 여전히 구현되지 않았습니다:
   실제 `EXPO_PUBLIC_API_BASE_URL` production 값 설정, 실제 endpoint 검증, 완성형 Today 디자인, 실제
   Android QA.
+- **PR #55**는 `apps/mobile/src/app` 아래 co-located된 route 테스트 3개(`index.test.tsx`,
+  `_layout.test.tsx`, `locations.test.tsx`)가 Expo Router app root의 production route graph에
+  포함되어 Android JS export를 실패시키던 문제를 해결했습니다 — 테스트를 `src/app-tests`로 이동하고
+  route import만 상대 경로로 조정했으며, production route/runtime 코드는 변경하지 않았습니다. Node
+  22에서 빈 `EXPO_PUBLIC_API_BASE_URL`로 Android JS export가 성공하며, GitHub CI에 `pnpm check` 이후
+  별도 `Verify Android JS export` step이 추가되어 이후 같은 회귀를 검출합니다. 실제 endpoint 호출,
+  Development Build와 실기기 QA는 여전히 미수행입니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
