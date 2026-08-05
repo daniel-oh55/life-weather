@@ -171,5 +171,15 @@
   22에서 빈 `EXPO_PUBLIC_API_BASE_URL`로 Android JS export가 성공하며, GitHub CI에 `pnpm check` 이후
   별도 `Verify Android JS export` step이 추가되어 이후 같은 회귀를 검출합니다. 실제 endpoint 호출,
   Development Build와 실기기 QA는 여전히 미수행입니다.
+- **PR #57**은 Expo Router 기반의 5개 하단 탭 navigation shell(`오늘`/`시간별`/`생활날씨`/`상세기상`/
+  `설정`)을 구현했습니다 — `apps/mobile/src/app/index.tsx`를 `apps/mobile/src/app/(tabs)/index.tsx`로
+  이동해 새 `(tabs)` route group에 두었고, root Stack은 `(tabs)` 화면의 header만 숨겨 Tabs 자체
+  header를 사용하게 했습니다. Today(`/`)의 기존 저장 지역·weather-query 동작과 화면 로직은 상대
+  import 경로 조정 외에 변경되지 않았고, `/locations`는 여전히 tabs 밖 root Stack route로 남아
+  기존 back navigation을 유지합니다. 나머지 네 화면(시간별/생활날씨/상세기상/설정)은 각각 고유
+  한국어 제목과 "준비하고 있습니다" 문구만 표시하는 정직한 placeholder이며, API 호출·storage
+  접근·startup 구독 등 실제 기능은 전혀 구현되지 않았습니다. 실제 API 호출, Development Build,
+  native build와 실기기 QA는 이번 PR에서도 미수행입니다. AirKorea 연동, 생활날씨 카드 표시, 설정
+  저장, 상세기상 데이터 구현은 모두 후속 PR 범위입니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.

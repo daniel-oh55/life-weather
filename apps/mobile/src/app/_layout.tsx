@@ -8,5 +8,9 @@ export default function RootLayout() {
     void startMobileLocationApplicationOnce();
   }, []);
 
-  return <Stack />;
+  return (
+    <Stack>
+      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+    </Stack>
+  );
 }

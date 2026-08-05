@@ -210,7 +210,7 @@ let hookSlots: unknown[] = [];
 let hookCursor = 0;
 
 async function loadScreen() {
-  const { default: HomeScreen } = await import('../app/index');
+  const { default: HomeScreen } = await import('../app/(tabs)/index');
   return function render() {
     hookCursor = 0;
     return HomeScreen();

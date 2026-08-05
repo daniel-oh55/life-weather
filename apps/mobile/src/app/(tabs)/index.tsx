@@ -3,12 +3,12 @@ import { useState } from 'react';
 import { useRouter } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { mobileSavedLocationApplicationStore } from '../locations/mobile-saved-location-application-production';
-import type { SavedLocationApplicationSnapshot } from '../locations/mobile-saved-location-application-store';
-import { useMobileSavedLocations } from '../locations/use-mobile-saved-locations';
-import { mobileWeatherQueryStore } from '../weather-query/mobile-weather-query-production';
-import type { MobileWeatherQueryErrorPresentation } from '../weather-query/mobile-weather-query-store';
-import { useMobileWeatherQuery } from '../weather-query/use-mobile-weather-query';
+import { mobileSavedLocationApplicationStore } from '../../locations/mobile-saved-location-application-production';
+import type { SavedLocationApplicationSnapshot } from '../../locations/mobile-saved-location-application-store';
+import { useMobileSavedLocations } from '../../locations/use-mobile-saved-locations';
+import { mobileWeatherQueryStore } from '../../weather-query/mobile-weather-query-production';
+import type { MobileWeatherQueryErrorPresentation } from '../../weather-query/mobile-weather-query-store';
+import { useMobileWeatherQuery } from '../../weather-query/use-mobile-weather-query';
 
 /**
  * The single status line for each application state. `ERROR` deliberately carries no error kind,
