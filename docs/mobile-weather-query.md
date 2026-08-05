@@ -14,7 +14,9 @@ SavedLocationApplicationSnapshot READY
 → mobileWeatherQueryStore.request(request)
 → WeatherApiClient.fetchWeather()
 → observable MobileWeatherQuerySnapshot (IDLE/LOADING/SUCCESS/ERROR)
-→ apps/mobile/src/app/(tabs)/index.tsx의 weather block
+→ 이 snapshot을 읽는 두 read-only consumer:
+  apps/mobile/src/app/(tabs)/index.tsx (Today)의 최소 weather block과
+  apps/mobile/src/app/(tabs)/hourly.tsx (Hourly)의 전체 시간별 목록
 ```
 
 - **store** (`mobile-weather-query-store.ts`, `createMobileWeatherQueryStore`) — provider-neutral
@@ -48,8 +50,18 @@ Context/Provider는 추가되지 않았습니다.
 
 Today(`apps/mobile/src/app/(tabs)/index.tsx`)는 기존과 동일하게 `useMobileSavedLocations()`와
 read-only `useMobileWeatherQuery()`만 호출하며, 화면 자체의 표시/동작은 바뀌지 않았습니다. 사용자
-재시도는 여전히 `mobileWeatherQueryStore.retry()`를 직접 호출합니다. Hourly tab(`(tabs)/hourly.tsx`)은
-이 PR에서도 여전히 placeholder이며, 실제 Hourly UI는 후속 범위입니다.
+재시도는 여전히 `mobileWeatherQueryStore.retry()`를 직접 호출합니다.
+
+Hourly tab(`apps/mobile/src/app/(tabs)/hourly.tsx`)도 같은 두 read-only 입력만 사용합니다 —
+`useMobileSavedLocations()`와, 그 exact snapshot을 그대로 넘긴 `useMobileWeatherQuery()`. Hourly는
+lifecycle hook을 호출하지 않고 `mobileWeatherQueryStore.request()`/`reset()`도 직접 호출하지
+않으며, 사용자 명시적 오류 재시도만 기존 `mobileWeatherQueryStore.retry()`를 호출합니다. Today와
+달리 `SUCCESS` snapshot의 `data.data.hourly` 전체를 응답 순서 그대로 표시합니다(임의 slice/sort/
+grouping 없음). 각 항목은 선택된 저장 지역의 `timezone` 기준으로 포맷한 예보 시각, 한국어 condition
+라벨, 필수 기온과 함께 `null`이 아닌 optional 필드(체감/강수확률/강수량/적설/습도/풍속/풍향)만
+표시합니다 — `0` 값은 항상 표시되고 `null`만 숨겨집니다. `hourly`가 비어 있으면 오류가 아니라
+"표시할 시간별 예보가 없습니다."를 표시합니다. Hourly 자체는 request/reset lifecycle의 owner가
+아닙니다 — 계속 `(tabs)/_layout.tsx` 한 곳이 소유합니다.
 
 ## `EXPO_PUBLIC_API_BASE_URL` 계약
 
@@ -132,14 +144,19 @@ Snapshot의 `ERROR` variant는 고정된 `MobileWeatherQueryErrorPresentation`
 `code`/`message`/`retryable`, URL, `requestId`, 좌표, grid는 어디에도 노출되지 않습니다. 화면은
 `presentation`만 고정 한국어 문구로 매핑합니다.
 
-## Hourly 빈 배열과 `current: null`
+## Hourly 배열과 `current: null`
 
 `SUCCESS` snapshot의 `data`는 client가 이미 검증한 `WeatherSuccessResponseV1` 그대로이며 복사·
-재정의하지 않습니다. 화면은 `data.data.hourly[0]`이 있으면 최소 필드(`forecastAt`,
-`temperatureCelsius`, 한국어 condition 라벨, `precipitationProbabilityPercent`가 `null`이 아닐 때만
-강수확률)를 표시합니다. `hourly`가 비어 있으면 오류가 아니라 "표시할 시간별 예보가 없습니다."를
-표시하고, `current: null`도 정상 success로 처리해 아무것도 렌더링하지 않습니다(현재 화면은
-`current`를 표시하지 않습니다).
+재정의하지 않습니다. `current: null`은 정상 success로 처리되어 두 화면 모두 아무것도 렌더링하지
+않습니다(`current` section 자체는 어느 화면도 표시하지 않습니다).
+
+Today는 `data.data.hourly[0]`이 있으면 최소 필드(`forecastAt`, `temperatureCelsius`, 한국어
+condition 라벨, `precipitationProbabilityPercent`가 `null`이 아닐 때만 강수확률)만 표시합니다.
+`hourly`가 비어 있으면 오류가 아니라 "표시할 시간별 예보가 없습니다."를 표시합니다.
+
+Hourly는 `data.data.hourly` 전체를 응답 순서 그대로 표시합니다 — §「Lifecycle owner」 참고. `daily`,
+`alerts`, `sources`, air quality는 어느 화면도 표시하지 않습니다(air quality는 아직 data source가
+없습니다).
 
 ## 이 경계에서 하지 않는 것
 
