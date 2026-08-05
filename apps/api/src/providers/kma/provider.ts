@@ -92,7 +92,13 @@ type KmaTransportResult =
   | { readonly ok: true; readonly text: string }
   | { readonly ok: false; readonly error: KmaTransportError };
 
-/** Cancel an error response's body so it is neither read nor left dangling. Errors are ignored. */
+/**
+ * Start a best-effort, non-blocking cancellation of a response body that will not be read, so the
+ * connection is not left dangling. This is a *cleanup starter*, not a cleanup guarantee: every call
+ * site awaits nothing about this function's outcome (a synchronous throw from `cancel()` is caught
+ * here, and a returned promise that rejects — or never settles at all — never surfaces past this
+ * function and never becomes an unhandled rejection). `body === null` is a no-op via `?.`.
+ */
 async function cancelBody(response: Response): Promise<void> {
   try {
     await response.body?.cancel();
@@ -261,22 +267,26 @@ async function performKmaGetRequest(
 
     // A fetch impl that ignores the abort signal and resolves a Response anyway must not slip past
     // a timeout/abort that has already fired: honour the fixed reason before touching the body.
+    // Cancellation is started but never awaited — a body.cancel() that rejects or never settles
+    // must not delay this already-decided TIMEOUT/ABORTED result.
     if (abortReason !== null) {
-      await cancelBody(response);
+      void cancelBody(response);
       return toAbortResult();
     }
 
     if (!response.ok) {
-      await cancelBody(response);
+      // Same non-blocking policy: HTTP_ERROR is already decided and must not wait on cancellation.
+      void cancelBody(response);
       return { ok: false, error: { kind: 'HTTP_ERROR', status: response.status } };
     }
 
     const readRace = await raceAgainstAbort(
-      readResponseTextWithLimit(response, config.maxResponseBytes),
+      readResponseTextWithLimit(response, config.maxResponseBytes, { abortNotice: abortWait }),
       abortWait,
       () => {
-        // Nothing further to do: readResponseTextWithLimit already cancels/releases its own
-        // reader internally on every path it settles through, and never rejects.
+        // Nothing further to do: readResponseTextWithLimit races its own pending reader.read()
+        // against this same abortWait internally and best-effort cancels/retries the lock release
+        // itself once the abort fires — see its docblock.
       },
     );
     if (readRace.aborted) {

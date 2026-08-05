@@ -91,6 +91,131 @@ function erroringStreamResponse(
   return { response: new Response(stream) };
 }
 
+/** A small delay, letting pending microtasks/timers settle before an assertion. */
+function tick(ms = 0): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** A minimal deferred promise for controlling exact settlement timing in a test. */
+function deferred<T = void>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason: unknown) => void;
+} {
+  let resolveFn!: (value: T) => void;
+  let rejectFn!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolve, reject) => {
+    resolveFn = resolve;
+    rejectFn = reject;
+  });
+  return { promise, resolve: resolveFn, reject: rejectFn };
+}
+
+/**
+ * Run `run`, then give any late microtask/timer-driven settlement a moment to surface before
+ * asserting it never became a process-level `unhandledRejection`.
+ */
+async function assertNoUnhandledRejection(run: () => Promise<void>): Promise<void> {
+  const captured: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown): void => {
+    captured.push(reason);
+  };
+  process.on('unhandledRejection', onUnhandledRejection);
+  try {
+    await run();
+    await tick(20);
+  } finally {
+    process.off('unhandledRejection', onUnhandledRejection);
+  }
+  expect(captured).toEqual([]);
+}
+
+/**
+ * A response whose body stream never enqueues/closes on its own (so a pending `read()` stays
+ * pending forever unless cancelled), with a fully controllable `cancel()` outcome.
+ */
+function neverEnqueuingResponse(
+  onCancel?: () => Promise<void> | void,
+): { response: Response; cancelCalls: () => number } {
+  let cancelCalls = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull() {
+      // Intentionally never enqueue/close/error.
+    },
+    cancel() {
+      cancelCalls += 1;
+      return onCancel?.();
+    },
+  });
+  return { response: new Response(stream), cancelCalls: () => cancelCalls };
+}
+
+/**
+ * A response whose body always has another chunk available on `pull` (so the streaming size limit
+ * trips quickly), with a fully controllable `cancel()` outcome — same shape as
+ * {@link neverEnqueuingResponse}.
+ */
+function alwaysProducingResponse(
+  chunk: Uint8Array,
+  onCancel?: () => Promise<void> | void,
+): { response: Response; cancelCalls: () => number } {
+  let cancelCalls = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      controller.enqueue(chunk);
+    },
+    cancel() {
+      cancelCalls += 1;
+      return onCancel?.();
+    },
+  });
+  return { response: new Response(stream), cancelCalls: () => cancelCalls };
+}
+
+/**
+ * A fake `Response` backed by a hand-rolled reader (not a real `ReadableStream`) whose `read()`,
+ * `cancel()`, and `releaseLock()` are each independently controllable. A real spec-compliant stream
+ * settles a pending `read()` as soon as `cancel()` is invoked (`ReadableStreamClose` runs as part of
+ * cancellation, ahead of the underlying source's own cancel algorithm settling), which makes it
+ * impossible to observe a `read()` that is *still* pending some time after `cancel()` was called
+ * using a real stream. This fake exists solely to exercise that genuinely non-cooperative scenario,
+ * so the late-settlement retry-release path can be verified directly.
+ */
+function controllableReaderResponse(): {
+  response: Response;
+  resolveRead: (result: ReadableStreamReadResult<Uint8Array>) => void;
+  rejectRead: (reason: unknown) => void;
+  cancelCalls: () => number;
+  releaseLockCalls: () => number;
+} {
+  const read = deferred<ReadableStreamReadResult<Uint8Array>>();
+  let cancelCalls = 0;
+  let releaseLockCalls = 0;
+  const reader = {
+    read: () => read.promise,
+    cancel: () => {
+      cancelCalls += 1;
+      return Promise.resolve();
+    },
+    releaseLock: () => {
+      releaseLockCalls += 1;
+    },
+  };
+  const response = {
+    headers: new Headers(),
+    body: {
+      getReader: () => reader,
+    },
+  } as unknown as Response;
+  return {
+    response,
+    resolveRead: read.resolve,
+    rejectRead: read.reject,
+    cancelCalls: () => cancelCalls,
+    releaseLockCalls: () => releaseLockCalls,
+  };
+}
+
 describe('readResponseTextWithLimit — Content-Length gate', () => {
   it('cancels the body without reading a byte when Content-Length exceeds max', async () => {
     const { response, wasCancelled, pullCount } = openStreamResponse(encoder.encode('x'), {
@@ -279,5 +404,166 @@ describe('readResponseTextWithLimit — UTF-8 & empty bodies', () => {
   it('returns an empty string for a bodyless response', async () => {
     const result = await readResponseTextWithLimit(new Response(null, { status: 204 }), 1024);
     expect(result).toEqual({ ok: true, text: '' });
+  });
+});
+
+describe('readResponseTextWithLimit — abort notice while a read is pending', () => {
+  it('cancels the reader when the abort notice fires without waiting for cancel() to settle', async () => {
+    const cancel = deferred<void>();
+    const { response, cancelCalls } = neverEnqueuingResponse(() => cancel.promise);
+    const abort = deferred<void>();
+
+    const resultPromise = readResponseTextWithLimit(response, 1024, { abortNotice: abort.promise });
+    abort.resolve();
+    const result = await resultPromise;
+
+    expect(result).toEqual({ ok: false, error: { kind: 'BODY_READ_ERROR' } });
+    expect(cancelCalls()).toBe(1);
+
+    // Cleanup: settle the intentionally-pending cancel so nothing dangles past this test.
+    cancel.resolve();
+  });
+
+  it('unlocks the body after an abort-notice cancellation on a standard stream', async () => {
+    const { response } = neverEnqueuingResponse();
+    const abort = deferred<void>();
+
+    const resultPromise = readResponseTextWithLimit(response, 1024, { abortNotice: abort.promise });
+    abort.resolve();
+    await resultPromise;
+
+    expect(response.body?.locked).toBe(false);
+  });
+
+  it('does not wait for a cancel() that never settles', async () => {
+    const cancel = deferred<void>();
+    const { response, cancelCalls } = neverEnqueuingResponse(() => cancel.promise);
+    const abort = deferred<void>();
+
+    const resultPromise = readResponseTextWithLimit(response, 1024, { abortNotice: abort.promise });
+    abort.resolve();
+    // This must resolve even though the underlying cancel() has not settled yet — proves the
+    // abort-notice branch does not await cancellation.
+    const result = await resultPromise;
+
+    expect(result).toEqual({ ok: false, error: { kind: 'BODY_READ_ERROR' } });
+    expect(cancelCalls()).toBe(1);
+
+    // Cleanup: settle the intentionally-pending cancel so nothing dangles past this test.
+    cancel.resolve();
+  });
+
+  it('does not surface a raw error when cancel() rejects after an abort notice', async () => {
+    const marker = 'SECRET_ABORT_NOTICE_CANCEL_REJECTION_MARKER';
+    const { response, cancelCalls } = neverEnqueuingResponse(() => Promise.reject(new Error(marker)));
+    const abort = deferred<void>();
+
+    const resultPromise = readResponseTextWithLimit(response, 1024, { abortNotice: abort.promise });
+    abort.resolve();
+    const result = await resultPromise;
+    expect(result).toEqual({ ok: false, error: { kind: 'BODY_READ_ERROR' } });
+    expect(JSON.stringify(result)).not.toContain(marker);
+
+    await assertNoUnhandledRejection(async () => {
+      await tick(20);
+    });
+    expect(cancelCalls()).toBe(1);
+  });
+});
+
+describe('readResponseTextWithLimit — non-cooperative pending read (fake reader)', () => {
+  it('starts cancellation and returns without waiting for the pending read to settle', async () => {
+    const fake = controllableReaderResponse();
+    const abort = deferred<void>();
+
+    const resultPromise = readResponseTextWithLimit(fake.response, 1024, {
+      abortNotice: abort.promise,
+    });
+    abort.resolve();
+    const result = await resultPromise;
+
+    expect(result).toEqual({ ok: false, error: { kind: 'BODY_READ_ERROR' } });
+    expect(fake.cancelCalls()).toBe(1);
+    // The immediate attempt in `finally` already ran once, even though read() is still pending.
+    expect(fake.releaseLockCalls()).toBe(1);
+
+    // Cleanup: settle the intentionally-pending read so nothing dangles past this test.
+    fake.resolveRead({ done: true, value: undefined });
+  });
+
+  it('retries the lock release once the pending read resolves late', async () => {
+    const fake = controllableReaderResponse();
+    const abort = deferred<void>();
+
+    const resultPromise = readResponseTextWithLimit(fake.response, 1024, {
+      abortNotice: abort.promise,
+    });
+    abort.resolve();
+    await resultPromise;
+    expect(fake.releaseLockCalls()).toBe(1);
+
+    fake.resolveRead({ done: true, value: undefined });
+    await tick(20);
+    expect(fake.releaseLockCalls()).toBe(2);
+  });
+
+  it('retries the lock release once the pending read rejects late, without an unhandled rejection', async () => {
+    const marker = 'SECRET_LATE_PENDING_READ_REJECTION_MARKER';
+    const fake = controllableReaderResponse();
+    const abort = deferred<void>();
+
+    const resultPromise = readResponseTextWithLimit(fake.response, 1024, {
+      abortNotice: abort.promise,
+    });
+    abort.resolve();
+    const result = await resultPromise;
+    expect(JSON.stringify(result)).not.toContain(marker);
+
+    await assertNoUnhandledRejection(async () => {
+      fake.rejectRead(new Error(marker));
+      await tick(20);
+    });
+    expect(fake.releaseLockCalls()).toBe(2);
+  });
+});
+
+describe('readResponseTextWithLimit — RESPONSE_TOO_LARGE latches before cleanup', () => {
+  it('latches from the Content-Length precheck even when cancel() never settles', async () => {
+    const cancel = deferred<void>();
+    let cancelCalls = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull() {
+        // Never enqueue: the precheck must reject before touching the stream.
+      },
+      cancel() {
+        cancelCalls += 1;
+        return cancel.promise;
+      },
+    });
+    const response = new Response(stream, { headers: { 'content-length': '100' } });
+
+    // This must resolve even though the underlying cancel() has not settled yet.
+    const result = await readResponseTextWithLimit(response, 10);
+    expect(result).toEqual({ ok: false, error: { kind: 'RESPONSE_TOO_LARGE' } });
+    expect(cancelCalls).toBe(1);
+
+    // Cleanup: settle the intentionally-pending cancel so nothing dangles past this test.
+    cancel.resolve();
+  });
+
+  it('latches from the streaming limit even when cancel() never settles', async () => {
+    const cancel = deferred<void>();
+    const { response, cancelCalls } = alwaysProducingResponse(
+      encoder.encode('12345'),
+      () => cancel.promise,
+    );
+
+    // This must resolve even though the underlying cancel() has not settled yet.
+    const result = await readResponseTextWithLimit(response, 7);
+    expect(result).toEqual({ ok: false, error: { kind: 'RESPONSE_TOO_LARGE' } });
+    expect(cancelCalls()).toBe(1);
+
+    // Cleanup: settle the intentionally-pending cancel so nothing dangles past this test.
+    cancel.resolve();
   });
 });

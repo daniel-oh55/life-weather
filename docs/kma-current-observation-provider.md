@@ -83,10 +83,15 @@ interface KmaCurrentObservationRequest {
   throw하지 않습니다 — `null`/`undefined`/문자열/숫자/boolean/배열/함수는 네 field 모두
   `INVALID`로 고정 순서 반환(forecast request validator와 동일한 totality 정책,
   `request.ts` 참고).
-* `baseDate`는 `isCalendarDate`, `baseTime`은 `isClockTime`을 재사용합니다. 발표 schedule 자체는
-  강제하지 않습니다 — 정시가 아닌 `baseTime`(예: `0530`)도 구조적으로는 유효합니다. 실제 정시
-  스케줄 선택은 이 PR 범위가 아닙니다(후속 base-time selector PR).
-* `nx`/`ny`는 `isNonNegativeSafeInteger`(안전 정수, `>= 0`, string coercion 없음)로 검증합니다.
+* `baseDate`는 `isCalendarDate`를 재사용합니다. `baseTime`은 forecast의 일반 `isClockTime`이
+  아니라 current 전용 `isKmaCurrentObservationBaseTime`(정시 `HH00`만 허용)을 씁니다 —
+  `0530`처럼 구조적으로 `HHmm` 형식이어도 정시가 아니면 `INVALID_REQUEST`입니다. 실제 정시
+  발표 스케줄 *선택*(예: 현재 시각으로부터 최신 정시를 자동 계산하는 것) 자체는 여전히 이
+  PR 범위가 아닙니다(후속 base-time selector PR) — 여기서 강제하는 것은 caller가 제공한
+  `baseTime`이 이미 정시 형식이어야 한다는 값 검증일 뿐입니다.
+* `nx`/`ny`는 forecast의 무제한 `isNonNegativeSafeInteger`가 아니라 current 전용
+  `isKmaCurrentObservationGridNx`/`Ny`(공식 `[1,149]×[1,253]` 격자, string coercion 없음)로
+  검증합니다 — `0`, `150`, `254` 등 범위 밖 값은 `INVALID_REQUEST`입니다.
 * URL operation은 caller 입력이 아니라 고정 `KMA_CURRENT_OBSERVATION_OPERATION =
   'getUltraSrtNcst'`입니다 — forecast의 `KMA_OPERATION_BY_PRODUCT`처럼 고정 mapping에서만
   선택되며 절대 caller 입력으로 URL path를 만들지 않습니다.
@@ -95,13 +100,9 @@ interface KmaCurrentObservationRequest {
   상수를 그대로 재사용합니다 — 두 request가 실제로 같은 공식 값을 쓰기 때문입니다.
 * `ServiceKey`는 `URLSearchParams`로 정확히 한 번 encode됩니다(forecast와 동일한 encoding
   정책). URL·query·service key·invalid raw value는 오류에 절대 포함하지 않습니다.
-* **정시 `baseTime`과 격자 범위는 실제로 강제됩니다.** `0530`처럼 구조적으로는 `HHmm`
-  형식이어도 정시가 아닌 값, 또는 공식 `[1,149]×[1,253]` 격자를 벗어난 `nx`/`ny`(`0`, `150`,
-  `254` 등)는 `INVALID_REQUEST`로 거부되고 `buildKmaCurrentObservationRequestUrl`도 URL을
-  만들지 않습니다 — provider는 이 경우 `fetch`를 호출하지 않습니다. 실제 정시 발표 스케줄
-  *선택*(예: 현재 시각으로부터 최신 정시를 자동 계산하는 것) 자체는 여전히 이 PR 범위가
-  아닙니다(후속 base-time selector PR) — 여기서 강제하는 것은 caller가 제공한 `baseTime`이
-  이미 정시 형식이어야 한다는 값 검증일 뿐입니다.
+* 정시가 아닌 `baseTime` 또는 격자 범위 밖 `nx`/`ny`는 `INVALID_REQUEST`로 거부되고
+  `buildKmaCurrentObservationRequestUrl`도 URL을 만들지 않습니다 — provider는 이 경우 `fetch`를
+  호출하지 않습니다.
 
 ## Raw schema와 response parser 계약
 
@@ -298,6 +299,25 @@ provider가 함께 호출하도록 했습니다. 이 helper는 다음을 소유�
   error나 unhandled rejection으로 노출되지 않습니다(둘 다 late-settlement 전용 handler가
   붙습니다). `fetchForecast`/`fetchCurrentObservation`의 기존 공개 결과·오류 union은 이 remediation
   으로 변경되지 않았습니다 — 오직 "얼마나 오래 pending 상태로 남을 수 있는가"만 달라집니다.
+* **Cleanup 분리 (두 번째 P2 remediation).** provider 결과 확정, best-effort transport cleanup
+  시작, outstanding async work의 late settlement 처리는 서로 다른 세 단계로 분리됩니다 —
+  cleanup이 끝나야 결과를 반환하는 구조도, cleanup을 전혀 시작하지 않는 구조도 아닙니다.
+  * `read-response.ts`가 소유하는 body reader도 이제 같은 abort/timeout 신호(`abortNotice`)를
+    공유합니다. pending `reader.read()`가 이 신호보다 늦게 settle되면(non-cooperative
+    stream), `read-response.ts`는 best-effort `reader.cancel()`을 즉시 시작하되 그 완료를
+    기다리지 않고 반환합니다. 원래의 pending read에는 handler가 붙어 있어, 나중에(또는
+    reject로) settle되면 lock release가 다시 시도됩니다 — 처음 시도가 pending read 때문에
+    성공하지 못했을 수 있기 때문입니다. 동일 reader에 대한 중복 cancel/release는 안전합니다.
+  * fetch 직후 이미 abort/timeout이 관찰된 경로와 non-2xx HTTP 경로의 response body
+    cancellation(`cancelBody`)도 이제 완전히 non-blocking입니다 — `body.cancel()`이 pending,
+    reject, 또는 synchronous throw여도 이미 결정된 `TIMEOUT`/`ABORTED`/`HTTP_ERROR` 결과를
+    지연시키지 않습니다.
+  * `RESPONSE_TOO_LARGE`는 감지되는 즉시(Content-Length precheck 또는 streaming 누적 모두)
+    cleanup을 시작하기 **전에** latch됩니다 — cancellation이 pending이거나 거의 동시에
+    concurrent abort/timeout이 발생해도, 이미 latch된 `RESPONSE_TOO_LARGE`가 우선합니다.
+  * 이 cleanup 분리는 best-effort입니다 — 실제 stream/reader가 얼마나 빨리(또는 전혀) 반응해
+    정리되는지까지 보장하지 않으며, 오직 provider 결과가 그 반응을 기다리지 않는다는 것만
+    보장합니다.
 
 이 helper 이후의 로직 — JSON parse, gateway XML 탐지, KMA response parser 호출, request/response
 correlation, slot grouping — 은 operation마다 분리된 채로 유지됩니다(forecast:

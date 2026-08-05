@@ -271,6 +271,66 @@ function providerWith(
   return created.provider;
 }
 
+/** A minimal deferred promise for controlling exact settlement timing in a test. */
+function deferred<T = void>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason: unknown) => void;
+} {
+  let resolveFn!: (value: T) => void;
+  let rejectFn!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolve, reject) => {
+    resolveFn = resolve;
+    rejectFn = reject;
+  });
+  return { promise, resolve: resolveFn, reject: rejectFn };
+}
+
+/**
+ * A response whose body stream never enqueues/closes on its own (so a pending `read()` stays
+ * pending forever unless cancelled), with a fully controllable `cancel()` outcome. `status`
+ * defaults to 200 so the body is actually read; pass a non-2xx status to exercise the HTTP-error
+ * cancellation path instead (which never reads the body).
+ */
+function hangingReadResponse(
+  status = 200,
+  onCancel?: () => Promise<void> | void,
+): { response: Response; cancelCalls: () => number } {
+  let cancelCalls = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull() {
+      // Intentionally never enqueue/close/error.
+    },
+    cancel() {
+      cancelCalls += 1;
+      return onCancel?.();
+    },
+  });
+  return { response: new Response(stream, { status }), cancelCalls: () => cancelCalls };
+}
+
+/**
+ * A 200 response whose body always has another chunk available on `pull` (so the streaming size
+ * limit trips on the first chunk under a small `maxResponseBytes`), with a fully controllable
+ * `cancel()` outcome — same shape as {@link hangingReadResponse}.
+ */
+function overflowingBodyResponse(
+  onCancel?: () => Promise<void> | void,
+): { response: Response; cancelCalls: () => number } {
+  const encoder = new TextEncoder();
+  let cancelCalls = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      controller.enqueue(encoder.encode('x'.repeat(64)));
+    },
+    cancel() {
+      cancelCalls += 1;
+      return onCancel?.();
+    },
+  });
+  return { response: new Response(stream, { status: 200 }), cancelCalls: () => cancelCalls };
+}
+
 function deepFreeze<T>(value: T): T {
   if (value !== null && typeof value === 'object') {
     for (const key of Object.keys(value)) {
@@ -526,16 +586,125 @@ describe('fetchForecast — transport terminates even when fetchImpl/body ignore
     expect(await promise).toEqual({ ok: false, error: { kind: 'ABORTED' } });
   });
 
-  it('a body that completes late (after TIMEOUT) never becomes an unhandled rejection', async () => {
-    const late = controllableHangingBodyResponse();
-    const result = await providerWith(fetchReturning(late.response), {
-      timeoutMs: 10,
-    }).fetchForecast(REQUEST);
+  it('cancels a hanging body reader on TIMEOUT without waiting for cancel() to settle', async () => {
+    const cancel = deferred<void>();
+    const { response, cancelCalls } = hangingReadResponse(200, () => cancel.promise);
+    const result = await providerWith(fetchReturning(response), { timeoutMs: 10 }).fetchForecast(
+      REQUEST,
+    );
     expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
 
+    // The provider already returned above even though cancel() has not settled yet.
     await assertNoUnhandledRejection(async () => {
-      late.push(body());
-      late.close();
+      await tick(20);
+    });
+    expect(cancelCalls()).toBe(1);
+    expect(response.body?.locked).toBe(false);
+
+    // Settling cancel() late must not throw, leak, or change anything already decided.
+    cancel.resolve();
+    await tick(20);
+  });
+
+  it('cancels a hanging body reader on caller ABORT without waiting for cancel() to settle', async () => {
+    const cancel = deferred<void>();
+    const { response, cancelCalls } = hangingReadResponse(200, () => cancel.promise);
+    const controller = new AbortController();
+    const promise = providerWith(fetchReturning(response), { timeoutMs: 10_000 }).fetchForecast(
+      REQUEST,
+      { signal: controller.signal },
+    );
+    await tick();
+    controller.abort();
+    expect(await promise).toEqual({ ok: false, error: { kind: 'ABORTED' } });
+
+    await assertNoUnhandledRejection(async () => {
+      await tick(20);
+    });
+    expect(cancelCalls()).toBe(1);
+    expect(response.body?.locked).toBe(false);
+
+    cancel.resolve();
+    await tick(20);
+  });
+
+  it('a hanging body reader whose cancel() rejects never becomes an unhandled rejection', async () => {
+    const marker = 'SECRET_HANGING_READ_CANCEL_REJECTION_MARKER';
+    const { response, cancelCalls } = hangingReadResponse(200, () => Promise.reject(new Error(marker)));
+    const result = await providerWith(fetchReturning(response), { timeoutMs: 10 }).fetchForecast(
+      REQUEST,
+    );
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+    expect(JSON.stringify(result)).not.toContain(marker);
+
+    await assertNoUnhandledRejection(async () => {
+      await tick(20);
+    });
+    expect(cancelCalls()).toBe(1);
+  });
+});
+
+describe('fetchForecast — non-blocking response-body cancellation on an already-decided result (P2-2)', () => {
+  it('returns HTTP_ERROR without waiting for a non-2xx body cancel() that never settles', async () => {
+    const cancel = deferred<void>();
+    const { response, cancelCalls } = hangingReadResponse(500, () => cancel.promise);
+    const result = await providerWith(fetchReturning(response)).fetchForecast(REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'HTTP_ERROR', status: 500 } });
+    expect(cancelCalls()).toBe(1);
+
+    await assertNoUnhandledRejection(async () => {
+      cancel.resolve();
+      await tick(20);
+    });
+  });
+
+  it('returns HTTP_ERROR unchanged when the non-2xx body cancel() rejects, without an unhandled rejection', async () => {
+    const marker = 'SECRET_HTTP_ERROR_CANCEL_REJECTION_MARKER';
+    const { response, cancelCalls } = hangingReadResponse(503, () => Promise.reject(new Error(marker)));
+    const result = await providerWith(fetchReturning(response)).fetchForecast(REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'HTTP_ERROR', status: 503 } });
+    expect(JSON.stringify(result)).not.toContain(marker);
+
+    await assertNoUnhandledRejection(async () => {
+      await tick(20);
+    });
+    expect(cancelCalls()).toBe(1);
+  });
+});
+
+describe('fetchForecast — RESPONSE_TOO_LARGE outranks a concurrent abort even when cancel() hangs (P2-3)', () => {
+  it('keeps RESPONSE_TOO_LARGE over a concurrent caller abort', async () => {
+    const cancel = deferred<void>();
+    const { response, cancelCalls } = overflowingBodyResponse(() => cancel.promise);
+    const controller = new AbortController();
+    const promise = providerWith(fetchReturning(response), {
+      timeoutMs: 10_000,
+      maxResponseBytes: 16,
+    }).fetchForecast(REQUEST, { signal: controller.signal });
+    // Give the overflow a chance to be detected and latched before the caller aborts.
+    await tick();
+    controller.abort();
+    expect(await promise).toEqual({ ok: false, error: { kind: 'RESPONSE_TOO_LARGE' } });
+    expect(cancelCalls()).toBe(1);
+
+    await assertNoUnhandledRejection(async () => {
+      cancel.resolve();
+      await tick(20);
+    });
+  });
+
+  it('keeps RESPONSE_TOO_LARGE over a concurrent TIMEOUT', async () => {
+    const cancel = deferred<void>();
+    const { response, cancelCalls } = overflowingBodyResponse(() => cancel.promise);
+    const promise = providerWith(fetchReturning(response), {
+      timeoutMs: 15,
+      maxResponseBytes: 16,
+    }).fetchForecast(REQUEST);
+    expect(await promise).toEqual({ ok: false, error: { kind: 'RESPONSE_TOO_LARGE' } });
+    expect(cancelCalls()).toBe(1);
+
+    await assertNoUnhandledRejection(async () => {
+      cancel.resolve();
       await tick(20);
     });
   });
@@ -1253,6 +1422,55 @@ describe('fetchCurrentObservation — transport terminates even when fetchImpl/b
       await tick(20);
     });
     expect(late.wasCancelled()).toBe(true);
+  });
+
+  it('cancels a hanging body reader on TIMEOUT without waiting for cancel() to settle (P2-1)', async () => {
+    const cancel = deferred<void>();
+    const { response, cancelCalls } = hangingReadResponse(200, () => cancel.promise);
+    const result = await currentProviderWith(fetchReturning(response), {
+      timeoutMs: 10,
+    }).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+
+    await assertNoUnhandledRejection(async () => {
+      await tick(20);
+    });
+    expect(cancelCalls()).toBe(1);
+    expect(response.body?.locked).toBe(false);
+
+    cancel.resolve();
+    await tick(20);
+  });
+
+  it('returns HTTP_ERROR without waiting for a non-2xx body cancel() that never settles (P2-2)', async () => {
+    const cancel = deferred<void>();
+    const { response, cancelCalls } = hangingReadResponse(500, () => cancel.promise);
+    const result = await currentProviderWith(fetchReturning(response)).fetchCurrentObservation(
+      CURRENT_REQUEST,
+    );
+    expect(result).toEqual({ ok: false, error: { kind: 'HTTP_ERROR', status: 500 } });
+    expect(cancelCalls()).toBe(1);
+
+    await assertNoUnhandledRejection(async () => {
+      cancel.resolve();
+      await tick(20);
+    });
+  });
+
+  it('keeps RESPONSE_TOO_LARGE over a concurrent TIMEOUT even when cancel() hangs (P2-3)', async () => {
+    const cancel = deferred<void>();
+    const { response, cancelCalls } = overflowingBodyResponse(() => cancel.promise);
+    const promise = currentProviderWith(fetchReturning(response), {
+      timeoutMs: 15,
+      maxResponseBytes: 16,
+    }).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(await promise).toEqual({ ok: false, error: { kind: 'RESPONSE_TOO_LARGE' } });
+    expect(cancelCalls()).toBe(1);
+
+    await assertNoUnhandledRejection(async () => {
+      cancel.resolve();
+      await tick(20);
+    });
   });
 });
 
