@@ -41,8 +41,14 @@ vi.mock('react', async (importOriginal) => {
 // `RootLayout` still returns a `<Stack />` element without loading real navigation.
 // ---------------------------------------------------------------------------
 
-const MockStack = vi.hoisted(() => function MockStack(): null {
-  return null;
+const MockStack = vi.hoisted(() => {
+  function MockStack(): null {
+    return null;
+  }
+  MockStack.Screen = function MockStackScreen(): null {
+    return null;
+  };
+  return MockStack;
 });
 
 vi.mock('expo-router', () => ({
@@ -87,6 +93,17 @@ describe('RootLayout call', () => {
     const element = RootLayout();
 
     expect(element.type).toBe(Stack);
+    // The root Stack declares only the "(tabs)" screen (header hidden, so the Tabs navigator owns
+    // its own headers). "locations" is intentionally left undeclared, so it keeps Expo Router's
+    // default Stack screen behavior (including the existing back navigation) unchanged.
+    const stackChildren = Array.isArray(element.props.children)
+      ? element.props.children
+      : [element.props.children];
+    expect(stackChildren).toHaveLength(1);
+    const tabsScreenElement = stackChildren[0] as { type: unknown; props: Record<string, unknown> };
+    expect(tabsScreenElement.type).toBe(Stack.Screen);
+    expect(tabsScreenElement.props.name).toBe('(tabs)');
+    expect(tabsScreenElement.props.options).toEqual({ headerShown: false });
     expect(useEffectMock).toHaveBeenCalledTimes(1);
     expect(capturedEffects).toHaveLength(1);
     expect(capturedEffects[0]?.deps).toEqual([]);
