@@ -25,7 +25,14 @@
 
 ## 아직 구현되지 않은 항목
 
-- current/daily sections
+- current/daily sections (KMA 초단기실황(`getUltraSrtNcst`) **provider boundary**는 **PR #63**에서
+  구현됐습니다 — request 검증·URL 생성, raw JSON schema, 성공/upstream/invalid 분류, category
+  grouping, 기존 HTTP transport 정책을 재사용하는 provider(`createKmaCurrentObservationProvider`),
+  공유 `CurrentWeather`로의 순수 normalizer(`normalizeKmaCurrentObservation`)까지입니다. 이
+  provider는 아직 `POST /weather`·`services`·`composition`·`routes`에 연결되지 않았으므로,
+  production 응답의 `current`는 이 PR 이후에도 계속 missing입니다. daily sections은 여전히
+  미구현입니다. 자세한 내용은
+  [kma-current-observation-provider.md](./kma-current-observation-provider.md) 참고.
 - AirKorea air quality
 - alerts
 - response cache
@@ -275,5 +282,13 @@
   production KMA pipeline은 여전히 hourly-only이므로 `current`와 `alerts`는 실제 응답에서 계속
   missing으로 표시될 수 있습니다 — 실제 current/alert backend는 아직 미구현이며, 실제 API 호출과
   Development Build, 실기기 QA는 이번 PR에서도 미수행입니다.
+- **PR #63**은 KMA 초단기실황(`getUltraSrtNcst`) provider boundary를 추가했습니다 — 기존
+  단기·초단기예보 raw schema/parser/grouping/provider(PR #4/#5/#6)는 변경하지 않고, 별도
+  request/response shape(`obsrValue`, 예보 대상 시각 없음)을 위한 병렬 모듈을 추가했습니다.
+  provider는 기존 forecast provider의 timeout/abort/HTTP-status/response-size transport
+  정책을 공유 helper로 재사용하며, `fetchForecast()`의 기존 계약과 테스트는 회귀 없이
+  그대로 유지됩니다. current를 `POST /weather`에 연결하는 application service/composition/
+  route는 이 PR 범위가 아닙니다. 자세한 내용은
+  [kma-current-observation-provider.md](./kma-current-observation-provider.md) 참고.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.

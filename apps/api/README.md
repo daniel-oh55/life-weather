@@ -103,6 +103,18 @@ a project on first run; that step is intentionally deferred to a later PR.
   - Each candidate is validated with `hourlyForecast.safeParse`; output is sorted by `forecastAt` and
     issues by `(slotKey, field, reason)`. It never mutates the input and reads no clock. The HTTP
     provider does **not** call it automatically — network and domain errors stay in separate unions.
+- **KMA current-observation (초단기실황) provider boundary** — PR #63 adds a parallel boundary for
+  `getUltraSrtNcst` (`current-request.ts`/`current-raw-schema.ts`/`parse-current-response.ts`/
+  `group-current-observation-items.ts`/`normalize-current.ts`), separate from the forecast boundary
+  above because the request/item shape genuinely differs (`obsrValue`, no `fcstDate`/`fcstTime`).
+  It reuses the shared `response.header` schema/success-code constant, the shared
+  `isCalendarDate`/`isClockTime` predicates, and — via a private `performKmaGetRequest` helper
+  extracted in `provider.ts` — the exact same timeout/caller-abort/HTTP-status/response-size
+  transport policy as `fetchForecast` (whose own public contract and tests are unchanged).
+  `createKmaCurrentObservationProvider`/`…FromEnv` and `normalizeKmaCurrentObservation` (→ the
+  shared `CurrentWeather` contract) are **not** wired into `POST /weather`, `services`,
+  `composition`, or `routes` in this PR. See
+  [docs/kma-current-observation-provider.md](../../docs/kma-current-observation-provider.md).
 - **KMA hourly forecast application service** — PR #7 adds `createKmaHourlyForecastService`
   (`src/services/`), the thin orchestration layer that runs the PR #5 provider and the PR #6
   normalizer in sequence. See [docs/kma-hourly-service.md](../../docs/kma-hourly-service.md).
