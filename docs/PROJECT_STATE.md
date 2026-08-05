@@ -181,5 +181,20 @@
   접근·startup 구독 등 실제 기능은 전혀 구현되지 않았습니다. 실제 API 호출, Development Build,
   native build와 실기기 QA는 이번 PR에서도 미수행입니다. AirKorea 연동, 생활날씨 카드 표시, 설정
   저장, 상세기상 데이터 구현은 모두 후속 PR 범위입니다.
+- **PR #58**은 weather-query request/reset lifecycle의 React owner를 `(tabs)` layout 한 곳으로
+  옮겼습니다 — PR #57 이후 여러 tab screen이 각자 `useMobileWeatherQuery`를 호출하면 동일 singleton
+  query store에 lifecycle owner가 여러 개 생겨, 한 화면의 unmount cleanup이 다른 화면이 읽는 query를
+  중단시킬 수 있는 문제를 해결합니다. 새 `useMobileWeatherQueryLifecycle(savedLocations)`
+  (`apps/mobile/src/weather-query/use-mobile-weather-query-lifecycle.ts`)이 기존
+  `useMobileWeatherQuery`가 갖고 있던 request/reset effect 책임 전부를 그대로 가져가고,
+  `apps/mobile/src/app/(tabs)/_layout.tsx`가 `useMobileSavedLocations()`로 읽은 exact snapshot을 이
+  hook에 넘겨 정확히 한 번 호출하는 production 상의 유일한 위치입니다. 기존
+  `useMobileWeatherQuery(savedLocations)`는 이제 순수 read-only 구독/correlation hook으로 축소되어
+  `useEffect`도, `request`/`reset`/`retry` 호출도 갖지 않으므로 여러 tab consumer가 독립적으로 읽어도
+  lifecycle이 중복되지 않습니다. Today(`apps/mobile/src/app/(tabs)/index.tsx`)의 표시·동작과 사용자
+  재시도(`mobileWeatherQueryStore.retry()`)는 변경되지 않았고, Hourly tab은 이번 PR에서도 여전히
+  placeholder입니다. Store 상태 기계, API contract, saved-location lifecycle은 이 PR에서 변경되지
+  않았습니다. 새 React Context/Provider는 추가되지 않았습니다. 실제 API 호출, Development Build와
+  실기기 QA는 이번 PR에서도 미수행입니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
