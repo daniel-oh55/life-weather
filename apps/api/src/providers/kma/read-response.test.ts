@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { readResponseTextWithLimit } from './read-response.js';
 
@@ -407,14 +407,14 @@ describe('readResponseTextWithLimit — UTF-8 & empty bodies', () => {
   });
 });
 
-describe('readResponseTextWithLimit — abort notice while a read is pending', () => {
-  it('cancels the reader when the abort notice fires without waiting for cancel() to settle', async () => {
+describe('readResponseTextWithLimit — abort signal while a read is pending', () => {
+  it('cancels the reader when the signal fires without waiting for cancel() to settle', async () => {
     const cancel = deferred<void>();
     const { response, cancelCalls } = neverEnqueuingResponse(() => cancel.promise);
-    const abort = deferred<void>();
+    const controller = new AbortController();
 
-    const resultPromise = readResponseTextWithLimit(response, 1024, { abortNotice: abort.promise });
-    abort.resolve();
+    const resultPromise = readResponseTextWithLimit(response, 1024, { signal: controller.signal });
+    controller.abort();
     const result = await resultPromise;
 
     expect(result).toEqual({ ok: false, error: { kind: 'BODY_READ_ERROR' } });
@@ -424,12 +424,12 @@ describe('readResponseTextWithLimit — abort notice while a read is pending', (
     cancel.resolve();
   });
 
-  it('unlocks the body after an abort-notice cancellation on a standard stream', async () => {
+  it('unlocks the body after a signal-fired cancellation on a standard stream', async () => {
     const { response } = neverEnqueuingResponse();
-    const abort = deferred<void>();
+    const controller = new AbortController();
 
-    const resultPromise = readResponseTextWithLimit(response, 1024, { abortNotice: abort.promise });
-    abort.resolve();
+    const resultPromise = readResponseTextWithLimit(response, 1024, { signal: controller.signal });
+    controller.abort();
     await resultPromise;
 
     expect(response.body?.locked).toBe(false);
@@ -438,12 +438,12 @@ describe('readResponseTextWithLimit — abort notice while a read is pending', (
   it('does not wait for a cancel() that never settles', async () => {
     const cancel = deferred<void>();
     const { response, cancelCalls } = neverEnqueuingResponse(() => cancel.promise);
-    const abort = deferred<void>();
+    const controller = new AbortController();
 
-    const resultPromise = readResponseTextWithLimit(response, 1024, { abortNotice: abort.promise });
-    abort.resolve();
+    const resultPromise = readResponseTextWithLimit(response, 1024, { signal: controller.signal });
+    controller.abort();
     // This must resolve even though the underlying cancel() has not settled yet — proves the
-    // abort-notice branch does not await cancellation.
+    // abort branch does not await cancellation.
     const result = await resultPromise;
 
     expect(result).toEqual({ ok: false, error: { kind: 'BODY_READ_ERROR' } });
@@ -453,13 +453,13 @@ describe('readResponseTextWithLimit — abort notice while a read is pending', (
     cancel.resolve();
   });
 
-  it('does not surface a raw error when cancel() rejects after an abort notice', async () => {
-    const marker = 'SECRET_ABORT_NOTICE_CANCEL_REJECTION_MARKER';
+  it('does not surface a raw error when cancel() rejects after the signal fires', async () => {
+    const marker = 'SECRET_ABORT_SIGNAL_CANCEL_REJECTION_MARKER';
     const { response, cancelCalls } = neverEnqueuingResponse(() => Promise.reject(new Error(marker)));
-    const abort = deferred<void>();
+    const controller = new AbortController();
 
-    const resultPromise = readResponseTextWithLimit(response, 1024, { abortNotice: abort.promise });
-    abort.resolve();
+    const resultPromise = readResponseTextWithLimit(response, 1024, { signal: controller.signal });
+    controller.abort();
     const result = await resultPromise;
     expect(result).toEqual({ ok: false, error: { kind: 'BODY_READ_ERROR' } });
     expect(JSON.stringify(result)).not.toContain(marker);
@@ -469,17 +469,130 @@ describe('readResponseTextWithLimit — abort notice while a read is pending', (
     });
     expect(cancelCalls()).toBe(1);
   });
+
+  it('handles an already-aborted signal deterministically without ever reading a chunk', async () => {
+    const { response, wasCancelled, pullCount } = openStreamResponse(encoder.encode('x'));
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await readResponseTextWithLimit(response, 1024, { signal: controller.signal });
+
+    expect(result).toEqual({ ok: false, error: { kind: 'BODY_READ_ERROR' } });
+    expect(wasCancelled()).toBe(true);
+    expect(pullCount()).toBe(0);
+  });
+});
+
+describe('readResponseTextWithLimit — abort subscription count (P2-1)', () => {
+  it('subscribes to the signal exactly once across multiple non-empty chunks', async () => {
+    const { response } = streamResponse([
+      encoder.encode('aaaa'),
+      encoder.encode('bbbb'),
+      encoder.encode('cccc'),
+    ]);
+    const controller = new AbortController();
+    const addSpy = vi.spyOn(controller.signal, 'addEventListener');
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+
+    const result = await readResponseTextWithLimit(response, 1024, { signal: controller.signal });
+
+    expect(result).toEqual({ ok: true, text: 'aaaabbbbcccc' });
+    expect(addSpy).toHaveBeenCalledTimes(1);
+    expect(removeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('subscribes exactly once even across interleaved zero-byte chunks', async () => {
+    const { response } = streamResponse([
+      new Uint8Array(0),
+      encoder.encode('a'),
+      new Uint8Array(0),
+      new Uint8Array(0),
+      encoder.encode('b'),
+    ]);
+    const controller = new AbortController();
+    const addSpy = vi.spyOn(controller.signal, 'addEventListener');
+
+    const result = await readResponseTextWithLimit(response, 1024, { signal: controller.signal });
+
+    expect(result).toEqual({ ok: true, text: 'ab' });
+    expect(addSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('subscribes exactly once regardless of how many small chunks are read', async () => {
+    const chunks = Array.from({ length: 50 }, () => encoder.encode('x'));
+    const { response } = streamResponse(chunks);
+    const controller = new AbortController();
+    const addSpy = vi.spyOn(controller.signal, 'addEventListener');
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+
+    const result = await readResponseTextWithLimit(response, 1024, { signal: controller.signal });
+
+    expect(result).toEqual({ ok: true, text: 'x'.repeat(50) });
+    expect(addSpy).toHaveBeenCalledTimes(1);
+    expect(removeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes the listener after success', async () => {
+    const { response } = streamResponse([encoder.encode('abc')]);
+    const controller = new AbortController();
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+
+    await readResponseTextWithLimit(response, 1024, { signal: controller.signal });
+
+    expect(removeSpy).toHaveBeenCalledTimes(1);
+    expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
+  });
+
+  it('removes the listener after a streaming overflow', async () => {
+    const { response } = openStreamResponse(encoder.encode('12345'));
+    const controller = new AbortController();
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+
+    const result = await readResponseTextWithLimit(response, 7, { signal: controller.signal });
+
+    expect(result).toEqual({ ok: false, error: { kind: 'RESPONSE_TOO_LARGE' } });
+    expect(removeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes the listener after a read error', async () => {
+    const { response } = erroringStreamResponse(new Error('boom'));
+    const controller = new AbortController();
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+
+    const result = await readResponseTextWithLimit(response, 1024, { signal: controller.signal });
+
+    expect(result).toEqual({ ok: false, error: { kind: 'BODY_READ_ERROR' } });
+    expect(removeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes the listener after a caller abort fires mid-read', async () => {
+    const { response } = neverEnqueuingResponse();
+    const controller = new AbortController();
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+
+    const resultPromise = readResponseTextWithLimit(response, 1024, { signal: controller.signal });
+    controller.abort();
+    await resultPromise;
+
+    expect(removeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not touch AbortSignal listener APIs when called without a signal (unchanged behavior)', async () => {
+    const { response } = streamResponse([encoder.encode('abc')]);
+    const result = await readResponseTextWithLimit(response, 1024);
+    expect(result).toEqual({ ok: true, text: 'abc' });
+  });
 });
 
 describe('readResponseTextWithLimit — non-cooperative pending read (fake reader)', () => {
   it('starts cancellation and returns without waiting for the pending read to settle', async () => {
     const fake = controllableReaderResponse();
-    const abort = deferred<void>();
+    const controller = new AbortController();
 
     const resultPromise = readResponseTextWithLimit(fake.response, 1024, {
-      abortNotice: abort.promise,
+      signal: controller.signal,
     });
-    abort.resolve();
+    controller.abort();
     const result = await resultPromise;
 
     expect(result).toEqual({ ok: false, error: { kind: 'BODY_READ_ERROR' } });
@@ -493,12 +606,12 @@ describe('readResponseTextWithLimit — non-cooperative pending read (fake reade
 
   it('retries the lock release once the pending read resolves late', async () => {
     const fake = controllableReaderResponse();
-    const abort = deferred<void>();
+    const controller = new AbortController();
 
     const resultPromise = readResponseTextWithLimit(fake.response, 1024, {
-      abortNotice: abort.promise,
+      signal: controller.signal,
     });
-    abort.resolve();
+    controller.abort();
     await resultPromise;
     expect(fake.releaseLockCalls()).toBe(1);
 
@@ -510,12 +623,12 @@ describe('readResponseTextWithLimit — non-cooperative pending read (fake reade
   it('retries the lock release once the pending read rejects late, without an unhandled rejection', async () => {
     const marker = 'SECRET_LATE_PENDING_READ_REJECTION_MARKER';
     const fake = controllableReaderResponse();
-    const abort = deferred<void>();
+    const controller = new AbortController();
 
     const resultPromise = readResponseTextWithLimit(fake.response, 1024, {
-      abortNotice: abort.promise,
+      signal: controller.signal,
     });
-    abort.resolve();
+    controller.abort();
     const result = await resultPromise;
     expect(JSON.stringify(result)).not.toContain(marker);
 
@@ -524,6 +637,24 @@ describe('readResponseTextWithLimit — non-cooperative pending read (fake reade
       await tick(20);
     });
     expect(fake.releaseLockCalls()).toBe(2);
+  });
+
+  it('subscribes to the signal exactly once even when the pending read never settles', async () => {
+    const fake = controllableReaderResponse();
+    const controller = new AbortController();
+    const addSpy = vi.spyOn(controller.signal, 'addEventListener');
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+
+    const resultPromise = readResponseTextWithLimit(fake.response, 1024, {
+      signal: controller.signal,
+    });
+    controller.abort();
+    await resultPromise;
+
+    expect(addSpy).toHaveBeenCalledTimes(1);
+    expect(removeSpy).toHaveBeenCalledTimes(1);
+
+    fake.resolveRead({ done: true, value: undefined });
   });
 });
 

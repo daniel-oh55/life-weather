@@ -194,14 +194,18 @@ async function invokeFetch(
  *
  * A fetch implementation that ignores the abort signal and resolves a `Response` (or a body chunk)
  * anyway is still checked against the already-fixed abort reason before being treated as success.
- * Beyond that, the `fetchImpl` call and the body read are each raced against the shared
- * timeout/caller-abort via {@link raceAgainstAbort} (see its docblock): even a `fetchImpl` or body
- * reader that *ignores the signal outright* and never settles cannot block this function past the
- * timeout/caller-abort. A late settlement (a Response that resolves, or a body read that completes,
- * after the abort reason is already fixed) never changes the already-decided result — a late
- * `Response`'s body is best-effort cancelled and a late body-read result is simply discarded — and
- * can never surface as an unhandled rejection. Never throws for an expected transport failure; the
- * raw exception, its message, and its `cause` are never surfaced.
+ * The `fetchImpl` call is raced against the shared timeout/caller-abort via {@link raceAgainstAbort}
+ * (see its docblock): even a `fetchImpl` that *ignores the signal outright* and never settles cannot
+ * block this function past the timeout/caller-abort. The body read is bounded differently and does
+ * *not* use an outer race: `readResponseTextWithLimit` is handed this function's own internal
+ * `controller.signal` directly and attaches exactly one `abort` listener to it for the whole reader
+ * lifecycle (see its docblock), so a body reader that ignores the signal is still bounded, and a
+ * synchronous abort triggered by the read's own cleanup (e.g. a `RESPONSE_TOO_LARGE` cancel() that
+ * calls `controller.abort()`) cannot race out an already-decided `RESPONSE_TOO_LARGE`. A late
+ * `fetchImpl` settlement (after the abort reason is already fixed) never changes the already-decided
+ * result — its body is best-effort cancelled — and can never surface as an unhandled rejection.
+ * Never throws for an expected transport failure; the raw exception, its message, and its `cause`
+ * are never surfaced.
  */
 async function performKmaGetRequest(
   config: ResolvedKmaProviderConfig,
@@ -280,19 +284,13 @@ async function performKmaGetRequest(
       return { ok: false, error: { kind: 'HTTP_ERROR', status: response.status } };
     }
 
-    const readRace = await raceAgainstAbort(
-      readResponseTextWithLimit(response, config.maxResponseBytes, { abortNotice: abortWait }),
-      abortWait,
-      () => {
-        // Nothing further to do: readResponseTextWithLimit races its own pending reader.read()
-        // against this same abortWait internally and best-effort cancels/retries the lock release
-        // itself once the abort fires — see its docblock.
-      },
-    );
-    if (readRace.aborted) {
-      return toAbortResult();
-    }
-    const read = readRace.value;
+    // Bounded directly by readResponseTextWithLimit's own signal-based lifecycle (see its
+    // docblock) — no outer race here, so a synchronous abort triggered by the read's own cleanup
+    // (e.g. a RESPONSE_TOO_LARGE cancel() that calls controller.abort()) cannot race out its
+    // already-decided result.
+    const read = await readResponseTextWithLimit(response, config.maxResponseBytes, {
+      signal: controller.signal,
+    });
     if (!read.ok) {
       // RESPONSE_TOO_LARGE is a hard cap and outranks a concurrent abort. A BODY_READ_ERROR is an
       // internal transport failure mapped by whichever abort (if any) fired during the read.

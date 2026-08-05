@@ -11,22 +11,27 @@
  *
  * Both size-limit checks **latch `RESPONSE_TOO_LARGE` the instant the overflow is detected** and
  * return immediately — cancellation is started but never awaited, so a `cancel()` that rejects, or
- * that never settles at all, can neither delay nor displace the `RESPONSE_TOO_LARGE` result (in
- * particular, it cannot be raced out by a concurrent caller abort/timeout in the caller that passed
- * `abortNotice`).
+ * that never settles at all, can neither delay nor displace the `RESPONSE_TOO_LARGE` result. This
+ * holds even when the triggered cancellation itself synchronously fires the caller's own
+ * `AbortSignal` (e.g. a `cancel()` callback that calls `AbortController.abort()`): the result is
+ * already being returned before that abort can be observed by anything.
  *
  * Bytes are decoded with a streaming `TextDecoder`, so a multi-byte UTF-8 sequence split across a
  * chunk boundary is reassembled correctly rather than corrupted.
  *
- * An optional `abortNotice` lets a caller (the KMA transport) share its timeout/caller-abort signal
- * with this function so a **pending** `reader.read()` is not left unattended: if `abortNotice`
- * settles before the current `read()` does, this function immediately starts a best-effort
- * `reader.cancel()` (not awaited) and returns, rather than waiting on a `read()` that a
- * non-cooperative stream may never settle on its own. The original pending `read()` promise is not
- * abandoned — a handler is attached so that whenever it *does* eventually settle (resolve or
- * reject, however late), the lock release is retried, since the immediate release attempted on the
- * way out may run before that read settles and therefore may not succeed on a non-standard stream.
- * Without `abortNotice`, behavior is unchanged: `read()` is simply awaited.
+ * An optional `options.signal` lets a caller (the KMA transport) share its timeout/caller-abort
+ * `AbortSignal` with this function so a **pending** `reader.read()` is not left unattended. Exactly
+ * one `abort` listener is attached to `signal` for the *entire reader lifecycle* — never one per
+ * chunk, so the abort reaction graph cannot grow in proportion to the number of chunks read. The
+ * listener wakes whichever `read()` is currently outstanding (if any); when `signal` fires between
+ * reads, the next loop iteration's `signal.aborted` check catches it instead. Either way, this
+ * function immediately starts a best-effort `reader.cancel()` (not awaited) and returns, rather than
+ * waiting on a `read()` that a non-cooperative stream may never settle on its own. The original
+ * pending `read()` promise is not abandoned — a handler is attached so that whenever it *does*
+ * eventually settle (resolve or reject, however late), the lock release is retried, since the
+ * immediate release attempted on the way out may run before that read settles and therefore may not
+ * succeed on a non-standard stream. The listener is removed on every exit path. Without
+ * `options.signal`, behavior is unchanged: `read()` is simply awaited.
  *
  * Every *expected* stream failure is turned into a value, never thrown: acquiring the reader,
  * `read()`, or a flushed `cancel()` that rejects all resolve to an explicit result. The raw body,
@@ -122,41 +127,18 @@ async function cancelBodySafely(
 }
 
 /**
- * Resolve `true` the instant `abortNotice` settles, or `false` once `pendingRead` settles first —
- * whichever happens first. Never rejects: `pendingRead`'s own success/failure is not decided here
- * (a rejection is folded into `false`, same as a resolution) — the caller re-awaits `pendingRead`
- * itself once this resolves `false` to get the real `{ done, value }` or the real rejection.
- * Attaching `.then(onFulfilled, onRejected)` directly to `pendingRead` here (rather than to some
- * derived promise) is what guarantees `pendingRead` always ends up with a rejection handler, so a
- * stream failure can never surface as an unhandled rejection regardless of which side of the race
- * wins.
- */
-function isAbortNoticeFirst(
-  pendingRead: Promise<ReadableStreamReadResult<Uint8Array>>,
-  abortNotice: Promise<void>,
-): Promise<boolean> {
-  return Promise.race([
-    pendingRead.then(
-      () => false,
-      () => false,
-    ),
-    abortNotice.then(() => true),
-  ]);
-}
-
-/**
  * Read `response`'s body to a string, failing with `RESPONSE_TOO_LARGE` if it exceeds `maxBytes`
  * and with `BODY_READ_ERROR` if the underlying stream fails (reader acquisition or `read()` throws
- * or rejects) or if `options.abortNotice` settles before a pending `read()` does. Never throws for
- * any of those expected failures.
+ * or rejects) or if `options.signal` fires before a pending `read()` does. Never throws for any of
+ * those expected failures.
  *
  * A body that is exactly `maxBytes` succeeds; one byte more fails. A bodyless response (`body ===
  * null`) or a zero-byte body yields the empty string. Once a reader is acquired, an explicit
  * `releaseLock()` is *attempted* on **every** exit path — normal completion, overflow, a read error,
- * an `abortNotice` win, or a cancel error — in `finally` (a `cancel()` or a drained stream does not
+ * a signal-fired abort, or a cancel error — in `finally` (a `cancel()` or a drained stream does not
  * release the lock on its own), so on a standard Node Web Stream `response.body.locked` ends up
  * `false`. A `releaseLock()` failure never overwrites the outcome the read already decided and is
- * never surfaced as a raw error. When `abortNotice` wins while a `read()` is still outstanding, the
+ * never surfaced as a raw error. When `signal` fires while a `read()` is still outstanding, the
  * immediate `finally` release may run before that `read()` actually settles (on a non-standard
  * stream); a second `releaseLock()` attempt is then retried once the pending `read()` does settle,
  * however late — repeated release attempts on the same reader are safe by construction.
@@ -164,7 +146,7 @@ function isAbortNoticeFirst(
 export async function readResponseTextWithLimit(
   response: Response,
   maxBytes: number,
-  options?: { readonly abortNotice?: Promise<void> },
+  options?: { readonly signal?: AbortSignal },
 ): Promise<ReadResponseTextResult> {
   const declaredLength = parseContentLength(response.headers.get('content-length'));
   if (declaredLength !== null && declaredLength > maxBytes) {
@@ -187,25 +169,53 @@ export async function readResponseTextWithLimit(
     return BODY_READ_ERROR;
   }
 
-  const abortNotice = options?.abortNotice;
+  const signal = options?.signal;
   const decoder = new TextDecoder('utf-8');
   let total = 0;
   let text = '';
 
+  // Exactly one `abort` subscription for the whole reader lifecycle (not one per chunk).
+  // `wakeCurrentRead` wakes whichever `reader.read()` is currently outstanding; it is `null`
+  // between reads, so a signal that fires between chunks has nothing to wake and is instead caught
+  // by the `signal.aborted` check at the top of the next loop iteration.
+  let wakeCurrentRead: (() => void) | null = null;
+  const onAbort = (): void => {
+    wakeCurrentRead?.();
+  };
+  if (signal !== undefined) {
+    signal.addEventListener('abort', onAbort, { once: true });
+  }
+
   try {
     for (;;) {
-      const pendingRead = reader.read();
-      if (abortNotice !== undefined && (await isAbortNoticeFirst(pendingRead, abortNotice))) {
-        // The abort notice fired while this read() was still outstanding. A non-cooperative
-        // stream may never settle it on its own: start best-effort cancellation now (not awaited)
-        // and attach a handler to the original pending read so that, whenever it does eventually
-        // settle, the lock release is retried rather than the reader being left dangling.
+      if (signal?.aborted === true) {
+        // The signal was already fired (or fired between reads, with no pending read to wake).
         void cancelReaderSafely(reader);
-        pendingRead.then(
-          () => releaseReaderLockSafely(reader),
-          () => releaseReaderLockSafely(reader),
-        );
         return BODY_READ_ERROR;
+      }
+
+      const pendingRead = reader.read();
+      if (signal !== undefined) {
+        const aborted = await new Promise<boolean>((resolve) => {
+          wakeCurrentRead = () => resolve(true);
+          pendingRead.then(
+            () => resolve(false),
+            () => resolve(false),
+          );
+        });
+        wakeCurrentRead = null;
+        if (aborted) {
+          // The signal fired while this read() was still outstanding. A non-cooperative stream
+          // may never settle it on its own: start best-effort cancellation now (not awaited) and
+          // attach a handler to the original pending read so that, whenever it does eventually
+          // settle, the lock release is retried rather than the reader being left dangling.
+          void cancelReaderSafely(reader);
+          pendingRead.then(
+            () => releaseReaderLockSafely(reader),
+            () => releaseReaderLockSafely(reader),
+          );
+          return BODY_READ_ERROR;
+        }
       }
 
       const { done, value } = await pendingRead;
@@ -218,8 +228,8 @@ export async function readResponseTextWithLimit(
       total += value.byteLength;
       if (total > maxBytes) {
         // Latch RESPONSE_TOO_LARGE immediately; cancellation is best-effort and started but never
-        // awaited, so a hanging or rejecting cancel() (or a concurrent abort/timeout in a caller
-        // racing this promise) can never delay or displace this outcome.
+        // awaited, so a hanging or rejecting cancel() (or a cancel() that synchronously fires
+        // `signal` itself) can never delay or displace this outcome.
         void cancelReaderSafely(reader);
         return RESPONSE_TOO_LARGE;
       }
@@ -235,9 +245,12 @@ export async function readResponseTextWithLimit(
     return BODY_READ_ERROR;
   } finally {
     // A cancel() or a drained stream does not release the reader's lock; attempt it explicitly on
-    // every exit path (success, overflow, read error, abort-notice win, cancel error) so the body
+    // every exit path (success, overflow, read error, signal-fired abort, cancel error) so the body
     // ends up unlocked. This runs before the early returns above resolve, and a release failure
-    // never changes the outcome. See the abort-notice branch above for the late-settlement retry.
+    // never changes the outcome. See the abort branch above for the late-settlement retry.
     releaseReaderLockSafely(reader);
+    if (signal !== undefined) {
+      signal.removeEventListener('abort', onAbort);
+    }
   }
 }

@@ -289,32 +289,40 @@ provider가 함께 호출하도록 했습니다. 이 helper는 다음을 소유�
 * size-limited body reading(`read-response.ts` 재사용) — `RESPONSE_TOO_LARGE`가 동시 발생한
   abort보다 우선하고, `BODY_READ_ERROR`는 abort reason에 따라 `TIMEOUT`/`ABORTED`/
   `NETWORK_ERROR`로 매핑.
-* **종료 보장 (P2 remediation).** 위 lifecycle은 `controller.abort()`가 호출되면 주입된
-  `fetchImpl`이나 body reader가 **실제로 반응한다는 것**에 의존하지 않습니다. `fetchImpl`
-  호출과 body read 각각은 내부 `raceAgainstAbort` helper로 "timeout/caller-abort가 발생했다"는
-  별도 promise와 경쟁합니다 — signal을 완전히 무시하고 영구히 pending인 `fetchImpl`이나 body
-  reader라도, 이 경쟁에서 timeout/abort 쪽이 이기면 provider는 그 즉시 `TIMEOUT`/`ABORTED`로
-  반환합니다. 경쟁에서 진 원래 promise가 나중에(또는 다시는) settle되더라도: 이미 결정된 결과는
-  바뀌지 않고, 늦게 도착한 `Response`의 body는 best-effort로 cancel되며, 늦은 rejection은 raw
-  error나 unhandled rejection으로 노출되지 않습니다(둘 다 late-settlement 전용 handler가
-  붙습니다). `fetchForecast`/`fetchCurrentObservation`의 기존 공개 결과·오류 union은 이 remediation
-  으로 변경되지 않았습니다 — 오직 "얼마나 오래 pending 상태로 남을 수 있는가"만 달라집니다.
+* **종료 보장 (첫 번째 P2 remediation).** 위 lifecycle은 `controller.abort()`가 호출되면 주입된
+  `fetchImpl`이 **실제로 반응한다는 것**에 의존하지 않습니다. `fetchImpl` 호출은 내부
+  `raceAgainstAbort` helper로 "timeout/caller-abort가 발생했다"는 별도 promise와 경쟁합니다 —
+  signal을 완전히 무시하고 영구히 pending인 `fetchImpl`이라도, 이 경쟁에서 timeout/abort 쪽이
+  이기면 provider는 그 즉시 `TIMEOUT`/`ABORTED`로 반환합니다. 경쟁에서 진 원래 promise가
+  나중에(또는 다시는) settle되더라도: 이미 결정된 결과는 바뀌지 않고, 늦게 도착한 `Response`의
+  body는 best-effort로 cancel되며, 늦은 rejection은 raw error나 unhandled rejection으로
+  노출되지 않습니다(late-settlement 전용 handler가 붙습니다). `fetchForecast`/
+  `fetchCurrentObservation`의 기존 공개 결과·오류 union은 이 remediation으로 변경되지 않았습니다.
 * **Cleanup 분리 (두 번째 P2 remediation).** provider 결과 확정, best-effort transport cleanup
   시작, outstanding async work의 late settlement 처리는 서로 다른 세 단계로 분리됩니다 —
   cleanup이 끝나야 결과를 반환하는 구조도, cleanup을 전혀 시작하지 않는 구조도 아닙니다.
-  * `read-response.ts`가 소유하는 body reader도 이제 같은 abort/timeout 신호(`abortNotice`)를
-    공유합니다. pending `reader.read()`가 이 신호보다 늦게 settle되면(non-cooperative
-    stream), `read-response.ts`는 best-effort `reader.cancel()`을 즉시 시작하되 그 완료를
-    기다리지 않고 반환합니다. 원래의 pending read에는 handler가 붙어 있어, 나중에(또는
-    reject로) settle되면 lock release가 다시 시도됩니다 — 처음 시도가 pending read 때문에
-    성공하지 못했을 수 있기 때문입니다. 동일 reader에 대한 중복 cancel/release는 안전합니다.
   * fetch 직후 이미 abort/timeout이 관찰된 경로와 non-2xx HTTP 경로의 response body
-    cancellation(`cancelBody`)도 이제 완전히 non-blocking입니다 — `body.cancel()`이 pending,
+    cancellation(`cancelBody`)은 완전히 non-blocking입니다 — `body.cancel()`이 pending,
     reject, 또는 synchronous throw여도 이미 결정된 `TIMEOUT`/`ABORTED`/`HTTP_ERROR` 결과를
     지연시키지 않습니다.
   * `RESPONSE_TOO_LARGE`는 감지되는 즉시(Content-Length precheck 또는 streaming 누적 모두)
-    cleanup을 시작하기 **전에** latch됩니다 — cancellation이 pending이거나 거의 동시에
-    concurrent abort/timeout이 발생해도, 이미 latch된 `RESPONSE_TOO_LARGE`가 우선합니다.
+    cleanup을 시작하기 **전에** latch됩니다.
+* **Body read의 신호 기반 bounded 종료와 단일 abort 구독 (세 번째 P2 remediation).**
+  `read-response.ts`가 소유하는 body reader는 이제 provider의 내부 `controller.signal`을 직접
+  전달받습니다 — provider는 body read 주위에 별도의 outer `raceAgainstAbort`를 쓰지 않습니다
+  (fetch 호출 주위의 race는 그대로 유지됩니다). `read-response.ts`는 reader의 전체 lifecycle
+  동안 이 signal에 `abort` listener를 **정확히 한 번만** 등록합니다 — 읽은 chunk 수와 무관하게
+  구독 횟수는 늘어나지 않으며(0-byte chunk가 반복돼도 마찬가지), 모든 종료 경로(성공, overflow,
+  read 오류, abort, 이미 aborted된 signal)에서 `finally`로 listener를 제거합니다. pending
+  `reader.read()`가 이 signal보다 늦게 settle되면(non-cooperative stream), best-effort
+  `reader.cancel()`을 즉시 시작하되 완료를 기다리지 않고 반환합니다. 원래의 pending read에는
+  handler가 붙어 있어, 나중에(또는 reject로) settle되면 lock release가 다시 시도됩니다 — 처음
+  시도가 pending read 때문에 성공하지 못했을 수 있기 때문입니다. 동일 reader에 대한 중복
+  cancel/release는 안전합니다. `RESPONSE_TOO_LARGE`의 latch-then-cancel 순서(위 항목)는 이 signal
+  기반 설계에서도 유지됩니다 — overflow의 자체 cleanup(`reader.cancel()`)이 (예를 들어 그 취소
+  콜백이 caller의 `AbortController.abort()`를 동기 호출하는 등으로) 같은 signal을 동기적으로
+  fire시키더라도, `RESPONSE_TOO_LARGE`는 이미 latch되어 반환되는 중이므로 그 abort가 결과를
+  가로챌 수 없습니다.
   * 이 cleanup 분리는 best-effort입니다 — 실제 stream/reader가 얼마나 빨리(또는 전혀) 반응해
     정리되는지까지 보장하지 않으며, 오직 provider 결과가 그 반응을 기다리지 않는다는 것만
     보장합니다.

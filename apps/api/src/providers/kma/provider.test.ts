@@ -708,6 +708,31 @@ describe('fetchForecast — RESPONSE_TOO_LARGE outranks a concurrent abort even 
       await tick(20);
     });
   });
+
+  it('keeps RESPONSE_TOO_LARGE when the overflow cancel() synchronously fires the caller abort (deterministic)', async () => {
+    // No tick()/timer involved: the overflow's own cancel() cleanup synchronously calls
+    // controller.abort() before readResponseTextWithLimit returns, so this exercises the exact
+    // ordering from the spec — overflow detected, cancel() called, cancel() synchronously aborts
+    // the caller signal, and the already-latched RESPONSE_TOO_LARGE must still win.
+    const controller = new AbortController();
+    const { response, cancelCalls } = overflowingBodyResponse(() => {
+      controller.abort();
+    });
+
+    const result = await providerWith(fetchReturning(response), {
+      timeoutMs: 10_000,
+      maxResponseBytes: 16,
+    }).fetchForecast(REQUEST, { signal: controller.signal });
+
+    expect(result).toEqual({ ok: false, error: { kind: 'RESPONSE_TOO_LARGE' } });
+    expect(cancelCalls()).toBe(1);
+    expect(response.body?.locked).toBe(false);
+    expect('forecast' in result).toBe(false);
+
+    await assertNoUnhandledRejection(async () => {
+      await tick(20);
+    });
+  });
 });
 
 describe('fetchForecast — body stream failures', () => {
@@ -1469,6 +1494,25 @@ describe('fetchCurrentObservation — transport terminates even when fetchImpl/b
 
     await assertNoUnhandledRejection(async () => {
       cancel.resolve();
+      await tick(20);
+    });
+  });
+
+  it('keeps RESPONSE_TOO_LARGE when the overflow cancel() synchronously fires the caller abort (deterministic, mirrored)', async () => {
+    const controller = new AbortController();
+    const { response, cancelCalls } = overflowingBodyResponse(() => {
+      controller.abort();
+    });
+
+    const result = await currentProviderWith(fetchReturning(response), {
+      timeoutMs: 10_000,
+      maxResponseBytes: 16,
+    }).fetchCurrentObservation(CURRENT_REQUEST, { signal: controller.signal });
+
+    expect(result).toEqual({ ok: false, error: { kind: 'RESPONSE_TOO_LARGE' } });
+    expect(cancelCalls()).toBe(1);
+
+    await assertNoUnhandledRejection(async () => {
       await tick(20);
     });
   });
