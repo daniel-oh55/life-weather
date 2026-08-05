@@ -234,5 +234,20 @@
   weather-core, API, weather-query, saved-location 경계는 이 PR에서 변경되지 않았습니다. 자세한
   내용은 [mobile-lifestyle-overview.md](./mobile-lifestyle-overview.md) 참고. 실제 API 호출,
   Development Build와 실기기 QA는 이번 PR에서도 미수행입니다.
+- **PR #61**은 Settings tab(`설정`)의 placeholder를 최소 실제 설정·정보 화면으로 교체했습니다 —
+  `apps/mobile/src/app/(tabs)/settings.tsx`가 지역/단위/데이터 출처/앱 정보 네 section만 고정
+  순서로 표시합니다. 지역 section은 `router.push('/locations')`로 이동하는 `지역 추가` 진입점만
+  두고, `/locations`가 검색·추가 화면일 뿐 전체 지역 관리 화면이 아니라는 점을 과장하지 않으며,
+  지역 선택·삭제는 여전히 Today 화면에서 이뤄집니다. 단위 section은 기온/강수량/적설/풍속 네 고정
+  값을 보여주는 read-only 안내이며 선택 control은 없습니다. 데이터 출처 section은 날씨 정보(기상청),
+  지역 검색 자료 명칭과 공공저작물 출처표시 제1유형 이용조건([kma-korean-location-catalog.md](./kma-korean-location-catalog.md)
+  근거)을 표시하고, AirKorea는 아직 미구현이므로 "연동 예정"으로만 표시합니다(현재 제공 중인
+  것으로 오인시키는 단독 표현 없음). 앱 정보 section은 기존 `expo-constants`의
+  `Constants.expoConfig?.name`/`version`을 읽고(이름 누락 시 `Life Weather`, 버전 누락·빈 문자열
+  시 `확인 불가`), 버전을 소스에 하드코딩하지 않습니다. 개인정보 처리방침, 광고·동의 설정, 지원
+  연락처, 운영 ID, 오픈소스 라이선스 전체 목록은 이번 PR에서 다루지 않으며 별도 출시 준비 작업으로
+  남습니다. 설정 persistence나 toggle은 없고, `apps/api`/`packages`/`app.json`/`package.json`/
+  lockfile은 이 PR에서 변경되지 않았습니다. 자세한 내용은 [mobile-settings.md](./mobile-settings.md)
+  참고. 실제 API 호출, Development Build와 실기기 QA는 이번 PR에서도 미수행입니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
