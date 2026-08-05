@@ -196,5 +196,22 @@
   placeholder입니다. Store 상태 기계, API contract, saved-location lifecycle은 이 PR에서 변경되지
   않았습니다. 새 React Context/Provider는 추가되지 않았습니다. 실제 API 호출, Development Build와
   실기기 QA는 이번 PR에서도 미수행입니다.
+- **PR #59**는 Hourly tab의 placeholder를 최소 실제 시간별 예보 화면으로 교체했습니다 —
+  `apps/mobile/src/app/(tabs)/hourly.tsx`가 기존 `useMobileSavedLocations()`와 read-only
+  `useMobileWeatherQuery(savedLocations)` 두 입력만 사용해 이미 검증된 query snapshot의
+  `data.data.hourly` 전체를 응답 순서 그대로 표시합니다(임의 slice/sort/dedupe/grouping 없음).
+  각 항목은 선택된 저장 지역의 `timezone`(device timezone 아님) 기준으로 포맷한 예보 시각과
+  한국어 `WeatherCondition` 라벨(exhaustive `Record`, Today의 기존 로컬 매핑과 별개로 파일 안에
+  동일 매핑을 둠), 필수 기온을 항상 표시하고, `null`이 아닌 optional 필드(체감/강수확률/강수량/
+  적설/습도/풍속/풍향)만 표시하며 `0` 값은 항상 표시합니다. `hourly`가 비어 있으면 오류가 아니라
+  "표시할 시간별 예보가 없습니다."를 표시합니다. NOT_STARTED/LOADING/SELECTION_LOADING, EMPTY(지역
+  추가 진입점 포함), saved-location ERROR(`retryInitialization()`), READY 상태에서의 weather
+  IDLE/LOADING/ERROR(Today와 동일한 네 가지 고정 문구, `mobileWeatherQueryStore.retry()`)와
+  SUCCESS를 모두 구분해 표시하며, raw 오류 kind·URL·좌표·grid·provider 이름은 어디에도 노출하지
+  않습니다. Hourly는 이 PR에서도 request/reset lifecycle을 소유하지 않습니다 — 계속
+  `(tabs)/_layout.tsx` 한 곳이 소유하며, Hourly는 lifecycle hook을 import·호출하지 않습니다.
+  Today, weather-query store/production, saved-location, API/contracts는 이 PR에서 변경되지
+  않았습니다. AirKorea, current/daily/alerts, response cache는 여전히 이번 PR 범위가 아니고, 실제
+  endpoint 호출과 Development Build, 실기기 QA도 미수행입니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.

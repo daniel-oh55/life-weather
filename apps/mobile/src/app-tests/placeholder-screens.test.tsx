@@ -55,7 +55,6 @@ beforeEach(() => {
 });
 
 describe.each([
-  ['hourly', '../app/(tabs)/hourly', '시간별 날씨', '시간별 상세 화면을 준비하고 있습니다.'],
   ['lifestyle', '../app/(tabs)/lifestyle', '생활날씨', '생활날씨 화면을 준비하고 있습니다.'],
   ['details', '../app/(tabs)/details', '상세기상', '상세 기상정보 화면을 준비하고 있습니다.'],
   ['settings', '../app/(tabs)/settings', '설정', '설정 화면을 준비하고 있습니다.'],
