@@ -173,6 +173,8 @@ export default function HourlyScreen() {
           <Text style={styles.text}>시간별 날씨를 준비하고 있습니다.</Text>
         ) : (
           <View style={styles.section}>
+            <Text style={styles.locationName}>{selectedLocation.displayName}</Text>
+
             {weatherQuery.status === 'IDLE' ? (
               <Text style={styles.text}>시간별 날씨를 준비하고 있습니다.</Text>
             ) : null}
@@ -197,7 +199,6 @@ export default function HourlyScreen() {
 
             {weatherQuery.status === 'SUCCESS' ? (
               <View style={styles.section}>
-                <Text style={styles.locationName}>{selectedLocation.displayName}</Text>
                 {weatherQuery.data.data.hourly.length === 0 ? (
                   <Text style={styles.text}>표시할 시간별 예보가 없습니다.</Text>
                 ) : (

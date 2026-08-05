@@ -397,20 +397,24 @@ describe('saved-location ERROR', () => {
 // ---------------------------------------------------------------------------
 
 describe('READY + weather query states', () => {
-  it('shows the preparing copy while the weather query is IDLE', async () => {
+  it('shows the preparing copy and the selected location name while the weather query is IDLE', async () => {
     useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
     useMobileWeatherQueryMock.mockReturnValue(idleQuery());
     const render = await loadScreen();
 
-    expect(texts(render())).toContain('시간별 날씨를 준비하고 있습니다.');
+    const rendered = texts(render());
+    expect(rendered).toContain('시간별 날씨를 준비하고 있습니다.');
+    expect(rendered).toContain('Synthetic a');
   });
 
-  it('shows the loading copy while the weather query is LOADING', async () => {
+  it('shows the loading copy and the selected location name while the weather query is LOADING', async () => {
     useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
     useMobileWeatherQueryMock.mockReturnValue(loadingQuery('a'));
     const render = await loadScreen();
 
-    expect(texts(render())).toContain('선택한 지역의 시간별 날씨를 불러오는 중입니다.');
+    const rendered = texts(render());
+    expect(rendered).toContain('선택한 지역의 시간별 날씨를 불러오는 중입니다.');
+    expect(rendered).toContain('Synthetic a');
   });
 
   it('shows the preparing copy, not raw id, when the selected record is missing (defensive)', async () => {
@@ -434,7 +438,7 @@ describe('READY + weather ERROR', () => {
     ['NETWORK', '날씨 정보를 불러오지 못했습니다. 네트워크 연결을 확인해 주세요.'],
     ['API', '날씨 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.'],
     ['INVALID_RESPONSE', '날씨 정보를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.'],
-  ] as const)('shows the fixed %s copy with a retry control and no raw detail', async (presentation, copy) => {
+  ] as const)('shows the fixed %s copy with the selected location name, a retry control, and no raw detail', async (presentation, copy) => {
     useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
     useMobileWeatherQueryMock.mockReturnValue(errorQuery('a', presentation));
     const render = await loadScreen();
@@ -443,6 +447,7 @@ describe('READY + weather ERROR', () => {
     const rendered = texts(element).join('\n');
 
     expect(rendered).toContain(copy);
+    expect(rendered).toContain('Synthetic a');
     expect(rendered).not.toContain(presentation);
     expect(pressableByLabel(element, '시간별 날씨 다시 시도')).toBeDefined();
   });
@@ -463,14 +468,16 @@ describe('READY + weather ERROR', () => {
 // ---------------------------------------------------------------------------
 
 describe('READY + SUCCESS', () => {
-  it('shows the empty-hourly copy without a retry control', async () => {
+  it('shows the empty-hourly copy and the selected location name without a retry control', async () => {
     useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
     useMobileWeatherQueryMock.mockReturnValue(successQuery('a', successResponse([])));
     const render = await loadScreen();
 
     const element = render();
+    const rendered = texts(element);
 
-    expect(texts(element)).toContain('표시할 시간별 예보가 없습니다.');
+    expect(rendered).toContain('표시할 시간별 예보가 없습니다.');
+    expect(rendered).toContain('Synthetic a');
     expect(pressables(element)).toHaveLength(0);
   });
 
@@ -490,6 +497,18 @@ describe('READY + SUCCESS', () => {
     const secondIndex = rendered.indexOf('22°C');
     expect(firstIndex).toBeGreaterThan(-1);
     expect(secondIndex).toBeGreaterThan(firstIndex);
+  });
+
+  it('shows the selected display name exactly once', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
+    useMobileWeatherQueryMock.mockReturnValue(
+      successQuery('a', successResponse([hourlyEntry()])),
+    );
+    const render = await loadScreen();
+
+    const rendered = texts(render());
+
+    expect(rendered.filter((text) => text === 'Synthetic a')).toHaveLength(1);
   });
 
   it('never renders current/daily/alerts/source content', async () => {
