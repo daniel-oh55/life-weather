@@ -55,7 +55,6 @@ beforeEach(() => {
 });
 
 describe.each([
-  ['lifestyle', '../app/(tabs)/lifestyle', '생활날씨', '생활날씨 화면을 준비하고 있습니다.'],
   ['details', '../app/(tabs)/details', '상세기상', '상세 기상정보 화면을 준비하고 있습니다.'],
   ['settings', '../app/(tabs)/settings', '설정', '설정 화면을 준비하고 있습니다.'],
 ] as const)('%s placeholder screen', (_name, modulePath, title, body) => {
