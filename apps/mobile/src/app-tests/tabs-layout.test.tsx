@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ---------------------------------------------------------------------------
 // `expo-router`'s `Tabs` is replaced with a minimal marker component (plus a `.Screen`
@@ -20,6 +20,27 @@ vi.mock('expo-router', () => ({
   Tabs: MockTabs,
 }));
 
+// ---------------------------------------------------------------------------
+// The saved-location subscription hook and the weather-query lifecycle hook are replaced with
+// call-recording mocks: this layout test verifies only *that* the layout reads the saved-location
+// snapshot exactly once and hands that exact reference to the lifecycle hook exactly once — never
+// the hooks' own subscription/lifecycle behavior (covered by their own dedicated test files), and
+// never real storage/native I/O.
+// ---------------------------------------------------------------------------
+
+const savedLocationsSnapshot = { status: 'NOT_STARTED', writeStatus: 'IDLE' } as const;
+
+const useMobileSavedLocationsMock = vi.hoisted(() => vi.fn());
+const useMobileWeatherQueryLifecycleMock = vi.hoisted(() => vi.fn());
+
+vi.mock('../locations/use-mobile-saved-locations', () => ({
+  useMobileSavedLocations: useMobileSavedLocationsMock,
+}));
+
+vi.mock('../weather-query/use-mobile-weather-query-lifecycle', () => ({
+  useMobileWeatherQueryLifecycle: useMobileWeatherQueryLifecycleMock,
+}));
+
 interface ElementLike {
   readonly type: unknown;
   readonly props: Record<string, unknown>;
@@ -28,6 +49,13 @@ interface ElementLike {
 function isElement(node: unknown): node is ElementLike {
   return typeof node === 'object' && node !== null && 'type' in node && 'props' in node;
 }
+
+beforeEach(() => {
+  vi.resetModules();
+  vi.resetAllMocks();
+  useMobileSavedLocationsMock.mockReturnValue(savedLocationsSnapshot);
+  useMobileWeatherQueryLifecycleMock.mockReturnValue(undefined);
+});
 
 describe('(tabs) layout', () => {
   it('returns Tabs with exactly the 5 documented routes and their Korean titles, no side effects', async () => {
@@ -54,5 +82,22 @@ describe('(tabs) layout', () => {
     expect(optionsByName.get('lifestyle')).toMatchObject({ title: '생활날씨' });
     expect(optionsByName.get('details')).toMatchObject({ title: '상세기상' });
     expect(optionsByName.get('settings')).toMatchObject({ title: '설정' });
+  });
+
+  it('reads useMobileSavedLocations() exactly once and hands the exact snapshot to the lifecycle hook exactly once', async () => {
+    const { default: TabsLayout } = await import('../app/(tabs)/_layout');
+
+    TabsLayout();
+
+    expect(useMobileSavedLocationsMock).toHaveBeenCalledTimes(1);
+    expect(useMobileWeatherQueryLifecycleMock).toHaveBeenCalledTimes(1);
+    expect(useMobileWeatherQueryLifecycleMock).toHaveBeenCalledWith(savedLocationsSnapshot);
+  });
+
+  it('performs no I/O merely by being imported', async () => {
+    await import('../app/(tabs)/_layout');
+
+    expect(useMobileSavedLocationsMock).toHaveBeenCalledTimes(0);
+    expect(useMobileWeatherQueryLifecycleMock).toHaveBeenCalledTimes(0);
   });
 });

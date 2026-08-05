@@ -2,7 +2,7 @@
 
 이 문서는 `apps/mobile/src/weather-query`의 **weather-query 경계**를 설명합니다. 이 경계는
 현재 선택된 저장 지역(`selectedLocationId`, [mobile-selected-location.md](./mobile-selected-location.md))을
-기존 contract-safe [mobile weather API client](./mobile-weather-api-client.md)에 연결해 Today
+기존 contract-safe [mobile weather API client](./mobile-weather-api-client.md)에 연결해 각 tab
 화면이 최소 weather block을 렌더링할 수 있게 합니다.
 
 ## 전체 흐름
@@ -14,7 +14,7 @@ SavedLocationApplicationSnapshot READY
 → mobileWeatherQueryStore.request(request)
 → WeatherApiClient.fetchWeather()
 → observable MobileWeatherQuerySnapshot (IDLE/LOADING/SUCCESS/ERROR)
-→ apps/mobile/src/app/index.tsx의 weather block
+→ apps/mobile/src/app/(tabs)/index.tsx의 weather block
 ```
 
 - **store** (`mobile-weather-query-store.ts`, `createMobileWeatherQueryStore`) — provider-neutral
@@ -22,12 +22,34 @@ SavedLocationApplicationSnapshot READY
   AsyncStorage, logging를 import하지 않습니다.
 - **production composition** (`mobile-weather-query-production.ts`) — `EXPO_PUBLIC_API_BASE_URL`을
   읽어 실제 `WeatherApiClient`를 구성하고 store에 주입하는 유일한 지점.
-- **hook** (`use-mobile-weather-query.ts`, `useMobileWeatherQuery`) — 화면이 이미 읽은
-  `SavedLocationApplicationSnapshot`을 인자로 받아 store를 구독하고, request/reset 시점을
-  결정합니다. `useMobileSavedLocations()`를 다시 호출하지 않습니다.
-- **pure barrel** (`index.ts`) — store 팩토리와 타입만 export합니다. production singleton과 hook은
+- **lifecycle hook** (`use-mobile-weather-query-lifecycle.ts`, `useMobileWeatherQueryLifecycle`) —
+  request/reset lifecycle의 유일한 React owner. `SavedLocationApplicationSnapshot`을 인자로 받아
+  request/reset 시점을 결정할 뿐 값을 반환하지 않으며, production에서는
+  `apps/mobile/src/app/(tabs)/_layout.tsx` 정확히 한 곳에서만 호출됩니다(§「Lifecycle owner」 참고).
+  `useMobileSavedLocations()`를 다시 호출하지 않습니다.
+- **read-only hook** (`use-mobile-weather-query.ts`, `useMobileWeatherQuery`) — 화면이 이미 읽은
+  `SavedLocationApplicationSnapshot`을 인자로 받아 production store를 `useSyncExternalStore`로
+  구독하고, 현재 selectedLocationId와의 correlation만 수행합니다. request/reset/retry나 `useEffect`를
+  전혀 소유하지 않으므로, 여러 tab 화면이 각자 이 hook을 독립적으로 호출해도 lifecycle이 중복되지
+  않습니다. `useMobileSavedLocations()`를 다시 호출하지 않습니다.
+- **pure barrel** (`index.ts`) — store 팩토리와 타입만 export합니다. production singleton과 두 hook은
   export하지 않습니다(native/React 의존을 pure barrel에 새지 않기 위함, 기존
   saved-location/hydration 경계와 동일한 원칙).
+
+## Lifecycle owner
+
+Request/reset lifecycle의 유일한 React owner는 `apps/mobile/src/app/(tabs)/_layout.tsx`입니다 —
+이 layout이 `useMobileSavedLocations()`로 읽은 exact snapshot을 `useMobileWeatherQueryLifecycle()`에
+그대로 전달해 정확히 한 번 호출합니다. 개별 tab 화면(Today 등)은 이 lifecycle hook을 직접 호출하지
+않고, 필요하면 read-only `useMobileWeatherQuery()`만으로 현재 query snapshot을 구독합니다. Store에
+reference counting이나 화면별 상태는 추가되지 않았습니다 — lifecycle owner를 하나의 React 위치로
+올리는 것만으로 여러 tab consumer가 같은 singleton query store를 안전하게 공유합니다. 새 React
+Context/Provider는 추가되지 않았습니다.
+
+Today(`apps/mobile/src/app/(tabs)/index.tsx`)는 기존과 동일하게 `useMobileSavedLocations()`와
+read-only `useMobileWeatherQuery()`만 호출하며, 화면 자체의 표시/동작은 바뀌지 않았습니다. 사용자
+재시도는 여전히 `mobileWeatherQueryStore.retry()`를 직접 호출합니다. Hourly tab(`(tabs)/hourly.tsx`)은
+이 PR에서도 여전히 placeholder이며, 실제 Hourly UI는 후속 범위입니다.
 
 ## `EXPO_PUBLIC_API_BASE_URL` 계약
 
@@ -38,9 +60,9 @@ import·construction 시 throw하지 않습니다 — 기존 [weather API client
 `invalidClientConfiguration` `clientError`로 흡수되고, store는 이를 `ERROR`/`CONFIGURATION`으로
 매핑합니다. 실제 Vercel domain이나 service key는 이 문서·예시·코드 어디에도 담지 않습니다.
 
-## Request 시작 조건 (hook)
+## Request 시작 조건 (lifecycle hook)
 
-`useMobileWeatherQuery(savedLocations)`는 다음이 모두 참일 때만 request합니다.
+`useMobileWeatherQueryLifecycle(savedLocations)`는 다음이 모두 참일 때만 request합니다.
 
 ```text
 savedLocations.status === 'READY'

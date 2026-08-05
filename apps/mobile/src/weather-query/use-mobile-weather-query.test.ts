@@ -3,36 +3,29 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MobileSavedLocation, SavedLocationApplicationSnapshot } from '../locations';
 
 // ---------------------------------------------------------------------------
-// `react`'s `useSyncExternalStore` and `useEffect` are replaced with minimal fakes so the hook can
-// be called as a plain function (there is no real renderer/dispatcher in this Node-based setup),
-// exactly as `_layout.test.tsx` and `index.test.tsx` already do for their own hooks. `useEffect` is
-// captured rather than auto-run: each test decides for itself when a captured effect (and its
-// returned cleanup) actually executes, the same way React would decide based on the dependency
-// array — which is itself asserted directly in the "no additional request" test below.
+// `react`'s `useSyncExternalStore` is replaced with a minimal fake so the hook can be called as a
+// plain function (there is no real renderer/dispatcher in this Node-based setup). `useEffect` is
+// replaced with a call-recording spy only to prove this read-only hook never calls it — the hook
+// itself no longer imports `useEffect` at all, and this guards against that regressing.
 // ---------------------------------------------------------------------------
 
-interface CapturedEffect {
-  readonly callback: () => void | (() => void);
-  readonly deps: readonly unknown[] | undefined;
-}
-
-const capturedEffects = vi.hoisted(() => [] as CapturedEffect[]);
-const useEffectMock = vi.hoisted(() => vi.fn());
 const useSyncExternalStoreMock = vi.hoisted(() => vi.fn());
+const useEffectMock = vi.hoisted(() => vi.fn());
 
 vi.mock('react', async (importOriginal) => {
   const actual = await importOriginal<typeof import('react')>();
   return {
     ...actual,
-    useEffect: useEffectMock,
     useSyncExternalStore: useSyncExternalStoreMock,
+    useEffect: useEffectMock,
   };
 });
 
 // ---------------------------------------------------------------------------
 // The production weather-query store is replaced with a call-recording mock: this hook test
-// verifies only *when* the hook calls `request`/`retry`/`reset` and what it returns, never the
-// store's own state machine (covered by `mobile-weather-query-store.test.ts`).
+// verifies only *what* the hook reads/returns and that it never dispatches `request`/`retry`/
+// `reset`, never the store's own state machine (covered by `mobile-weather-query-store.test.ts`) or
+// the request/reset lifecycle decision (covered by `use-mobile-weather-query-lifecycle.test.ts`).
 // ---------------------------------------------------------------------------
 
 const mobileWeatherQueryStoreMock = vi.hoisted(() => ({
@@ -48,8 +41,7 @@ vi.mock('./mobile-weather-query-production', () => ({
 }));
 
 // ---------------------------------------------------------------------------
-// Synthetic fixtures. `../locations` (the real, pure, provider-neutral barrel — no native module)
-// runs unmodified so `createWeatherRequestFromSavedLocation`'s real mapping/validation is exercised.
+// Synthetic fixtures.
 // ---------------------------------------------------------------------------
 
 function record(id: string, sortOrder: number): MobileSavedLocation {
@@ -69,38 +61,14 @@ function record(id: string, sortOrder: number): MobileSavedLocation {
   };
 }
 
-function notStarted(): SavedLocationApplicationSnapshot {
-  return { status: 'NOT_STARTED', writeStatus: 'IDLE' };
-}
 function loading(): SavedLocationApplicationSnapshot {
   return { status: 'LOADING', writeStatus: 'IDLE' };
-}
-function selectionLoading(): SavedLocationApplicationSnapshot {
-  return { status: 'SELECTION_LOADING', writeStatus: 'IDLE' };
-}
-function empty(): SavedLocationApplicationSnapshot {
-  return { status: 'EMPTY', selectedLocationId: null, writeStatus: 'IDLE' };
 }
 function ready(
   locations: readonly MobileSavedLocation[],
   selectedLocationId: string,
 ): SavedLocationApplicationSnapshot {
   return { status: 'READY', locations, selectedLocationId, writeStatus: 'IDLE' };
-}
-function errorSnapshot(): SavedLocationApplicationSnapshot {
-  return {
-    status: 'ERROR',
-    error: { scope: 'SAVED_LOCATIONS', kind: 'STORAGE_READ_FAILED' },
-    writeStatus: 'IDLE',
-  };
-}
-
-function latestEffect(): CapturedEffect {
-  const effect = capturedEffects[capturedEffects.length - 1];
-  if (effect === undefined) {
-    throw new Error('expected an effect to have been captured');
-  }
-  return effect;
 }
 
 async function loadHook() {
@@ -111,12 +79,6 @@ async function loadHook() {
 beforeEach(() => {
   vi.resetModules();
   vi.resetAllMocks();
-  capturedEffects.length = 0;
-  useEffectMock.mockImplementation(
-    (callback: () => void | (() => void), deps?: readonly unknown[]) => {
-      capturedEffects.push({ callback, deps });
-    },
-  );
   useSyncExternalStoreMock.mockImplementation(
     (
       _subscribe: (onStoreChange: () => void) => () => void,
@@ -129,155 +91,112 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// No request while saved-location application isn't a validated READY selection.
+// Subscription contract: stable module-scope subscribe/getSnapshot, same getter for client/server.
 // ---------------------------------------------------------------------------
 
-describe('no request outside a validated READY selection', () => {
-  it.each([
-    ['NOT_STARTED', notStarted],
-    ['LOADING', loading],
-    ['SELECTION_LOADING', selectionLoading],
-    ['EMPTY', empty],
-    ['ERROR', errorSnapshot],
-  ] as const)('requests 0 times for %s', async (_label, build) => {
+describe('subscription', () => {
+  it('subscribes via useSyncExternalStore with the same getter for client and server snapshots', async () => {
     const useMobileWeatherQuery = await loadHook();
 
-    useMobileWeatherQuery(build());
-    latestEffect().callback();
+    useMobileWeatherQuery(ready([record('a', 0)], 'a'));
 
-    expect(mobileWeatherQueryStoreMock.request).toHaveBeenCalledTimes(0);
+    expect(useSyncExternalStoreMock).toHaveBeenCalledTimes(1);
+    const [subscribeArg, getSnapshotArg, getServerSnapshotArg] =
+      useSyncExternalStoreMock.mock.calls[0] as [unknown, unknown, unknown];
+    expect(getSnapshotArg).toBe(getServerSnapshotArg);
+
+    useMobileWeatherQuery(ready([record('a', 0)], 'a'));
+
+    const [subscribeArg2, getSnapshotArg2] = useSyncExternalStoreMock.mock.calls[1] as [
+      unknown,
+      unknown,
+    ];
+    expect(subscribeArg2).toBe(subscribeArg);
+    expect(getSnapshotArg2).toBe(getSnapshotArg);
   });
 
-  it('requests 0 times and resets when the selected id is not present in locations', async () => {
-    const useMobileWeatherQuery = await loadHook();
-    const snapshot = ready([record('a', 0)], 'missing-id');
-
-    const result = useMobileWeatherQuery(snapshot);
-    latestEffect().callback();
-
-    expect(mobileWeatherQueryStoreMock.request).toHaveBeenCalledTimes(0);
-    expect(mobileWeatherQueryStoreMock.reset).toHaveBeenCalledTimes(1);
-    expect(result).toEqual({ status: 'IDLE' });
-  });
-
-  it('requests 0 times and resets when the selected record fails request mapping (broken READY invariant)', async () => {
-    const useMobileWeatherQuery = await loadHook();
-    const brokenRecord = { ...record('a', 0), latitude: 'not-a-number' } as unknown as MobileSavedLocation;
-    const snapshot = ready([brokenRecord], 'a');
-
-    const result = useMobileWeatherQuery(snapshot);
-    expect(() => latestEffect().callback()).not.toThrow();
-
-    expect(mobileWeatherQueryStoreMock.request).toHaveBeenCalledTimes(0);
-    expect(mobileWeatherQueryStoreMock.reset).toHaveBeenCalledTimes(1);
-    expect(result).toEqual({ status: 'IDLE' });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// A validated READY selection requests exactly once, with exactly the shared fields.
-// ---------------------------------------------------------------------------
-
-describe('a validated READY selection', () => {
-  it('requests exactly once with the mapped WeatherRequestV1, dropping local-only fields', async () => {
-    const useMobileWeatherQuery = await loadHook();
-    const snapshot = ready([record('a', 0)], 'a');
-
-    useMobileWeatherQuery(snapshot);
-    latestEffect().callback();
-
-    expect(mobileWeatherQueryStoreMock.request).toHaveBeenCalledTimes(1);
-    const call = mobileWeatherQueryStoreMock.request.mock.calls[0] as [{ location: { id: string } }];
-    expect(call[0].location.id).toBe('a');
-    expect(Object.keys(call[0].location).sort()).toEqual(
-      [
-        'adminArea1',
-        'adminArea2',
-        'adminArea3',
-        'countryCode',
-        'displayName',
-        'id',
-        'latitude',
-        'longitude',
-        'timezone',
-      ].sort(),
-    );
-    expect(call[0].location).not.toHaveProperty('kmaGrid');
-    expect(call[0].location).not.toHaveProperty('isCurrent');
-    expect(call[0].location).not.toHaveProperty('sortOrder');
-  });
-
-  it('does not request again when only a non-selected location changes (same status/selectedId)', async () => {
-    const useMobileWeatherQuery = await loadHook();
-    const first = ready([record('a', 0), record('b', 1)], 'a');
-    const second = ready([record('a', 0), record('b', 1), record('c', 2)], 'a');
-
-    useMobileWeatherQuery(first);
-    latestEffect().callback();
-    expect(mobileWeatherQueryStoreMock.request).toHaveBeenCalledTimes(1);
-
-    useMobileWeatherQuery(second);
-    // The dependency array is the semantic key only, so a real React would see it unchanged and
-    // never re-invoke the effect factory — this hook never re-requests for the same selection.
-    expect(latestEffect().deps).toEqual(capturedEffects[0]?.deps);
-    expect(mobileWeatherQueryStoreMock.request).toHaveBeenCalledTimes(1);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Selection change, unmount, and correlation guard.
-// ---------------------------------------------------------------------------
-
-describe('cleanup and correlation', () => {
-  it("resets/aborts A's query before requesting B's when the selection changes", async () => {
-    const useMobileWeatherQuery = await loadHook();
-    const readyA = ready([record('a', 0), record('b', 1)], 'a');
-    const readyB = ready([record('a', 0), record('b', 1)], 'b');
-
-    useMobileWeatherQuery(readyA);
-    const cleanupA = latestEffect().callback();
-    expect(mobileWeatherQueryStoreMock.request).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ location: expect.objectContaining({ id: 'a' }) }),
-    );
-
-    cleanupA?.();
-    expect(mobileWeatherQueryStoreMock.reset).toHaveBeenCalledTimes(1);
-
-    useMobileWeatherQuery(readyB);
-    latestEffect().callback();
-    expect(mobileWeatherQueryStoreMock.request).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ location: expect.objectContaining({ id: 'b' }) }),
-    );
-  });
-
-  it('resets/aborts on unmount', async () => {
-    const useMobileWeatherQuery = await loadHook();
-    const snapshot = ready([record('a', 0)], 'a');
-
-    useMobileWeatherQuery(snapshot);
-    const cleanup = latestEffect().callback();
-    cleanup?.();
-
-    expect(mobileWeatherQueryStoreMock.reset).toHaveBeenCalledTimes(1);
-  });
-
-  it('resets when leaving READY, even mid-flight (via the previous effect\'s own cleanup)', async () => {
+  it("delegates subscribe/getSnapshot to the production store's own methods", async () => {
     const useMobileWeatherQuery = await loadHook();
     useMobileWeatherQuery(ready([record('a', 0)], 'a'));
-    const cleanup = latestEffect().callback();
+    const [subscribeArg, getSnapshotArg] = useSyncExternalStoreMock.mock.calls[0] as [
+      (listener: () => void) => () => void,
+      () => unknown,
+    ];
 
-    useMobileWeatherQuery(loading());
-    // Real React runs the previous effect's cleanup before the new (non-READY) effect body.
-    cleanup?.();
-    latestEffect().callback();
+    const listener = () => {};
+    subscribeArg(listener);
+    expect(mobileWeatherQueryStoreMock.subscribe).toHaveBeenCalledWith(listener);
 
-    expect(mobileWeatherQueryStoreMock.reset).toHaveBeenCalledTimes(1);
-    expect(mobileWeatherQueryStoreMock.request).toHaveBeenCalledTimes(1);
+    getSnapshotArg();
+    expect(mobileWeatherQueryStoreMock.getSnapshot).toHaveBeenCalledTimes(2); // once by the mock impl above, once here
+  });
+});
+
+// ---------------------------------------------------------------------------
+// This hook owns no lifecycle: no `useEffect`, no `request`/`retry`/`reset` dispatch, ever.
+// ---------------------------------------------------------------------------
+
+describe('no lifecycle ownership', () => {
+  it('never calls useEffect', async () => {
+    const useMobileWeatherQuery = await loadHook();
+
+    useMobileWeatherQuery(ready([record('a', 0)], 'a'));
+
+    expect(useEffectMock).toHaveBeenCalledTimes(0);
   });
 
-  it('returns IDLE in the render window before the store snapshot correlates to the selected id', async () => {
+  it('never dispatches request/reset/retry on the store', async () => {
+    const useMobileWeatherQuery = await loadHook();
+
+    useMobileWeatherQuery(ready([record('a', 0)], 'a'));
+    useMobileWeatherQuery(loading());
+
+    expect(mobileWeatherQueryStoreMock.request).toHaveBeenCalledTimes(0);
+    expect(mobileWeatherQueryStoreMock.reset).toHaveBeenCalledTimes(0);
+    expect(mobileWeatherQueryStoreMock.retry).toHaveBeenCalledTimes(0);
+  });
+
+  it('two independent consumers reading the same snapshot dispatch no request/reset', async () => {
+    const useMobileWeatherQuery = await loadHook();
+    const snapshot = ready([record('a', 0)], 'a');
+
+    useMobileWeatherQuery(snapshot);
+    useMobileWeatherQuery(snapshot);
+    useMobileWeatherQuery(snapshot);
+
+    expect(mobileWeatherQueryStoreMock.request).toHaveBeenCalledTimes(0);
+    expect(mobileWeatherQueryStoreMock.reset).toHaveBeenCalledTimes(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Correlation guard: synthetic IDLE unless the store snapshot correlates to the selected id.
+// ---------------------------------------------------------------------------
+
+describe('correlation guard', () => {
+  it('returns synthetic IDLE whenever savedLocations is not READY, regardless of the store snapshot', async () => {
+    mobileWeatherQueryStoreMock.getSnapshot.mockReturnValue({
+      status: 'SUCCESS',
+      locationId: 'a',
+      data: {},
+    });
+    const useMobileWeatherQuery = await loadHook();
+
+    const result = useMobileWeatherQuery(loading());
+
+    expect(result).toEqual({ status: 'IDLE' });
+  });
+
+  it('returns synthetic IDLE when the store itself is IDLE', async () => {
+    mobileWeatherQueryStoreMock.getSnapshot.mockReturnValue({ status: 'IDLE' });
+    const useMobileWeatherQuery = await loadHook();
+
+    const result = useMobileWeatherQuery(ready([record('a', 0)], 'a'));
+
+    expect(result).toEqual({ status: 'IDLE' });
+  });
+
+  it('returns synthetic IDLE when the store snapshot correlates to a different location', async () => {
     mobileWeatherQueryStoreMock.getSnapshot.mockReturnValue({
       status: 'SUCCESS',
       locationId: 'stale-location',
@@ -290,7 +209,7 @@ describe('cleanup and correlation', () => {
     expect(result).toEqual({ status: 'IDLE' });
   });
 
-  it('returns the real store snapshot once it correlates to the selected id', async () => {
+  it('returns the exact store snapshot reference once it correlates to the selected id', async () => {
     const successSnapshot = { status: 'SUCCESS', locationId: 'a', data: {} };
     mobileWeatherQueryStoreMock.getSnapshot.mockReturnValue(successSnapshot);
     const useMobileWeatherQuery = await loadHook();
@@ -300,16 +219,12 @@ describe('cleanup and correlation', () => {
     expect(result).toBe(successSnapshot);
   });
 
-  it('returns IDLE whenever savedLocations is not READY, regardless of the store snapshot', async () => {
-    mobileWeatherQueryStoreMock.getSnapshot.mockReturnValue({
-      status: 'SUCCESS',
-      locationId: 'a',
-      data: {},
-    });
+  it('returns a stable synthetic IDLE reference across independent non-correlating calls', async () => {
     const useMobileWeatherQuery = await loadHook();
 
-    const result = useMobileWeatherQuery(loading());
+    const first = useMobileWeatherQuery(loading());
+    const second = useMobileWeatherQuery(ready([record('a', 0)], 'a'));
 
-    expect(result).toEqual({ status: 'IDLE' });
+    expect(first).toBe(second);
   });
 });
