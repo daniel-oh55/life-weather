@@ -246,15 +246,20 @@ Provider의 방어적 success는 `slot: null`을 포함할 수 있습니다(`tot
   **request 조립까지만** 담당하고 Provider를 호출하지 않습니다.
 - 이 service는 **이미 조립된** request를 받아 Provider와 normalizer만 orchestrate합니다 —
   request factory를 import하거나 호출하지 않습니다.
-- 두 factory→service를 잇는 scheduled facade(hourly의 PR #10과 같은 방식)는 이 PR 범위가
-  아닙니다.
+- 두 factory→service를 잇는 scheduled facade(hourly의 PR #10과 같은 방식)는 **PR #68**에서
+  완료됐습니다(`createKmaScheduledCurrentObservationFacade`,
+  [kma-scheduled-current-observation-facade.md](./kma-scheduled-current-observation-facade.md)) —
+  이 service의 **첫 application caller**입니다. 이 service 자체의 책임과 공개 계약은 변경되지
+  않았고, production composition/route에는 여전히 연결되지 않았습니다.
 
 ## 후속 범위
 
 이 PR 이후 후보 PR(순서 무관):
 
 1. 위경도 → KMA grid(nx/ny) 변환을 이 request factory와 잇는 application adapter
-2. request factory + 이 service를 잇는 scheduled facade (hourly의 PR #10과 같은 방식)
+2. ~~request factory + 이 service를 잇는 scheduled facade (hourly의 PR #10과 같은 방식)~~ —
+   **PR #68에서 완료** (`createKmaScheduledCurrentObservationFacade`,
+   [kma-scheduled-current-observation-facade.md](./kma-scheduled-current-observation-facade.md))
 3. current-observation 전용 system clock/provider composition
 4. `CurrentWeather`를 `WeatherOverview.current` section에 조립
 5. `SourceMetadata`(`sourceId`/`issuedAt`/`retrievalMode`) 조립

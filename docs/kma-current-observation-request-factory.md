@@ -187,11 +187,14 @@ close over할 뿐입니다. 같은 instance를 여러 번 사용할 수 있고, 
   Provider validation의 책임 구분 유지 — [kma-current-observation-provider.md](./kma-current-observation-provider.md)).
 - 이 factory를 hourly-forecast의 PR #10 scheduled facade와 같은 방식으로 application
   service/composition/route에 연결하는 작업은 이 PR 범위가 아닙니다. Provider와 normalizer를
-  잇는 application service 자체는 PR #67에서 별도로 완료됐지만
+  잇는 application service 자체는 PR #67에서 별도로 완료됐고
   (`createKmaCurrentObservationService`,
-  [kma-current-observation-service.md](./kma-current-observation-service.md)), 그 service는 이
-  factory를 호출하지 않고 여전히 완성된 request를 입력받습니다 — 이 두 component를 잇는
-  scheduled facade는 여전히 후속입니다.
+  [kma-current-observation-service.md](./kma-current-observation-service.md)), 이 factory의 **첫
+  application consumer**로 PR #68 scheduled current-observation facade
+  (`createKmaScheduledCurrentObservationFacade`,
+  [kma-scheduled-current-observation-facade.md](./kma-scheduled-current-observation-facade.md))가
+  이 factory와 그 service를 순서대로 연결했습니다. 이 factory 자체의 책임과 공개 계약은 변경되지
+  않았고, production composition/route에는 여전히 연결되지 않았습니다.
 
 ## 실제 key·외부 네트워크 테스트 없음
 
@@ -204,8 +207,11 @@ close over할 뿐입니다. 같은 instance를 여러 번 사용할 수 있고, 
 1. latitude/longitude 입력을 격자로 변환해 이 request factory와 연결하는 application adapter
 2. ~~current-observation을 소비하는 application service~~ — **PR #67에서 완료**
    (`createKmaCurrentObservationService`,
-   [kma-current-observation-service.md](./kma-current-observation-service.md)). 이 factory와 그
-   service를 잇는 scheduled facade/composition은 여전히 후속입니다.
+   [kma-current-observation-service.md](./kma-current-observation-service.md)). ~~이 factory와 그
+   service를 잇는 scheduled facade~~ — **PR #68에서 완료**
+   (`createKmaScheduledCurrentObservationFacade`,
+   [kma-scheduled-current-observation-facade.md](./kma-scheduled-current-observation-facade.md)).
+   Production composition은 여전히 후속입니다.
 3. current-observation 전용 system clock 주입(또는 forecast와 동일한 clock adapter 재사용) —
    composition 선택 사항
 4. `WeatherOverview`의 `current` section 조립, `SourceMetadata`
