@@ -298,5 +298,17 @@
   helper로 보강(늦게 도착하는 settlement는 결과를 바꾸지 않고 raw error·unhandled rejection도
   없음). forecast의 공개 계약과 기존 회귀는 변경되지 않았습니다. 자세한 내용은
   [kma-current-observation-provider.md](./kma-current-observation-provider.md) 참고.
+- **PR #64**는 KMA 초단기실황(`getUltraSrtNcst`)의 공식 발표시각(매시간 정시, `HH00`)을 caller가
+  제공한 절대 epoch millisecond에서 선택하는 순수 weather-core selector
+  (`selectLatestKmaCurrentObservationBaseTime`, `packages/weather-core/src/kma/current-observation-issue-time.ts`)를
+  추가했습니다 — 기존 forecast selector(`selectLatestKmaForecastBaseTime`,
+  [kma-issue-time.md](./kma-issue-time.md))와 별도·병렬 구현이며, `product` 선택이 없고(초단기실황은
+  단일 operation), 발표 스케줄이 자정(`0000`)부터 시작하므로 forecast selector에 있는
+  previous-day rollover 분기가 필요 없습니다. KST 고정 `UTC+09:00`, 지원 연도 `[1000, 9999]`,
+  value-free `RangeError`, fresh output, 입력 불변은 forecast selector와 동일한 원칙을 따릅니다.
+  API availability delay, safety margin, system-clock adapter, request factory, provider 호출,
+  위치→격자 변환, application service/composition/route, `POST /weather` 연결, contracts 변경,
+  mobile/native/deploy, 실제 KMA API 호출은 이 PR 범위가 아닙니다. 자세한 내용은
+  [kma-current-observation-issue-time.md](./kma-current-observation-issue-time.md) 참고.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
