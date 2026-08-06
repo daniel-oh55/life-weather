@@ -192,6 +192,15 @@
  *    only `{ ok: true, current }`. It creates **no** request, calls **no** clock/base-time selector,
  *    performs **no** location→grid conversion, and is not yet consumed by any composition, route, or
  *    `POST /weather`.
+ * 15. The PR #68 KMA **scheduled current-observation facade**
+ *    (`createKmaScheduledCurrentObservationFacade`): the current-observation counterpart of
+ *    component 3, a thin connector that runs the component 13 request factory then the component 14
+ *    service in order (input → request → current-observation result), passing `input`/request/
+ *    `options`/Promise through by reference and adding no new rule. It calls the request factory
+ *    **exactly once**; on factory success it calls the current-observation service **exactly once**
+ *    and returns the service's Promise verbatim; on a factory throw the service is **not** called
+ *    and the same error reference propagates. It creates **no** request/result union of its own,
+ *    is not `async`, and is not yet consumed by any composition, route, or `POST /weather`.
  *
  * The grid-based single-request **production composition root** (system clock adapter,
  * provider-from-env wiring, a live facade instance) is built in PR #11 and lives in `../composition`;
@@ -215,8 +224,9 @@
  * `docs/kma-location-hourly-fallback.md`, `docs/kma-hourly-fallback-selection.md`,
  * `docs/kma-hourly-weather-overview.md`, `docs/kma-location-hourly-overview.md`,
  * `docs/kma-selected-hourly-source-metadata.md`,
- * `docs/kma-current-observation-request-factory.md`, and
- * `docs/kma-current-observation-service.md`.
+ * `docs/kma-current-observation-request-factory.md`,
+ * `docs/kma-current-observation-service.md`, and
+ * `docs/kma-scheduled-current-observation-facade.md`.
  */
 
 export {
@@ -327,3 +337,11 @@ export {
   type KmaCurrentObservationServiceOptions,
   type KmaCurrentObservationServiceResult,
 } from './kma-current-observation.js';
+
+export {
+  createKmaScheduledCurrentObservationFacade,
+  type KmaScheduledCurrentObservationFacade,
+  type KmaScheduledCurrentObservationInput,
+  type KmaScheduledCurrentObservationOptions,
+  type KmaScheduledCurrentObservationResult,
+} from './kma-scheduled-current-observation.js';

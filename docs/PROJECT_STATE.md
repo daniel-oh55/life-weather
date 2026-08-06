@@ -31,13 +31,19 @@
   공유 `CurrentWeather`로의 순수 normalizer(`normalizeKmaCurrentObservation`)까지입니다. **PR
   #66**이 이 provider가 소비하는 request factory(`createKmaCurrentObservationRequestFactory`)를,
   **PR #67**이 이 provider와 normalizer를 잇는 application
-  service(`createKmaCurrentObservationService`)를 각각 추가했지만, 이 request factory와 service는
-  서로 연결되지 않았고(scheduled facade 미구현) 어느 쪽도 아직 `POST /weather`·`composition`·
-  `routes`에 연결되지 않았으므로, production 응답의 `current`는 이 PR들 이후에도 계속
-  missing입니다. daily sections은 여전히 미구현입니다. 자세한 내용은
+  service(`createKmaCurrentObservationService`)를 각각 추가했고, **PR #68**이 이 request
+  factory와 service를 순서대로 연결하는 얇은 scheduled
+  facade(`createKmaScheduledCurrentObservationFacade`,
+  `fetchScheduledCurrentWeather`)를 추가했습니다 — hourly의 PR #10 scheduled facade와 같은
+  원칙(input/request/options/AbortSignal exact reference, 반환 Promise identity 유지, factory→
+  service 순서, factory throw 시 service 0회, 새 result union·stage 없음)을 따르는 별도·병렬
+  구현입니다. 이 facade도 여전히 production composition·`POST /weather`·`routes`에 연결되지
+  않았으므로, production 응답의 `current`는 이 PR 이후에도 계속 missing입니다. daily sections은
+  여전히 미구현입니다. 자세한 내용은
   [kma-current-observation-provider.md](./kma-current-observation-provider.md),
   [kma-current-observation-request-factory.md](./kma-current-observation-request-factory.md),
-  [kma-current-observation-service.md](./kma-current-observation-service.md) 참고.
+  [kma-current-observation-service.md](./kma-current-observation-service.md),
+  [kma-scheduled-current-observation-facade.md](./kma-scheduled-current-observation-facade.md) 참고.
 - AirKorea air quality
 - alerts
 - response cache
@@ -342,5 +348,17 @@
   `KmaCurrentObservationRequest`를 입력받으며, 위경도→grid 변환, composition, `POST /weather`
   연결은 이 PR 범위가 아닙니다. hourly service와 forecast request factory는 변경하지 않았습니다.
   자세한 내용은 [kma-current-observation-service.md](./kma-current-observation-service.md) 참고.
+- **PR #68**은 PR #66 request factory와 PR #67 current-observation service를 연결하는 **scheduled
+  current-observation facade**(`createKmaScheduledCurrentObservationFacade`,
+  `apps/api/src/services/kma-scheduled-current-observation.ts`)를 추가했습니다 — PR #10 scheduled
+  hourly facade와 같은 원칙을 따르는 별도·병렬 구현입니다. `input`(`nx`/`ny`)을 request factory에,
+  factory가 반환한 request를 그대로 current-observation service에 넘기고, service가 반환한 Promise를
+  `async`/`await`/`.then` 없이 그대로 반환합니다(성공·`PROVIDER`·`NORMALIZATION` 결과와 rejection의
+  exact reference 보존). Factory가 throw하면 service는 호출되지 않고 같은 error reference가 그대로
+  전파됩니다. Request factory·current-observation service·hourly facade는 이 PR에서 변경되지
+  않았고, 새 generic scheduled facade abstraction도 추가되지 않았습니다. 이 facade는 여전히
+  production composition, location→grid adapter, `POST /weather` route에 연결되지 않았으므로,
+  production current 데이터는 이 PR 이후에도 여전히 missing입니다. 자세한 내용은
+  [kma-scheduled-current-observation-facade.md](./kma-scheduled-current-observation-facade.md) 참고.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
