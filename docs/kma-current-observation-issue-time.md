@@ -196,8 +196,10 @@ schedule-only 함수 자체는 바뀌지 않는 방식으로).
   fallback/retry/cache, application service/composition/route/presenter, `POST /weather` 연결,
   contracts 변경, mobile/native/deploy, 실제 KMA API 호출, 실제 key/좌표, 기존 forecast
   selector(`selectLatestKmaForecastBaseTime`) 리팩터, current/forecast 공용 generic scheduler.
-- 남은 후속: 이 selector를 소비하는 current-observation request factory, production composition
-  wiring, `POST /weather`로의 current 데이터 연결
+- ~~남은 후속: 이 selector를 소비하는 current-observation request factory~~ — **PR #66에서
+  완료**(`createKmaCurrentObservationRequestFactory`,
+  [kma-current-observation-request-factory.md](./kma-current-observation-request-factory.md)).
+  production composition wiring과 `POST /weather`로의 current 데이터 연결은 여전히 후속입니다
   ([kma-current-observation-provider.md](./kma-current-observation-provider.md)의 "후속 PR
   범위" 참고).
 
@@ -210,4 +212,10 @@ v1 / PR #64 / 2026-08
 - forecast selector(selectLatestKmaForecastBaseTime)와 별도·병렬 구현, product 필드 없음
 - 발표 스케줄이 자정(0000)부터 시작하므로 previous-day rollover 분기 불필요
 - 발표시각과 API 가용성 책임 분리(availability-delay counterpart는 이 PR 범위 밖)
+
+v2 / PR #66 / 2026-08 (request factory에서 소비)
+- apps/api/src/services의 KMA current-observation request factory
+  (createKmaCurrentObservationRequestFactory,
+  kma-current-observation-request-factory.md)가 이 selector를 소비
+- 이 selector 자체(공개 API, previous-day rollover 없음, RangeError 정책)는 변경되지 않음
 ```

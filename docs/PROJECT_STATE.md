@@ -310,5 +310,16 @@
   위치→격자 변환, application service/composition/route, `POST /weather` 연결, contracts 변경,
   mobile/native/deploy, 실제 KMA API 호출은 이 PR 범위가 아닙니다. 자세한 내용은
   [kma-current-observation-issue-time.md](./kma-current-observation-issue-time.md) 참고.
+- **PR #66**은 PR #64 selector를 소비하는 KMA current-observation (초단기실황) **request factory**
+  (`createKmaCurrentObservationRequestFactory`, `apps/api/src/services/kma-current-observation-request.ts`)를
+  추가했습니다 — PR #9 forecast request factory와 같은 원칙(injected clock, 호출당 clock 정확히
+  1회, fresh output, selector/clock 오류 그대로 전파)을 따르는 별도·병렬 구현입니다. 초단기실황은
+  `product` 선택이 없고 대응하는 availability-delay selector가 아직 없으므로, 이 factory는
+  `product` 필드도 주입 가능한 base-time-selector seam도 갖지 않고
+  `selectLatestKmaCurrentObservationBaseTime`을 직접 호출합니다. forecast request factory
+  (`kma-forecast-request.ts`)와 그 production wiring은 변경하지 않았습니다. Provider 자동 호출,
+  위치→격자 변환, application service/composition/route, `POST /weather` 연결은 이 PR 범위가
+  아닙니다. 자세한 내용은
+  [kma-current-observation-request-factory.md](./kma-current-observation-request-factory.md) 참고.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.

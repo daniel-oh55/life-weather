@@ -2,7 +2,7 @@
  * Public surface of `apps/api`'s **application services** — the orchestration layer that sequences
  * the KMA provider boundary and the domain normalizers, and assembles the requests they consume.
  *
- * Twelve application components live here so far:
+ * Thirteen application components live here so far:
  *
  * 1. The PR #7 KMA **hourly-forecast orchestration** (`createKmaHourlyForecastService`): it calls
  *    the PR #5 HTTP provider and the PR #6 hourly normalizer in order and reports a `PROVIDER`- or
@@ -170,6 +170,16 @@
  *    **now wired into** `apps/api/src/index.ts` startup and served at the `POST /weather` production
  *    route.
  *
+ * 13. The PR #66 KMA current-observation (초단기실황) **request factory**
+ *    (`createKmaCurrentObservationRequestFactory`): the current-observation counterpart of
+ *    component 2, combining an injected clock with the PR #64 pure selector
+ *    (`selectLatestKmaCurrentObservationBaseTime`) and caller-supplied `nx`/`ny` into a complete
+ *    `KmaCurrentObservationRequest`. Unlike component 2 it has no `product` field and no
+ *    injectable base-time-selector seam — 초단기실황 is a single operation and no
+ *    availability-delay selector exists for it yet. It calls the clock exactly once and the
+ *    selector exactly once per `createScheduledRequest()` call, assembles no more than the
+ *    request, and is not consumed by any service, composition, or route yet.
+ *
  * The grid-based single-request **production composition root** (system clock adapter,
  * provider-from-env wiring, a live facade instance) is built in PR #11 and lives in `../composition`;
  * PR #12 added the latitude/longitude → grid converter in `@life-weather/weather-core`; PR #13's
@@ -190,8 +200,9 @@
  * `docs/kma-scheduled-hourly-facade.md`, `docs/kma-location-scheduled-hourly.md`,
  * `docs/kma-fallback-request-plan.md`, `docs/kma-hourly-fallback.md`,
  * `docs/kma-location-hourly-fallback.md`, `docs/kma-hourly-fallback-selection.md`,
- * `docs/kma-hourly-weather-overview.md`, `docs/kma-location-hourly-overview.md`, and
- * `docs/kma-selected-hourly-source-metadata.md`.
+ * `docs/kma-hourly-weather-overview.md`, `docs/kma-location-hourly-overview.md`,
+ * `docs/kma-selected-hourly-source-metadata.md`, and
+ * `docs/kma-current-observation-request-factory.md`.
  */
 
 export {
@@ -287,3 +298,10 @@ export {
   createKmaLiveSelectedHourlySourceMetadataResolver,
   type KmaSelectedHourlySourceMetadataClock,
 } from './kma-selected-hourly-source-metadata.js';
+
+export {
+  createKmaCurrentObservationRequestFactory,
+  type KmaCurrentObservationRequestClock,
+  type KmaCurrentObservationRequestFactory,
+  type KmaCurrentObservationRequestFactoryInput,
+} from './kma-current-observation-request.js';
