@@ -2,14 +2,36 @@
  * Read a `Response` body to text under a hard byte cap, so a pathological or hostile upstream can
  * never make the provider buffer an unbounded body. Two layers of defence:
  *
- * 1. If `Content-Length` is present and well-formed and already exceeds `maxBytes`, cancel the body
- *    (so the connection is not left dangling) and reject before reading a single byte.
+ * 1. If `Content-Length` is present and well-formed and already exceeds `maxBytes`, start
+ *    cancelling the body (so the connection is not left dangling) and reject before reading a
+ *    single byte.
  * 2. Otherwise stream the body chunk-by-chunk, summing `byteLength`, and cancel the reader the
  *    instant the running total exceeds `maxBytes` (a lying or absent `Content-Length` cannot get
  *    past this).
  *
+ * Both size-limit checks **latch `RESPONSE_TOO_LARGE` the instant the overflow is detected** and
+ * return immediately — cancellation is started but never awaited, so a `cancel()` that rejects, or
+ * that never settles at all, can neither delay nor displace the `RESPONSE_TOO_LARGE` result. This
+ * holds even when the triggered cancellation itself synchronously fires the caller's own
+ * `AbortSignal` (e.g. a `cancel()` callback that calls `AbortController.abort()`): the result is
+ * already being returned before that abort can be observed by anything.
+ *
  * Bytes are decoded with a streaming `TextDecoder`, so a multi-byte UTF-8 sequence split across a
  * chunk boundary is reassembled correctly rather than corrupted.
+ *
+ * An optional `options.signal` lets a caller (the KMA transport) share its timeout/caller-abort
+ * `AbortSignal` with this function so a **pending** `reader.read()` is not left unattended. Exactly
+ * one `abort` listener is attached to `signal` for the *entire reader lifecycle* — never one per
+ * chunk, so the abort reaction graph cannot grow in proportion to the number of chunks read. The
+ * listener wakes whichever `read()` is currently outstanding (if any); when `signal` fires between
+ * reads, the next loop iteration's `signal.aborted` check catches it instead. Either way, this
+ * function immediately starts a best-effort `reader.cancel()` (not awaited) and returns, rather than
+ * waiting on a `read()` that a non-cooperative stream may never settle on its own. The original
+ * pending `read()` promise is not abandoned — a handler is attached so that whenever it *does*
+ * eventually settle (resolve or reject, however late), the lock release is retried, since the
+ * immediate release attempted on the way out may run before that read settles and therefore may not
+ * succeed on a non-standard stream. The listener is removed on every exit path. Without
+ * `options.signal`, behavior is unchanged: `read()` is simply awaited.
  *
  * Every *expected* stream failure is turned into a value, never thrown: acquiring the reader,
  * `read()`, or a flushed `cancel()` that rejects all resolve to an explicit result. The raw body,
@@ -20,7 +42,9 @@
  * Once a reader is acquired, `releaseLock()` is always *attempted* on the way out — a `cancel()` or a
  * fully-drained stream does not release the lock on its own — so on a standard Node Web Stream the
  * body ends up unlocked. If `releaseLock()` itself throws, that failure is swallowed (the decided
- * result is preserved and no raw error leaks), so the lock release itself is not guaranteed then.
+ * result is preserved and no raw error leaks). Calling `releaseLock()` (or `cancel()`) more than
+ * once on the same reader is safe by construction — both helpers swallow every failure — which is
+ * what makes the immediate attempt plus a later retry on late settlement safe to combine.
  */
 
 export type ReadResponseTextResult =
@@ -105,24 +129,30 @@ async function cancelBodySafely(
 /**
  * Read `response`'s body to a string, failing with `RESPONSE_TOO_LARGE` if it exceeds `maxBytes`
  * and with `BODY_READ_ERROR` if the underlying stream fails (reader acquisition or `read()` throws
- * or rejects). Never throws for either of those expected stream failures.
+ * or rejects) or if `options.signal` fires before a pending `read()` does. Never throws for any of
+ * those expected failures.
  *
  * A body that is exactly `maxBytes` succeeds; one byte more fails. A bodyless response (`body ===
  * null`) or a zero-byte body yields the empty string. Once a reader is acquired, an explicit
  * `releaseLock()` is *attempted* on **every** exit path — normal completion, overflow, a read error,
- * or a cancel error — in `finally` (a `cancel()` or a drained stream does not release the lock on its
- * own), so on a standard Node Web Stream `response.body.locked` ends up `false`. A `releaseLock()`
- * failure never overwrites the outcome the read already decided and is never surfaced as a raw error;
- * in that (non-standard) case the lock release itself is not guaranteed.
+ * a signal-fired abort, or a cancel error — in `finally` (a `cancel()` or a drained stream does not
+ * release the lock on its own), so on a standard Node Web Stream `response.body.locked` ends up
+ * `false`. A `releaseLock()` failure never overwrites the outcome the read already decided and is
+ * never surfaced as a raw error. When `signal` fires while a `read()` is still outstanding, the
+ * immediate `finally` release may run before that `read()` actually settles (on a non-standard
+ * stream); a second `releaseLock()` attempt is then retried once the pending `read()` does settle,
+ * however late — repeated release attempts on the same reader are safe by construction.
  */
 export async function readResponseTextWithLimit(
   response: Response,
   maxBytes: number,
+  options?: { readonly signal?: AbortSignal },
 ): Promise<ReadResponseTextResult> {
   const declaredLength = parseContentLength(response.headers.get('content-length'));
   if (declaredLength !== null && declaredLength > maxBytes) {
-    // Cancel the body without reading a byte; a cancel failure never changes the outcome.
-    await cancelBodySafely(response.body);
+    // Latch RESPONSE_TOO_LARGE immediately; cancellation is best-effort and started but never
+    // awaited, so a hanging or rejecting cancel() can never delay or displace this outcome.
+    void cancelBodySafely(response.body);
     return RESPONSE_TOO_LARGE;
   }
 
@@ -139,13 +169,56 @@ export async function readResponseTextWithLimit(
     return BODY_READ_ERROR;
   }
 
+  const signal = options?.signal;
   const decoder = new TextDecoder('utf-8');
   let total = 0;
   let text = '';
 
+  // Exactly one `abort` subscription for the whole reader lifecycle (not one per chunk).
+  // `wakeCurrentRead` wakes whichever `reader.read()` is currently outstanding; it is `null`
+  // between reads, so a signal that fires between chunks has nothing to wake and is instead caught
+  // by the `signal.aborted` check at the top of the next loop iteration.
+  let wakeCurrentRead: (() => void) | null = null;
+  const onAbort = (): void => {
+    wakeCurrentRead?.();
+  };
+  if (signal !== undefined) {
+    signal.addEventListener('abort', onAbort, { once: true });
+  }
+
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      if (signal?.aborted === true) {
+        // The signal was already fired (or fired between reads, with no pending read to wake).
+        void cancelReaderSafely(reader);
+        return BODY_READ_ERROR;
+      }
+
+      const pendingRead = reader.read();
+      if (signal !== undefined) {
+        const aborted = await new Promise<boolean>((resolve) => {
+          wakeCurrentRead = () => resolve(true);
+          pendingRead.then(
+            () => resolve(false),
+            () => resolve(false),
+          );
+        });
+        wakeCurrentRead = null;
+        if (aborted) {
+          // The signal fired while this read() was still outstanding. A non-cooperative stream
+          // may never settle it on its own: start best-effort cancellation now (not awaited) and
+          // attach a handler to the original pending read so that, whenever it does eventually
+          // settle, the lock release is retried rather than the reader being left dangling.
+          void cancelReaderSafely(reader);
+          pendingRead.then(
+            () => releaseReaderLockSafely(reader),
+            () => releaseReaderLockSafely(reader),
+          );
+          return BODY_READ_ERROR;
+        }
+      }
+
+      const { done, value } = await pendingRead;
       if (done) {
         break;
       }
@@ -154,7 +227,10 @@ export async function readResponseTextWithLimit(
       }
       total += value.byteLength;
       if (total > maxBytes) {
-        await cancelReaderSafely(reader);
+        // Latch RESPONSE_TOO_LARGE immediately; cancellation is best-effort and started but never
+        // awaited, so a hanging or rejecting cancel() (or a cancel() that synchronously fires
+        // `signal` itself) can never delay or displace this outcome.
+        void cancelReaderSafely(reader);
         return RESPONSE_TOO_LARGE;
       }
       text += decoder.decode(value, { stream: true });
@@ -165,12 +241,16 @@ export async function readResponseTextWithLimit(
   } catch {
     // read() threw/rejected (a stream failure, or an abort propagated into the body): cancel the
     // body and report a bare BODY_READ_ERROR. The raw stream error is never surfaced.
-    await cancelReaderSafely(reader);
+    void cancelReaderSafely(reader);
     return BODY_READ_ERROR;
   } finally {
-    // A cancel() or a drained stream does not release the reader's lock; do it explicitly on every
-    // exit path (success, overflow, read error, cancel error) so the body ends up unlocked. This
-    // runs before the early returns above resolve, and a release failure never changes the outcome.
+    // A cancel() or a drained stream does not release the reader's lock; attempt it explicitly on
+    // every exit path (success, overflow, read error, signal-fired abort, cancel error) so the body
+    // ends up unlocked. This runs before the early returns above resolve, and a release failure
+    // never changes the outcome. See the abort branch above for the late-settlement retry.
     releaseReaderLockSafely(reader);
+    if (signal !== undefined) {
+      signal.removeEventListener('abort', onAbort);
+    }
   }
 }

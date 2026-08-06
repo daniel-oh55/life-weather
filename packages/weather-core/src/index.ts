@@ -6,6 +6,7 @@ export {
 export {
   convertKmaLatitudeLongitudeToGrid,
   KmaForecastProduct,
+  normalizeKmaCurrentWeatherCondition,
   normalizeKmaWeatherCondition,
   parseKmaPercentage,
   parseKmaPrecipitationAmountMillimeters,
@@ -17,6 +18,7 @@ export {
   selectLatestKmaForecastBaseTime,
   selectLatestKmaForecastBaseTimeAfterAvailabilityDelay,
   type ConvertKmaLatitudeLongitudeToGridInput,
+  type KmaCurrentWeatherCondition,
   type KmaForecastBaseTime,
   type KmaForecastBaseTimeCandidates,
   type KmaForecastGridCoordinate,

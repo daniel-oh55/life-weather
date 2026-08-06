@@ -1,9 +1,13 @@
 import { KmaForecastProduct } from '@life-weather/weather-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { KmaCurrentObservationRequest } from './current-request.js';
+import { getKmaCurrentObservationField } from './group-current-observation-items.js';
 import { getKmaForecastField } from './group-forecast-items.js';
 import {
+  createKmaCurrentObservationProvider,
   createKmaForecastProvider,
+  type KmaCurrentObservationProvider,
   type KmaForecastProvider,
 } from './provider.js';
 import type { KmaForecastRequest, KmaRequestIssue } from './request.js';
@@ -153,6 +157,109 @@ function tick(ms = 10): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// ---------------------------------------------------------------------------
+// Non-cooperative fetch/body mocks (P2 remediation — transport termination guarantee).
+//
+// Unlike `fetchHangingUntilAbort` and `fetchHeaderThenBodyTiedToSignal` above (which *cooperate*
+// by rejecting/erroring once the abort signal fires), everything below ignores the abort signal
+// completely: no listener is ever attached to it. These exist to prove the provider still
+// terminates within the timeout/caller-abort — and never leaks an unhandled rejection from a late
+// settlement — even when the injected fetch/body genuinely never reacts to being aborted.
+// ---------------------------------------------------------------------------
+
+/** A fetch that never settles and never even looks at `init`/the signal. */
+function fetchIgnoringAbortForever(): typeof fetch {
+  return (() =>
+    new Promise<Response>(() => {
+      // Intentionally never resolves/rejects and never inspects the signal.
+    })) as unknown as typeof fetch;
+}
+
+/**
+ * A fetch whose settlement is driven manually via `resolveWith`/`rejectWith`, and which never looks
+ * at the signal. Lets a test simulate a fetch that settles *late* — after the provider has already
+ * returned a TIMEOUT/ABORTED result — without a real hang.
+ */
+function controllableFetch(): {
+  fetchImpl: typeof fetch;
+  resolveWith: (response: Response) => void;
+  rejectWith: (reason: unknown) => void;
+} {
+  let resolveFn!: (response: Response) => void;
+  let rejectFn!: (reason: unknown) => void;
+  const fetchImpl = (() =>
+    new Promise<Response>((resolve, reject) => {
+      resolveFn = resolve;
+      rejectFn = reject;
+    })) as unknown as typeof fetch;
+  return {
+    fetchImpl,
+    resolveWith: (response) => resolveFn(response),
+    rejectWith: (reason) => rejectFn(reason),
+  };
+}
+
+/** A 200 Response whose body stream never enqueues/closes/errors, so `reader.read()` hangs forever. */
+function fetchWithHangingBody(): typeof fetch {
+  const stream = new ReadableStream<Uint8Array>({
+    pull() {
+      // Intentionally never enqueue/close/error, and never inspects any signal.
+    },
+  });
+  return (async () => new Response(stream, { status: 200 })) as unknown as typeof fetch;
+}
+
+/**
+ * A 200 Response whose body is controlled manually via `push`/`close`, and which never inspects any
+ * signal. Starts pending (nothing enqueued) so a test can drive a real timeout/abort first, then
+ * complete the body *late* to exercise a late body success without a real hang. `wasCancelled()`
+ * reports whether anything called `cancel()` on the underlying stream.
+ */
+function controllableHangingBodyResponse(): {
+  response: Response;
+  push: (chunk: string) => void;
+  close: () => void;
+  wasCancelled: () => boolean;
+} {
+  let cancelled = false;
+  let controllerRef!: ReadableStreamDefaultController<Uint8Array>;
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controllerRef = controller;
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  return {
+    response: new Response(stream, { status: 200 }),
+    push: (chunk) => controllerRef.enqueue(encoder.encode(chunk)),
+    close: () => controllerRef.close(),
+    wasCancelled: () => cancelled,
+  };
+}
+
+/**
+ * Run `run`, then give any late microtask/timer-driven settlement a moment to surface before
+ * asserting it never became a process-level `unhandledRejection` — the concrete way to verify that
+ * a fetch/body promise settling *after* the provider has already returned cannot leak one.
+ */
+async function assertNoUnhandledRejection(run: () => Promise<void>): Promise<void> {
+  const captured: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown): void => {
+    captured.push(reason);
+  };
+  process.on('unhandledRejection', onUnhandledRejection);
+  try {
+    await run();
+    await tick(20);
+  } finally {
+    process.off('unhandledRejection', onUnhandledRejection);
+  }
+  expect(captured).toEqual([]);
+}
+
 function providerWith(
   fetchImpl: typeof fetch,
   options: { timeoutMs?: number; maxResponseBytes?: number } = {},
@@ -162,6 +269,66 @@ function providerWith(
     throw new Error('unexpected config error in test setup');
   }
   return created.provider;
+}
+
+/** A minimal deferred promise for controlling exact settlement timing in a test. */
+function deferred<T = void>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason: unknown) => void;
+} {
+  let resolveFn!: (value: T) => void;
+  let rejectFn!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolve, reject) => {
+    resolveFn = resolve;
+    rejectFn = reject;
+  });
+  return { promise, resolve: resolveFn, reject: rejectFn };
+}
+
+/**
+ * A response whose body stream never enqueues/closes on its own (so a pending `read()` stays
+ * pending forever unless cancelled), with a fully controllable `cancel()` outcome. `status`
+ * defaults to 200 so the body is actually read; pass a non-2xx status to exercise the HTTP-error
+ * cancellation path instead (which never reads the body).
+ */
+function hangingReadResponse(
+  status = 200,
+  onCancel?: () => Promise<void> | void,
+): { response: Response; cancelCalls: () => number } {
+  let cancelCalls = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull() {
+      // Intentionally never enqueue/close/error.
+    },
+    cancel() {
+      cancelCalls += 1;
+      return onCancel?.();
+    },
+  });
+  return { response: new Response(stream, { status }), cancelCalls: () => cancelCalls };
+}
+
+/**
+ * A 200 response whose body always has another chunk available on `pull` (so the streaming size
+ * limit trips on the first chunk under a small `maxResponseBytes`), with a fully controllable
+ * `cancel()` outcome — same shape as {@link hangingReadResponse}.
+ */
+function overflowingBodyResponse(
+  onCancel?: () => Promise<void> | void,
+): { response: Response; cancelCalls: () => number } {
+  const encoder = new TextEncoder();
+  let cancelCalls = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      controller.enqueue(encoder.encode('x'.repeat(64)));
+    },
+    cancel() {
+      cancelCalls += 1;
+      return onCancel?.();
+    },
+  });
+  return { response: new Response(stream, { status: 200 }), cancelCalls: () => cancelCalls };
 }
 
 function deepFreeze<T>(value: T): T {
@@ -346,6 +513,225 @@ describe('fetchForecast — timeout & caller abort cover the body read', () => {
     controller.abort();
     expect(await promise).toEqual({ ok: false, error: { kind: 'ABORTED' } });
     expect(bodyObservedAbort()).toBe(true);
+  });
+});
+
+describe('fetchForecast — transport terminates even when fetchImpl/body ignores the abort signal', () => {
+  it('a pending fetch that ignores the signal still resolves TIMEOUT within the timeout', async () => {
+    const result = await providerWith(fetchIgnoringAbortForever(), {
+      timeoutMs: 10,
+    }).fetchForecast(REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+  });
+
+  it('a pending fetch that ignores the signal still resolves ABORTED on caller abort', async () => {
+    const controller = new AbortController();
+    const promise = providerWith(fetchIgnoringAbortForever(), {
+      timeoutMs: 10_000,
+    }).fetchForecast(REQUEST, { signal: controller.signal });
+    controller.abort();
+    expect(await promise).toEqual({ ok: false, error: { kind: 'ABORTED' } });
+  });
+
+  it('resolves the timeout-vs-abort race deterministically with a non-cooperative pending fetch', async () => {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const controller = new AbortController();
+      const promise = providerWith(fetchIgnoringAbortForever(), {
+        timeoutMs: 10_000,
+      }).fetchForecast(REQUEST, { signal: controller.signal });
+      controller.abort();
+      expect(await promise).toEqual({ ok: false, error: { kind: 'ABORTED' } });
+    }
+  });
+
+  it('a fetch that resolves late (after TIMEOUT) never changes the result and its body is cancelled', async () => {
+    const { fetchImpl, resolveWith } = controllableFetch();
+    const result = await providerWith(fetchImpl, { timeoutMs: 10 }).fetchForecast(REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+
+    const late = controllableHangingBodyResponse();
+    await assertNoUnhandledRejection(async () => {
+      resolveWith(late.response);
+      await tick(20);
+    });
+    expect(late.wasCancelled()).toBe(true);
+  });
+
+  it('a fetch that rejects late (after TIMEOUT) never becomes an unhandled rejection', async () => {
+    const { fetchImpl, rejectWith } = controllableFetch();
+    const result = await providerWith(fetchImpl, { timeoutMs: 10 }).fetchForecast(REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+
+    await assertNoUnhandledRejection(async () => {
+      rejectWith(new Error('SECRET_LATE_FETCH_REJECTION_MARKER'));
+      await tick(20);
+    });
+  });
+
+  it('a pending body read that ignores the signal still resolves TIMEOUT within the timeout', async () => {
+    const result = await providerWith(fetchWithHangingBody(), { timeoutMs: 10 }).fetchForecast(
+      REQUEST,
+    );
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+  });
+
+  it('a pending body read that ignores the signal still resolves ABORTED on caller abort', async () => {
+    const controller = new AbortController();
+    const promise = providerWith(fetchWithHangingBody(), { timeoutMs: 10_000 }).fetchForecast(
+      REQUEST,
+      { signal: controller.signal },
+    );
+    await tick();
+    controller.abort();
+    expect(await promise).toEqual({ ok: false, error: { kind: 'ABORTED' } });
+  });
+
+  it('cancels a hanging body reader on TIMEOUT without waiting for cancel() to settle', async () => {
+    const cancel = deferred<void>();
+    const { response, cancelCalls } = hangingReadResponse(200, () => cancel.promise);
+    const result = await providerWith(fetchReturning(response), { timeoutMs: 10 }).fetchForecast(
+      REQUEST,
+    );
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+
+    // The provider already returned above even though cancel() has not settled yet.
+    await assertNoUnhandledRejection(async () => {
+      await tick(20);
+    });
+    expect(cancelCalls()).toBe(1);
+    expect(response.body?.locked).toBe(false);
+
+    // Settling cancel() late must not throw, leak, or change anything already decided.
+    cancel.resolve();
+    await tick(20);
+  });
+
+  it('cancels a hanging body reader on caller ABORT without waiting for cancel() to settle', async () => {
+    const cancel = deferred<void>();
+    const { response, cancelCalls } = hangingReadResponse(200, () => cancel.promise);
+    const controller = new AbortController();
+    const promise = providerWith(fetchReturning(response), { timeoutMs: 10_000 }).fetchForecast(
+      REQUEST,
+      { signal: controller.signal },
+    );
+    await tick();
+    controller.abort();
+    expect(await promise).toEqual({ ok: false, error: { kind: 'ABORTED' } });
+
+    await assertNoUnhandledRejection(async () => {
+      await tick(20);
+    });
+    expect(cancelCalls()).toBe(1);
+    expect(response.body?.locked).toBe(false);
+
+    cancel.resolve();
+    await tick(20);
+  });
+
+  it('a hanging body reader whose cancel() rejects never becomes an unhandled rejection', async () => {
+    const marker = 'SECRET_HANGING_READ_CANCEL_REJECTION_MARKER';
+    const { response, cancelCalls } = hangingReadResponse(200, () => Promise.reject(new Error(marker)));
+    const result = await providerWith(fetchReturning(response), { timeoutMs: 10 }).fetchForecast(
+      REQUEST,
+    );
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+    expect(JSON.stringify(result)).not.toContain(marker);
+
+    await assertNoUnhandledRejection(async () => {
+      await tick(20);
+    });
+    expect(cancelCalls()).toBe(1);
+  });
+});
+
+describe('fetchForecast — non-blocking response-body cancellation on an already-decided result (P2-2)', () => {
+  it('returns HTTP_ERROR without waiting for a non-2xx body cancel() that never settles', async () => {
+    const cancel = deferred<void>();
+    const { response, cancelCalls } = hangingReadResponse(500, () => cancel.promise);
+    const result = await providerWith(fetchReturning(response)).fetchForecast(REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'HTTP_ERROR', status: 500 } });
+    expect(cancelCalls()).toBe(1);
+
+    await assertNoUnhandledRejection(async () => {
+      cancel.resolve();
+      await tick(20);
+    });
+  });
+
+  it('returns HTTP_ERROR unchanged when the non-2xx body cancel() rejects, without an unhandled rejection', async () => {
+    const marker = 'SECRET_HTTP_ERROR_CANCEL_REJECTION_MARKER';
+    const { response, cancelCalls } = hangingReadResponse(503, () => Promise.reject(new Error(marker)));
+    const result = await providerWith(fetchReturning(response)).fetchForecast(REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'HTTP_ERROR', status: 503 } });
+    expect(JSON.stringify(result)).not.toContain(marker);
+
+    await assertNoUnhandledRejection(async () => {
+      await tick(20);
+    });
+    expect(cancelCalls()).toBe(1);
+  });
+});
+
+describe('fetchForecast — RESPONSE_TOO_LARGE outranks a concurrent abort even when cancel() hangs (P2-3)', () => {
+  it('keeps RESPONSE_TOO_LARGE over a concurrent caller abort', async () => {
+    const cancel = deferred<void>();
+    const { response, cancelCalls } = overflowingBodyResponse(() => cancel.promise);
+    const controller = new AbortController();
+    const promise = providerWith(fetchReturning(response), {
+      timeoutMs: 10_000,
+      maxResponseBytes: 16,
+    }).fetchForecast(REQUEST, { signal: controller.signal });
+    // Give the overflow a chance to be detected and latched before the caller aborts.
+    await tick();
+    controller.abort();
+    expect(await promise).toEqual({ ok: false, error: { kind: 'RESPONSE_TOO_LARGE' } });
+    expect(cancelCalls()).toBe(1);
+
+    await assertNoUnhandledRejection(async () => {
+      cancel.resolve();
+      await tick(20);
+    });
+  });
+
+  it('keeps RESPONSE_TOO_LARGE over a concurrent TIMEOUT', async () => {
+    const cancel = deferred<void>();
+    const { response, cancelCalls } = overflowingBodyResponse(() => cancel.promise);
+    const promise = providerWith(fetchReturning(response), {
+      timeoutMs: 15,
+      maxResponseBytes: 16,
+    }).fetchForecast(REQUEST);
+    expect(await promise).toEqual({ ok: false, error: { kind: 'RESPONSE_TOO_LARGE' } });
+    expect(cancelCalls()).toBe(1);
+
+    await assertNoUnhandledRejection(async () => {
+      cancel.resolve();
+      await tick(20);
+    });
+  });
+
+  it('keeps RESPONSE_TOO_LARGE when the overflow cancel() synchronously fires the caller abort (deterministic)', async () => {
+    // No tick()/timer involved: the overflow's own cancel() cleanup synchronously calls
+    // controller.abort() before readResponseTextWithLimit returns, so this exercises the exact
+    // ordering from the spec — overflow detected, cancel() called, cancel() synchronously aborts
+    // the caller signal, and the already-latched RESPONSE_TOO_LARGE must still win.
+    const controller = new AbortController();
+    const { response, cancelCalls } = overflowingBodyResponse(() => {
+      controller.abort();
+    });
+
+    const result = await providerWith(fetchReturning(response), {
+      timeoutMs: 10_000,
+      maxResponseBytes: 16,
+    }).fetchForecast(REQUEST, { signal: controller.signal });
+
+    expect(result).toEqual({ ok: false, error: { kind: 'RESPONSE_TOO_LARGE' } });
+    expect(cancelCalls()).toBe(1);
+    expect(response.body?.locked).toBe(false);
+    expect('forecast' in result).toBe(false);
+
+    await assertNoUnhandledRejection(async () => {
+      await tick(20);
+    });
   });
 });
 
@@ -832,6 +1218,644 @@ describe('fetchForecast — secret non-exposure across error variants', () => {
 
   it.each(scenarios)('$name never leaks secrets or the URL/key', async ({ fetchImpl, forbidden }) => {
     const result = await providerWith(fetchImpl).fetchForecast(REQUEST);
+    const serialized = JSON.stringify(result);
+    for (const secret of [...forbidden, FAKE_KEY, 'apis.data.go.kr', 'ServiceKey']) {
+      expect(serialized).not.toContain(secret);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fetchCurrentObservation (PR #63 — 초단기실황, getUltraSrtNcst)
+// ---------------------------------------------------------------------------
+
+const CURRENT_REQUEST: KmaCurrentObservationRequest = {
+  baseDate: '20260716',
+  baseTime: '0600',
+  nx: 60,
+  ny: 127,
+};
+
+interface RawCurrentItem {
+  baseDate: string;
+  baseTime: string;
+  category: string;
+  obsrValue: string | null;
+  nx: number;
+  ny: number;
+}
+
+/** A raw current-observation item that matches {@link CURRENT_REQUEST}'s identity unless overridden. */
+function currentItem(overrides: Partial<RawCurrentItem> = {}): RawCurrentItem {
+  return {
+    baseDate: '20260716',
+    baseTime: '0600',
+    category: 'T1H',
+    obsrValue: '23.5',
+    nx: 60,
+    ny: 127,
+    ...overrides,
+  };
+}
+
+interface CurrentBodyOptions {
+  pageNo?: number;
+  numOfRows?: number;
+  totalCount?: number;
+  items?: readonly RawCurrentItem[];
+  resultCode?: string;
+  resultMsg?: string;
+}
+
+/** Serialize a KMA current-observation success/error envelope to a JSON string. */
+function currentBody(options: CurrentBodyOptions = {}): string {
+  const items = options.items ?? [currentItem()];
+  return JSON.stringify({
+    response: {
+      header: {
+        resultCode: options.resultCode ?? '00',
+        resultMsg: options.resultMsg ?? 'NORMAL_SERVICE',
+      },
+      body: {
+        dataType: 'JSON',
+        pageNo: options.pageNo ?? 1,
+        numOfRows: options.numOfRows ?? 1000,
+        totalCount: options.totalCount ?? items.length,
+        items: { item: items },
+      },
+    },
+  });
+}
+
+function currentProviderWith(
+  fetchImpl: typeof fetch,
+  options: { timeoutMs?: number; maxResponseBytes?: number } = {},
+): KmaCurrentObservationProvider {
+  const created = createKmaCurrentObservationProvider({
+    serviceKey: FAKE_KEY,
+    fetchImpl,
+    ...options,
+  });
+  if (!created.ok) {
+    throw new Error('unexpected config error in test setup');
+  }
+  return created.provider;
+}
+
+describe('fetchCurrentObservation — request validation', () => {
+  it('returns INVALID_REQUEST without calling fetch for a bad request', async () => {
+    const spy = vi.fn(fetchReturning(jsonOk(currentBody())));
+    const result = await currentProviderWith(
+      spy as unknown as typeof fetch,
+    ).fetchCurrentObservation({ ...CURRENT_REQUEST, baseTime: '2400' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe('INVALID_REQUEST');
+    }
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe('fetchCurrentObservation — fetch options', () => {
+  it('issues a GET with Accept: application/json, redirect: error, and an AbortSignal', async () => {
+    const calls: { input: unknown; init: RequestInit | undefined }[] = [];
+    const fetchImpl = ((input: unknown, init?: RequestInit) => {
+      calls.push({ input, init });
+      return Promise.resolve(jsonOk(currentBody()));
+    }) as unknown as typeof fetch;
+
+    await currentProviderWith(fetchImpl).fetchCurrentObservation(CURRENT_REQUEST);
+
+    expect(calls).toHaveLength(1);
+    const { input, init } = calls[0]!;
+    expect(input).toBeInstanceOf(URL);
+    expect((input as URL).pathname.endsWith('/getUltraSrtNcst')).toBe(true);
+    expect(init?.method).toBe('GET');
+    expect(init?.headers).toEqual({ Accept: 'application/json' });
+    expect(init?.redirect).toBe('error');
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('does not log the URL or service key', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await currentProviderWith(fetchReturning(jsonOk(currentBody()))).fetchCurrentObservation(
+      CURRENT_REQUEST,
+    );
+
+    for (const spy of [logSpy, errorSpy, warnSpy]) {
+      expect(spy).not.toHaveBeenCalled();
+    }
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+});
+
+describe('fetchCurrentObservation — timeout & caller abort (shared transport)', () => {
+  it('maps a provider timeout to TIMEOUT', async () => {
+    const result = await currentProviderWith(fetchHangingUntilAbort(), {
+      timeoutMs: 10,
+    }).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+  });
+
+  it('returns ABORTED without calling fetch when the caller signal is already aborted', async () => {
+    const spy = vi.fn(fetchReturning(jsonOk(currentBody())));
+    const controller = new AbortController();
+    controller.abort();
+    const result = await currentProviderWith(
+      spy as unknown as typeof fetch,
+    ).fetchCurrentObservation(CURRENT_REQUEST, { signal: controller.signal });
+    expect(result).toEqual({ ok: false, error: { kind: 'ABORTED' } });
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('maps a mid-flight caller abort to ABORTED', async () => {
+    const controller = new AbortController();
+    const promise = currentProviderWith(fetchHangingUntilAbort(), {
+      timeoutMs: 10_000,
+    }).fetchCurrentObservation(CURRENT_REQUEST, { signal: controller.signal });
+    controller.abort();
+    expect(await promise).toEqual({ ok: false, error: { kind: 'ABORTED' } });
+  });
+
+  it('maps a generic fetch rejection to NETWORK_ERROR', async () => {
+    const result = await currentProviderWith(
+      fetchRejecting(new Error('boom')),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'NETWORK_ERROR' } });
+  });
+
+  it('never exposes a fetch exception message', async () => {
+    const secret = 'SECRET_CURRENT_FETCH_EXCEPTION_MARKER';
+    const result = await currentProviderWith(
+      fetchRejecting(new Error(secret)),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  it('enforces the timeout while the body stalls after the header arrives (→ TIMEOUT)', async () => {
+    const { fetchImpl, bodyObservedAbort } = fetchHeaderThenBodyTiedToSignal();
+    const result = await currentProviderWith(fetchImpl, {
+      timeoutMs: 10,
+    }).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+    expect(bodyObservedAbort()).toBe(true);
+  });
+
+  it('applies a caller abort while the body is being read after the header arrives (→ ABORTED)', async () => {
+    const { fetchImpl, bodyObservedAbort } = fetchHeaderThenBodyTiedToSignal();
+    const controller = new AbortController();
+    const promise = currentProviderWith(fetchImpl, {
+      timeoutMs: 10_000,
+    }).fetchCurrentObservation(CURRENT_REQUEST, { signal: controller.signal });
+    await tick();
+    controller.abort();
+    expect(await promise).toEqual({ ok: false, error: { kind: 'ABORTED' } });
+    expect(bodyObservedAbort()).toBe(true);
+  });
+});
+
+describe('fetchCurrentObservation — transport terminates even when fetchImpl/body ignores the abort signal (shared transport)', () => {
+  it('a pending fetch that ignores the signal still resolves TIMEOUT within the timeout', async () => {
+    const result = await currentProviderWith(fetchIgnoringAbortForever(), {
+      timeoutMs: 10,
+    }).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+  });
+
+  it('a pending body read that ignores the signal still resolves TIMEOUT within the timeout', async () => {
+    const result = await currentProviderWith(fetchWithHangingBody(), {
+      timeoutMs: 10,
+    }).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+  });
+
+  it('a fetch that resolves late (after TIMEOUT) never changes the result and its body is cancelled', async () => {
+    const { fetchImpl, resolveWith } = controllableFetch();
+    const result = await currentProviderWith(fetchImpl, {
+      timeoutMs: 10,
+    }).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+
+    const late = controllableHangingBodyResponse();
+    await assertNoUnhandledRejection(async () => {
+      resolveWith(late.response);
+      await tick(20);
+    });
+    expect(late.wasCancelled()).toBe(true);
+  });
+
+  it('cancels a hanging body reader on TIMEOUT without waiting for cancel() to settle (P2-1)', async () => {
+    const cancel = deferred<void>();
+    const { response, cancelCalls } = hangingReadResponse(200, () => cancel.promise);
+    const result = await currentProviderWith(fetchReturning(response), {
+      timeoutMs: 10,
+    }).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+
+    await assertNoUnhandledRejection(async () => {
+      await tick(20);
+    });
+    expect(cancelCalls()).toBe(1);
+    expect(response.body?.locked).toBe(false);
+
+    cancel.resolve();
+    await tick(20);
+  });
+
+  it('returns HTTP_ERROR without waiting for a non-2xx body cancel() that never settles (P2-2)', async () => {
+    const cancel = deferred<void>();
+    const { response, cancelCalls } = hangingReadResponse(500, () => cancel.promise);
+    const result = await currentProviderWith(fetchReturning(response)).fetchCurrentObservation(
+      CURRENT_REQUEST,
+    );
+    expect(result).toEqual({ ok: false, error: { kind: 'HTTP_ERROR', status: 500 } });
+    expect(cancelCalls()).toBe(1);
+
+    await assertNoUnhandledRejection(async () => {
+      cancel.resolve();
+      await tick(20);
+    });
+  });
+
+  it('keeps RESPONSE_TOO_LARGE over a concurrent TIMEOUT even when cancel() hangs (P2-3)', async () => {
+    const cancel = deferred<void>();
+    const { response, cancelCalls } = overflowingBodyResponse(() => cancel.promise);
+    const promise = currentProviderWith(fetchReturning(response), {
+      timeoutMs: 15,
+      maxResponseBytes: 16,
+    }).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(await promise).toEqual({ ok: false, error: { kind: 'RESPONSE_TOO_LARGE' } });
+    expect(cancelCalls()).toBe(1);
+
+    await assertNoUnhandledRejection(async () => {
+      cancel.resolve();
+      await tick(20);
+    });
+  });
+
+  it('keeps RESPONSE_TOO_LARGE when the overflow cancel() synchronously fires the caller abort (deterministic, mirrored)', async () => {
+    const controller = new AbortController();
+    const { response, cancelCalls } = overflowingBodyResponse(() => {
+      controller.abort();
+    });
+
+    const result = await currentProviderWith(fetchReturning(response), {
+      timeoutMs: 10_000,
+      maxResponseBytes: 16,
+    }).fetchCurrentObservation(CURRENT_REQUEST, { signal: controller.signal });
+
+    expect(result).toEqual({ ok: false, error: { kind: 'RESPONSE_TOO_LARGE' } });
+    expect(cancelCalls()).toBe(1);
+
+    await assertNoUnhandledRejection(async () => {
+      await tick(20);
+    });
+  });
+});
+
+describe('fetchCurrentObservation — body stream failures (shared transport)', () => {
+  it('maps a body stream error to NETWORK_ERROR', async () => {
+    const result = await currentProviderWith(
+      fetchBodyStreamErrors(new Error('body boom')),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'NETWORK_ERROR' } });
+  });
+
+  it('never exposes a raw body stream error message', async () => {
+    const secret = 'SECRET_CURRENT_BODY_STREAM_MARKER';
+    const result = await currentProviderWith(
+      fetchBodyStreamErrors(new Error(secret)),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(JSON.stringify(result)).not.toContain(secret);
+  });
+});
+
+describe('fetchCurrentObservation — runtime malformed request (validator totality)', () => {
+  it.each([
+    ['null', null],
+    ['undefined', undefined],
+    ['a string', 'not-a-request'],
+    ['a number', 42],
+    ['an array', []],
+  ])('returns INVALID_REQUEST without calling fetch for %s', async (_label, input) => {
+    const spy = vi.fn(fetchReturning(jsonOk(currentBody())));
+    const result = await currentProviderWith(
+      spy as unknown as typeof fetch,
+    ).fetchCurrentObservation(input as unknown as KmaCurrentObservationRequest);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe('INVALID_REQUEST');
+    }
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe('fetchCurrentObservation — HTTP status', () => {
+  it.each([400, 401, 403, 404, 500, 503])(
+    'maps HTTP %i to HTTP_ERROR with only the status',
+    async (status) => {
+      const result = await currentProviderWith(
+        fetchReturning(new Response('secret error page body', { status })),
+      ).fetchCurrentObservation(CURRENT_REQUEST);
+      expect(result).toEqual({ ok: false, error: { kind: 'HTTP_ERROR', status } });
+    },
+  );
+
+  it('does not expose an HTTP error body', async () => {
+    const result = await currentProviderWith(
+      fetchReturning(new Response('SECRET_ERROR_PAGE', { status: 500 })),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(JSON.stringify(result)).not.toContain('SECRET_ERROR_PAGE');
+  });
+});
+
+describe('fetchCurrentObservation — response size', () => {
+  it('rejects an over-large body with RESPONSE_TOO_LARGE', async () => {
+    const huge = 'x'.repeat(10_000);
+    const result = await currentProviderWith(fetchReturning(jsonOk(huge)), {
+      maxResponseBytes: 128,
+    }).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'RESPONSE_TOO_LARGE' } });
+  });
+});
+
+describe('fetchCurrentObservation — body format (shared classification)', () => {
+  it('classifies an empty body as EMPTY_RESPONSE', async () => {
+    const result = await currentProviderWith(
+      fetchReturning(new Response('', { status: 200 })),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'EMPTY_RESPONSE' } });
+  });
+
+  it('classifies malformed JSON as INVALID_JSON', async () => {
+    const result = await currentProviderWith(
+      fetchReturning(jsonOk('{ not json')),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'INVALID_JSON' } });
+  });
+
+  it('classifies arbitrary XML as NON_JSON_RESPONSE', async () => {
+    const result = await currentProviderWith(
+      fetchReturning(jsonOk('<foo><bar>x</bar></foo>')),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'NON_JSON_RESPONSE' } });
+  });
+
+  it('maps a gateway XML body (with reason code) to GATEWAY_ERROR', async () => {
+    const xml =
+      '<OpenAPI_ServiceResponse><cmmMsgHeader><returnReasonCode>30</returnReasonCode>' +
+      '<returnAuthMsg>SERVICE_KEY_IS_NOT_REGISTERED_ERROR</returnAuthMsg></cmmMsgHeader></OpenAPI_ServiceResponse>';
+    const result = await currentProviderWith(
+      fetchReturning(jsonOk(xml)),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'GATEWAY_ERROR', reasonCode: '30' } });
+  });
+
+  it('never exposes a secret-shaped returnAuthMsg from a gateway body', async () => {
+    const secret = 'CURRENT_GATEWAY_SECRET_AUTH==';
+    const xml = `<OpenAPI_ServiceResponse><returnReasonCode>30</returnReasonCode><returnAuthMsg>${secret}</returnAuthMsg></OpenAPI_ServiceResponse>`;
+    const result = await currentProviderWith(
+      fetchReturning(jsonOk(xml)),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(JSON.stringify(result)).not.toContain(secret);
+  });
+});
+
+describe('fetchCurrentObservation — response parser connection', () => {
+  it('returns a success for a normal KMA success body', async () => {
+    const result = await currentProviderWith(
+      fetchReturning(jsonOk(currentBody())),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result.ok).toBe(true);
+  });
+
+  it.each(['03', '30'])('maps upstream resultCode %s to KMA_UPSTREAM_ERROR', async (resultCode) => {
+    const result = await currentProviderWith(
+      fetchReturning(jsonOk(currentBody({ resultCode, resultMsg: 'anything' }))),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'KMA_UPSTREAM_ERROR', resultCode } });
+  });
+
+  it('never exposes a raw upstream resultMsg', async () => {
+    const secret = 'SECRET_CURRENT_RESULT_MSG_marker';
+    const result = await currentProviderWith(
+      fetchReturning(jsonOk(currentBody({ resultCode: '03', resultMsg: secret }))),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  it('maps a malformed success body to KMA_INVALID_RESPONSE with sanitized issues', async () => {
+    const malformed = JSON.stringify({
+      response: {
+        header: { resultCode: '00', resultMsg: 'NORMAL_SERVICE' },
+        body: {
+          dataType: 'JSON',
+          pageNo: 1,
+          numOfRows: 1000,
+          totalCount: 1,
+          items: { item: [{ baseDate: '20260716' }] }, // missing required fields
+        },
+      },
+    });
+    const result = await currentProviderWith(
+      fetchReturning(jsonOk(malformed)),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.error.kind === 'KMA_INVALID_RESPONSE') {
+      expect(result.error.issues.length).toBeGreaterThan(0);
+      for (const issue of result.error.issues) {
+        expect(Array.isArray(issue.path)).toBe(true);
+        expect(typeof issue.message).toBe('string');
+      }
+    } else {
+      throw new Error(`expected KMA_INVALID_RESPONSE, got ${JSON.stringify(result)}`);
+    }
+  });
+});
+
+describe('fetchCurrentObservation — request/response correlation', () => {
+  it('flags a pageNo mismatch', async () => {
+    const result = await currentProviderWith(
+      fetchReturning(jsonOk(currentBody({ pageNo: 2 }))),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'RESPONSE_MISMATCH', field: 'pageNo' } });
+  });
+
+  it.each([
+    ['baseDate', { baseDate: '20260717' }],
+    ['baseTime', { baseTime: '0700' }],
+    ['nx', { nx: 61 }],
+    ['ny', { ny: 128 }],
+  ])('flags a %s mismatch on an item', async (field, overrides) => {
+    const result = await currentProviderWith(
+      fetchReturning(jsonOk(currentBody({ items: [currentItem(overrides)] }))),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'RESPONSE_MISMATCH', field } });
+  });
+
+  it('never reveals the actual mismatched date/time/grid value', async () => {
+    const result = await currentProviderWith(
+      fetchReturning(jsonOk(currentBody({ items: [currentItem({ baseDate: '20260717' })] }))),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain('20260717');
+    expect(serialized).toEqual(
+      JSON.stringify({ ok: false, error: { kind: 'RESPONSE_MISMATCH', field: 'baseDate' } }),
+    );
+  });
+
+  it('flags an incomplete page when totalCount exceeds the received count', async () => {
+    const items = [currentItem({ category: 'T1H' }), currentItem({ category: 'REH' })];
+    const result = await currentProviderWith(
+      fetchReturning(jsonOk(currentBody({ items, totalCount: 5 }))),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: 'INCOMPLETE_PAGE', totalCount: 5, receivedCount: 2 },
+    });
+  });
+
+  it('accepts an empty page with totalCount 0 (slot is null)', async () => {
+    const result = await currentProviderWith(
+      fetchReturning(jsonOk(currentBody({ items: [], totalCount: 0 }))),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.observation.totalCount).toBe(0);
+      expect(result.observation.slot).toBeNull();
+    }
+  });
+});
+
+describe('fetchCurrentObservation — grouping connection', () => {
+  it('groups items into a single slot at most (post-correlation identity is unique)', async () => {
+    const items = [
+      currentItem({ category: 'T1H', obsrValue: '23.5' }),
+      currentItem({ category: 'REH', obsrValue: '55' }),
+    ];
+    const result = await currentProviderWith(
+      fetchReturning(jsonOk(currentBody({ items, totalCount: 2 }))),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.observation.slot).not.toBeNull();
+    }
+  });
+
+  it('preserves the ABSENT / NULL / VALUE field-presence distinction', async () => {
+    const items = [
+      currentItem({ category: 'T1H', obsrValue: '23.5' }),
+      currentItem({ category: 'REH', obsrValue: null }),
+    ];
+    const result = await currentProviderWith(
+      fetchReturning(jsonOk(currentBody({ items, totalCount: 2 }))),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const slot = result.observation.slot!;
+      expect(getKmaCurrentObservationField(slot, 'T1H')).toEqual({
+        state: 'VALUE',
+        value: '23.5',
+      });
+      expect(getKmaCurrentObservationField(slot, 'REH')).toEqual({ state: 'NULL' });
+      expect(getKmaCurrentObservationField(slot, 'VEC')).toEqual({ state: 'ABSENT' });
+    }
+  });
+
+  it('maps a duplicate category to DUPLICATE_CATEGORY', async () => {
+    const items = [currentItem({ category: 'T1H' }), currentItem({ category: 'T1H' })];
+    const result = await currentProviderWith(
+      fetchReturning(jsonOk(currentBody({ items, totalCount: 2 }))),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.error.kind === 'DUPLICATE_CATEGORY') {
+      expect(result.error.category).toBe('T1H');
+      expect(typeof result.error.slotKey).toBe('string');
+    } else {
+      throw new Error(`expected DUPLICATE_CATEGORY, got ${JSON.stringify(result)}`);
+    }
+  });
+
+  it('does not mutate the request object', async () => {
+    const request = deepFreeze({ ...CURRENT_REQUEST });
+    const result = await currentProviderWith(
+      fetchReturning(jsonOk(currentBody())),
+    ).fetchCurrentObservation(request);
+    expect(result.ok).toBe(true);
+    expect(request).toEqual(CURRENT_REQUEST);
+  });
+
+  it('is deterministic for the same mocked response', async () => {
+    const first = await currentProviderWith(
+      fetchReturning(jsonOk(currentBody())),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    const second = await currentProviderWith(
+      fetchReturning(jsonOk(currentBody())),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(first).toEqual(second);
+  });
+});
+
+describe('fetchCurrentObservation — success result shape', () => {
+  it('returns request identity, totalCount, and a slot without any raw upstream data', async () => {
+    const result = await currentProviderWith(
+      fetchReturning(jsonOk(currentBody())),
+    ).fetchCurrentObservation(CURRENT_REQUEST);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.observation).toMatchObject({
+        baseDate: '20260716',
+        baseTime: '0600',
+        nx: 60,
+        ny: 127,
+        totalCount: 1,
+      });
+      const serialized = JSON.stringify(result.observation);
+      expect(serialized).not.toContain(FAKE_KEY);
+      expect(serialized).not.toContain('apis.data.go.kr');
+      expect(serialized).not.toContain('ServiceKey');
+      expect(serialized).not.toContain('resultMsg');
+      expect(serialized).not.toContain('NORMAL_SERVICE');
+    }
+  });
+});
+
+describe('fetchCurrentObservation — secret non-exposure across error variants', () => {
+  const gatewaySecret = 'CURRENT_GATEWAY_SECRET_AUTH==';
+  const gatewayXml = `<OpenAPI_ServiceResponse><returnReasonCode>30</returnReasonCode><returnAuthMsg>${gatewaySecret}</returnAuthMsg></OpenAPI_ServiceResponse>`;
+
+  const scenarios: { name: string; fetchImpl: typeof fetch; forbidden: string[] }[] = [
+    {
+      name: 'HTTP_ERROR',
+      fetchImpl: fetchReturning(new Response('SECRET_HTTP_BODY', { status: 500 })),
+      forbidden: ['SECRET_HTTP_BODY'],
+    },
+    {
+      name: 'NETWORK_ERROR',
+      fetchImpl: fetchRejecting(new Error('SECRET_NETWORK_EXCEPTION')),
+      forbidden: ['SECRET_NETWORK_EXCEPTION'],
+    },
+    {
+      name: 'GATEWAY_ERROR',
+      fetchImpl: fetchReturning(jsonOk(gatewayXml)),
+      forbidden: [gatewaySecret],
+    },
+    {
+      name: 'KMA_UPSTREAM_ERROR',
+      fetchImpl: fetchReturning(
+        jsonOk(currentBody({ resultCode: '03', resultMsg: 'SECRET_UPSTREAM_MSG' })),
+      ),
+      forbidden: ['SECRET_UPSTREAM_MSG'],
+    },
+  ];
+
+  it.each(scenarios)('$name never leaks secrets or the URL/key', async ({ fetchImpl, forbidden }) => {
+    const result = await currentProviderWith(fetchImpl).fetchCurrentObservation(CURRENT_REQUEST);
     const serialized = JSON.stringify(result);
     for (const secret of [...forbidden, FAKE_KEY, 'apis.data.go.kr', 'ServiceKey']) {
       expect(serialized).not.toContain(secret);

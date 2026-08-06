@@ -5,6 +5,10 @@ export {
   type NormalizeKmaWeatherConditionInput,
 } from './condition.js';
 export {
+  normalizeKmaCurrentWeatherCondition,
+  type KmaCurrentWeatherCondition,
+} from './current-condition.js';
+export {
   parseKmaPrecipitationAmountMillimeters,
   parseKmaSnowfallAmountCentimeters,
 } from './amount.js';

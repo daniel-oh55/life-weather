@@ -51,6 +51,14 @@ a common internal weather state, and other weather-domain calculations.
     caller" (→ `null`) and is deliberately **not** collapsed into the `0` of the official `-`
     token — see [docs/kma-normalization.md](../../docs/kma-normalization.md).
 
+- **KMA current-observation (초단기실황) condition normalization** (`kma/current-condition.ts`):
+  `normalizeKmaCurrentWeatherCondition(precipitationTypeCode)` — a separate, current-observation-
+  only PTY normalizer (PR #63): `1`/`5` → `RAIN`, `2`/`6` → `SLEET`, `3`/`7` → `SNOW`; `0`
+  (없음), missing/blank/unknown code → `UNKNOWN`. Unlike `normalizeKmaWeatherCondition`, this
+  never consults a `SKY` code on `0` — 초단기실황 carries no current-sky item, so
+  `CLEAR`/`PARTLY_CLOUDY`/`CLOUDY` are never guessed. See
+  [docs/kma-current-observation-provider.md](../../docs/kma-current-observation-provider.md).
+
 - **KMA forecast issue-time selection** (`kma/issue-time.ts`): `selectLatestKmaForecastBaseTime`,
   a pure, deterministic function that, given a `product` and a caller-supplied absolute
   `referenceEpochMilliseconds`, returns the latest **scheduled** KMA `{ baseDate, baseTime }`
