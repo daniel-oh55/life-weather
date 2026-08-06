@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { currentWeather, type CurrentWeather } from '@life-weather/contracts';
 
@@ -94,6 +94,29 @@ function fakeService(result: Promise<KmaCurrentObservationServiceResult>) {
   return { service, fetchCurrentWeather, calls };
 }
 
+/** Silences and records every console channel the facade must never write to. */
+function spyOnConsoleOutput() {
+  return [
+    vi.spyOn(console, 'error').mockImplementation(() => undefined),
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined),
+    vi.spyOn(console, 'log').mockImplementation(() => undefined),
+    vi.spyOn(console, 'info').mockImplementation(() => undefined),
+    vi.spyOn(console, 'debug').mockImplementation(() => undefined),
+  ];
+}
+
+function expectNoConsoleOutput(
+  spies: readonly ReturnType<typeof vi.spyOn>[],
+): void {
+  for (const spy of spies) {
+    expect(spy).not.toHaveBeenCalled();
+  }
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe('createKmaScheduledCurrentObservationFacade — construction is side-effect-free', () => {
   it('does not call the request factory on construction alone', () => {
     const { factory, createScheduledRequest } = fakeFactory(makeRequest());
@@ -185,9 +208,13 @@ describe('createKmaScheduledCurrentObservationFacade — success wiring', () => 
   it('sequences factory → service and passes every reference through unchanged', async () => {
     const input = makeInput();
     const request = makeRequest();
-    const current = makeCurrent();
-    const result: KmaCurrentObservationServiceResult = { ok: true, current };
-    const resultPromise = Promise.resolve(result);
+    const current = Object.freeze(makeCurrent());
+    const result = Object.freeze<KmaCurrentObservationServiceResult>({
+      ok: true,
+      current,
+    });
+    const resultPromise =
+      Promise.resolve<KmaCurrentObservationServiceResult>(result);
 
     const {
       factory,
@@ -207,6 +234,7 @@ describe('createKmaScheduledCurrentObservationFacade — success wiring', () => 
     const options: KmaCurrentObservationServiceOptions = {
       signal: new AbortController().signal,
     };
+    const temperatureBefore = current.temperatureCelsius;
     const returned = facade.fetchScheduledCurrentWeather(input, options);
 
     // The factory ran exactly once with the caller's exact input reference.
@@ -223,11 +251,17 @@ describe('createKmaScheduledCurrentObservationFacade — success wiring', () => 
     // The facade returns the exact Promise the service returned, resolving to the exact result.
     expect(returned).toBe(resultPromise);
     const resolved = await returned;
+    // Give a same-Promise `.then()` side effect (a mutation regression) a turn to run before asserting.
+    await Promise.resolve();
+
     expect(resolved).toBe(result);
     expect(resolved.ok).toBe(true);
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(current)).toBe(true);
     if (resolved.ok) {
       expect(resolved.current).toBe(current);
       expect(currentWeather.safeParse(resolved.current).success).toBe(true);
+      expect(resolved.current.temperatureCelsius).toBe(temperatureBefore);
     }
   });
 });
@@ -280,15 +314,17 @@ describe('createKmaScheduledCurrentObservationFacade — AbortSignal reference',
 
 describe('createKmaScheduledCurrentObservationFacade — provider-stage failure pass-through', () => {
   it('returns the same PROVIDER-stage result and error reference, unchanged', async () => {
-    const sentinelProviderError: KmaCurrentObservationProviderError = {
-      kind: 'TIMEOUT',
-    };
-    const result: KmaCurrentObservationServiceResult = {
+    const sentinelProviderError =
+      Object.freeze<KmaCurrentObservationProviderError>({
+        kind: 'TIMEOUT',
+      });
+    const result = Object.freeze<KmaCurrentObservationServiceResult>({
       ok: false,
       stage: 'PROVIDER',
       error: sentinelProviderError,
-    };
-    const resultPromise = Promise.resolve(result);
+    });
+    const resultPromise =
+      Promise.resolve<KmaCurrentObservationServiceResult>(result);
 
     const { factory } = fakeFactory(makeRequest());
     const { service } = fakeService(resultPromise);
@@ -297,16 +333,26 @@ describe('createKmaScheduledCurrentObservationFacade — provider-stage failure 
       service,
     );
 
+    const errorSnapshot = JSON.stringify(sentinelProviderError);
     const returned = facade.fetchScheduledCurrentWeather(makeInput());
     expect(returned).toBe(resultPromise);
 
     const resolved = await returned;
+    // Give a same-Promise `.then()` side effect (a mutation regression) a turn to run before asserting.
+    await Promise.resolve();
+
     expect(resolved).toBe(result);
     expect(resolved.ok).toBe(false);
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(sentinelProviderError)).toBe(true);
+    expect(Object.keys(resolved).sort()).toEqual(
+      ['error', 'ok', 'stage'].sort(),
+    );
     if (!resolved.ok) {
       expect(resolved.stage).toBe('PROVIDER');
       if (resolved.stage === 'PROVIDER') {
         expect(resolved.error).toBe(sentinelProviderError);
+        expect(JSON.stringify(resolved.error)).toBe(errorSnapshot);
       }
     }
   });
@@ -314,17 +360,26 @@ describe('createKmaScheduledCurrentObservationFacade — provider-stage failure 
 
 describe('createKmaScheduledCurrentObservationFacade — normalization-stage failure pass-through', () => {
   it('returns the same NORMALIZATION-stage result, issues array, and issue references', async () => {
-    const issue: KmaCurrentNormalizationIssue = {
+    const firstIssue = Object.freeze<KmaCurrentNormalizationIssue>({
+      field: 'observedAt',
+      reason: 'INVALID',
+    });
+    const secondIssue = Object.freeze<KmaCurrentNormalizationIssue>({
       field: 'temperatureCelsius',
       reason: 'ABSENT',
-    };
-    const sentinelIssues: readonly KmaCurrentNormalizationIssue[] = [issue];
-    const result: KmaCurrentObservationServiceResult = {
+    });
+    const sentinelIssues =
+      Object.freeze<readonly KmaCurrentNormalizationIssue[]>([
+        firstIssue,
+        secondIssue,
+      ]);
+    const result = Object.freeze<KmaCurrentObservationServiceResult>({
       ok: false,
       stage: 'NORMALIZATION',
       issues: sentinelIssues,
-    };
-    const resultPromise = Promise.resolve(result);
+    });
+    const resultPromise =
+      Promise.resolve<KmaCurrentObservationServiceResult>(result);
 
     const { factory } = fakeFactory(makeRequest());
     const { service } = fakeService(resultPromise);
@@ -333,17 +388,32 @@ describe('createKmaScheduledCurrentObservationFacade — normalization-stage fai
       service,
     );
 
+    const orderSnapshot = sentinelIssues.map(
+      (issue) => `${issue.field}:${issue.reason}`,
+    );
     const returned = facade.fetchScheduledCurrentWeather(makeInput());
     expect(returned).toBe(resultPromise);
 
     const resolved = await returned;
+    // Give a same-Promise `.then()` side effect (a mutation regression) a turn to run before asserting.
+    await Promise.resolve();
+
     expect(resolved).toBe(result);
     expect(resolved.ok).toBe(false);
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(firstIssue)).toBe(true);
+    expect(Object.isFrozen(secondIssue)).toBe(true);
     if (!resolved.ok) {
       expect(resolved.stage).toBe('NORMALIZATION');
       if (resolved.stage === 'NORMALIZATION') {
+        expect(Object.isFrozen(resolved.issues)).toBe(true);
         expect(resolved.issues).toBe(sentinelIssues);
-        expect(resolved.issues[0]).toBe(issue);
+        expect(resolved.issues).toHaveLength(2);
+        expect(resolved.issues[0]).toBe(firstIssue);
+        expect(resolved.issues[1]).toBe(secondIssue);
+        expect(
+          resolved.issues.map((issue) => `${issue.field}:${issue.reason}`),
+        ).toEqual(orderSnapshot);
       }
     }
   });
@@ -351,6 +421,7 @@ describe('createKmaScheduledCurrentObservationFacade — normalization-stage fai
 
 describe('createKmaScheduledCurrentObservationFacade — factory throw', () => {
   it('propagates the exact RangeError reference and never calls the current-observation service', () => {
+    const consoleSpies = spyOnConsoleOutput();
     const sentinel = new RangeError(
       'REQUEST_FACTORY_RANGE_SENTINEL_FOR_IDENTITY',
     );
@@ -380,9 +451,11 @@ describe('createKmaScheduledCurrentObservationFacade — factory throw', () => {
     expect(returned).toBeUndefined();
     expect(createScheduledRequest).toHaveBeenCalledTimes(1);
     expect(fetchCurrentWeather).not.toHaveBeenCalled();
+    expectNoConsoleOutput(consoleSpies);
   });
 
   it('propagates the exact generic Error sentinel reference and never calls the current-observation service', () => {
+    const consoleSpies = spyOnConsoleOutput();
     const sentinel = new Error('REQUEST_FACTORY_GENERIC_SENTINEL_FOR_IDENTITY');
     const createScheduledRequest = vi.fn((): KmaCurrentObservationRequest => {
       throw sentinel;
@@ -410,11 +483,13 @@ describe('createKmaScheduledCurrentObservationFacade — factory throw', () => {
     expect(returned).toBeUndefined();
     expect(createScheduledRequest).toHaveBeenCalledTimes(1);
     expect(fetchCurrentWeather).not.toHaveBeenCalled();
+    expectNoConsoleOutput(consoleSpies);
   });
 });
 
 describe('createKmaScheduledCurrentObservationFacade — current-observation service synchronous throw', () => {
   it('propagates the exact error the service throws synchronously (no broad catch)', () => {
+    const consoleSpies = spyOnConsoleOutput();
     const sentinel = new Error(
       'CURRENT_OBSERVATION_SERVICE_SYNC_SENTINEL_FOR_IDENTITY',
     );
@@ -444,11 +519,13 @@ describe('createKmaScheduledCurrentObservationFacade — current-observation ser
     expect(caught).toBe(sentinel);
     expect(createScheduledRequest).toHaveBeenCalledTimes(1);
     expect(fetchCurrentWeather).toHaveBeenCalledTimes(1);
+    expectNoConsoleOutput(consoleSpies);
   });
 });
 
 describe('createKmaScheduledCurrentObservationFacade — rejected Promise', () => {
   it('returns the same rejected Promise reference without intercepting the rejection', async () => {
+    const consoleSpies = spyOnConsoleOutput();
     const sentinel = new Error(
       'CURRENT_OBSERVATION_SERVICE_REJECTION_SENTINEL_FOR_IDENTITY',
     );
@@ -457,8 +534,8 @@ describe('createKmaScheduledCurrentObservationFacade — rejected Promise', () =
     // Attach an assertion immediately so the rejection is always handled (no unhandled rejection).
     const assertion = expect(rejected).rejects.toBe(sentinel);
 
-    const { factory } = fakeFactory(makeRequest());
-    const { service } = fakeService(rejected);
+    const { factory, createScheduledRequest } = fakeFactory(makeRequest());
+    const { service, fetchCurrentWeather } = fakeService(rejected);
     const facade = createKmaScheduledCurrentObservationFacade(
       factory,
       service,
@@ -468,6 +545,10 @@ describe('createKmaScheduledCurrentObservationFacade — rejected Promise', () =
     expect(returned).toBe(rejected);
     await expect(returned).rejects.toBe(sentinel);
     await assertion;
+
+    expect(createScheduledRequest).toHaveBeenCalledTimes(1);
+    expect(fetchCurrentWeather).toHaveBeenCalledTimes(1);
+    expectNoConsoleOutput(consoleSpies);
   });
 });
 
