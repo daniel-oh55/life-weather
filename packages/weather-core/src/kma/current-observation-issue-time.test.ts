@@ -182,6 +182,32 @@ describe('selectLatestKmaCurrentObservationBaseTime — lower-bound calendar bou
   });
 });
 
+describe('selectLatestKmaCurrentObservationBaseTime — upper-bound calendar boundary', () => {
+  // The last supported instant, built via the existing kstEpochMs() helper (a plain 4-digit KST
+  // year, so Date.parse() handles it portably). The instant one millisecond later is the year-
+  // 10000 boundary; it is derived by stepping this already-parsed epoch forward by 1ms rather than
+  // Date.parse()-ing an extended-year string directly, since 5-digit years fall outside the plain
+  // 4-digit year form of the ECMAScript date-time string format. Both tests below share this exact
+  // boundary epoch.
+  const upperBoundEpochMs = kstEpochMs('9999-12-31T23:59:59.999');
+
+  it('returns the exact last supported issuance at the 9999 upper bound (99991231/2300)', () => {
+    expect(
+      selectLatestKmaCurrentObservationBaseTime({
+        referenceEpochMilliseconds: upperBoundEpochMs,
+      }),
+    ).toEqual({ baseDate: '99991231', baseTime: '2300' });
+  });
+
+  it('throws RangeError one millisecond after the 9999 upper bound', () => {
+    expect(() =>
+      selectLatestKmaCurrentObservationBaseTime({
+        referenceEpochMilliseconds: upperBoundEpochMs + 1,
+      }),
+    ).toThrow(RangeError);
+  });
+});
+
 describe('selectLatestKmaCurrentObservationBaseTime — invalid input', () => {
   // Shaped like a leaked secret. It must never appear in any thrown error message.
   const SECRET_SHAPED_VALUE_MUST_NOT_LEAK = 'SECRET_SHAPED_VALUE_MUST_NOT_LEAK_9D1A';

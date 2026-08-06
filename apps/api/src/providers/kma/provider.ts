@@ -114,19 +114,19 @@ type AbortRaceOutcome<T> = { readonly aborted: true } | { readonly aborted: fals
  * Race `work` against `abortWait` (a promise that resolves the instant the shared timeout/
  * caller-abort fires) and return as soon as either side settles.
  *
- * This is what makes {@link performKmaGetRequest} immune to a `fetchImpl` or body reader that
- * *ignores* the abort signal entirely and never settles: awaiting `work` directly would then block
- * this function forever, no matter how the timeout/caller-abort logic is written, because nothing
- * external can force an unsettled promise to resolve. Racing against `abortWait` instead means this
- * function's own return is bounded by the timeout/caller-abort regardless of whether the thing it
- * is waiting on cooperates.
+ * This is what makes {@link performKmaGetRequest} immune to a `fetchImpl` that *ignores* the abort
+ * signal entirely and never settles: awaiting `work` directly would then block this function
+ * forever, no matter how the timeout/caller-abort logic is written, because nothing external can
+ * force an unsettled promise to resolve. Racing against `abortWait` instead means this function's
+ * own return is bounded by the timeout/caller-abort regardless of whether the fetch promise
+ * cooperates.
  *
  * If `abortWait` wins, `work` may still settle later (or never). `onLateSettle` is attached to it
  * right away (before this function returns) so that a late settlement is *handled* — e.g. best-effort
  * cancelling a late `Response` body — rather than left dangling. `work` itself must never reject
- * (both call sites below guarantee this by folding their own failures into a value), and the
- * `.catch` here is a defensive backstop so a violation of that contract still cannot surface as an
- * unhandled rejection.
+ * (its call site below guarantees this by folding its own failure into a value), and the `.catch`
+ * here is a defensive backstop so a violation of that contract still cannot surface as an unhandled
+ * rejection.
  */
 function raceAgainstAbort<T>(
   work: Promise<T>,
@@ -307,10 +307,10 @@ async function performKmaGetRequest(
 
     return { ok: true, text: read.text };
   } catch {
-    // Neither raceAgainstAbort nor its two call sites here are expected to reject/throw (both
-    // `invokeFetch` and `readResponseTextWithLimit` fold their own failures into a value) — this
-    // is a defensive backstop, not a documented path, so it classifies by abort reason like every
-    // other transport failure rather than by the raw exception.
+    // None of `raceAgainstAbort`, `invokeFetch`, or `readResponseTextWithLimit` are expected to
+    // reject/throw — each folds its own expected failures into a value — so this is a defensive
+    // backstop, not a documented path, and it classifies by abort reason like every other
+    // transport failure rather than by the raw exception.
     return toAbortResult();
   } finally {
     clearTimeout(timeoutId);
