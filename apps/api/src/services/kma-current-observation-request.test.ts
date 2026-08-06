@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SelectLatestKmaCurrentObservationBaseTimeInput } from '@life-weather/weather-core';
 
 import type { KmaCurrentObservationRequest } from '../providers/kma/index.js';
+import { validateKmaCurrentObservationRequest } from '../providers/kma/current-request.js';
 import {
   createKmaCurrentObservationRequestFactory,
   type KmaCurrentObservationBaseTimeSelector,
@@ -633,5 +634,38 @@ describe('createKmaCurrentObservationRequestFactory — default selector behavio
       nx: 60,
       ny: 127,
     });
+  });
+});
+
+describe('createKmaCurrentObservationRequestFactory — invalid coordinates pass through unchanged', () => {
+  it('preserves out-of-range nx/ny verbatim — no clamp, coercion, swap, default, or throw', () => {
+    const { clock } = fixedClock(kstEpochMs('2026-07-18T05:00:00.000'));
+    const { selector } = recordingSelector({ baseDate: '20260718', baseTime: '0500' });
+    const factory = createKmaCurrentObservationRequestFactory(clock, selector);
+    // 0 and 254 both fall outside the provider's valid [1, 149] x [1, 253] grid range.
+    const input: KmaCurrentObservationRequestFactoryInput = { nx: 0, ny: 254 };
+
+    expect(() => factory.createScheduledRequest(input)).not.toThrow();
+    const result = factory.createScheduledRequest(input);
+
+    expect(result).toEqual({
+      baseDate: '20260718',
+      baseTime: '0500',
+      nx: 0,
+      ny: 254,
+    });
+    expect(Object.keys(result).sort()).toEqual([...REQUEST_KEYS].sort());
+    expect(JSON.stringify(input)).toBe(JSON.stringify({ nx: 0, ny: 254 }));
+  });
+});
+
+describe('createKmaCurrentObservationRequestFactory — provider validator compatibility', () => {
+  it('produces a default-factory request that the provider validator accepts directly', () => {
+    const { clock } = fixedClock(kstEpochMs('2026-07-17T05:00:00.000'));
+    const factory = createKmaCurrentObservationRequestFactory(clock);
+
+    const request = factory.createScheduledRequest({ nx: 60, ny: 127 });
+
+    expect(validateKmaCurrentObservationRequest(request)).toEqual({ ok: true });
   });
 });
