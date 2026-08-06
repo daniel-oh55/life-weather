@@ -3,10 +3,10 @@
 이 문서는 PR #66에서 추가한 **application-level request factory**
 (`createKmaCurrentObservationRequestFactory`)의 책임과 경계를 기록합니다. 이 factory는
 [kma-forecast-request-factory.md](./kma-forecast-request-factory.md)의 PR #9 forecast request
-factory와 **같은 원칙을 따르는 별도의, 병렬** 구현입니다 — 주입된 clock의 현재시각과 PR #64 순수
-selector(`selectLatestKmaCurrentObservationBaseTime`)를 사용해 `baseDate`/`baseTime`을 고르고,
-호출자가 이미 계산한 격자 좌표(nx/ny)와 결합해 완성된 `KmaCurrentObservationRequest`를
-**조립**할 뿐입니다.
+factory와 **같은 원칙을 따르는 별도의, 병렬** 구현입니다 — 주입된 clock의 현재시각과 **주입
+가능한** base-time selector(default: PR #64 순수 selector
+`selectLatestKmaCurrentObservationBaseTime`)를 사용해 `baseDate`/`baseTime`을 고르고, 호출자가
+이미 계산한 격자 좌표(nx/ny)와 결합해 완성된 `KmaCurrentObservationRequest`를 **조립**할 뿐입니다.
 
 구현 위치:
 
@@ -16,44 +16,47 @@ selector(`selectLatestKmaCurrentObservationBaseTime`)를 사용해 `baseDate`/`b
 
 ## 목적
 
-- **주입된 clock**의 현재시각(절대 epoch milliseconds)과 PR #64
-  `selectLatestKmaCurrentObservationBaseTime`을 사용해 `baseDate`/`baseTime`을 고르고, 호출자가
-  공급한 `nx`/`ny`와 결합해 완성된 `KmaCurrentObservationRequest`를 만듭니다.
+- **주입된 clock**의 현재시각(절대 epoch milliseconds)과 **주입 가능한** base-time selector(default:
+  PR #64 `selectLatestKmaCurrentObservationBaseTime`)를 사용해 `baseDate`/`baseTime`을 고르고,
+  호출자가 공급한 `nx`/`ny`와 결합해 완성된 `KmaCurrentObservationRequest`를 만듭니다.
 
 ## 현재 pipeline에서의 위치
 
 ```text
 injected clock
   → reference epoch milliseconds
-  → selectLatestKmaCurrentObservationBaseTime (PR #64) → baseDate / baseTime
+  → base-time selector   // default: selectLatestKmaCurrentObservationBaseTime (PR #64) → baseDate / baseTime
   → caller-supplied nx / ny 결합
   → 완성된 KmaCurrentObservationRequest
 ```
 
 이 factory는 요청 **조립까지만** 담당합니다. Provider 호출, application service 연결, 위경도 →
-격자 변환, retry/fallback, HTTP route는 이 factory에 포함하지 않습니다.
+격자 변환, retry/fallback, HTTP route는 이 factory에 포함하지 않습니다. Availability 정책을
+고르는 것도 이 factory의 책임이 아니라 **composition**의 책임입니다 — factory는 availability
+selector를 import하지도, 하드코딩하지도 않습니다.
 
 ## forecast request factory와의 차이
 
 이 factory는 [kma-forecast-request-factory.md](./kma-forecast-request-factory.md)의 forecast
 factory를 리팩터하거나 두 factory가 공유하는 generic factory로 만들지 않았습니다 — 초단기실황
-자체가 forecast와 다른 두 가지 이유를 그대로 반영합니다
+자체가 forecast와 다른 한 가지 이유만 그대로 반영합니다
 ([kma-current-observation-issue-time.md](./kma-current-observation-issue-time.md)):
 
 - **`product` 필드가 없습니다.** `getUltraSrtNcst`는 초단기실황의 유일한 operation이므로 factory
   input(`KmaCurrentObservationRequestFactoryInput`)은 `nx`/`ny` 두 필드만 가집니다.
-- **주입 가능한 base-time selector seam이 없습니다.** forecast factory는 PR #15에서 두 번째 인자
-  `baseTimeSelector`(default: PR #8 schedule-only selector, production은 PR #14
-  availability-delay selector를 주입)를 추가했지만, 초단기실황에는 대응하는 availability-delay
-  selector가 아직 없습니다 — [kma-current-observation-issue-time.md](./kma-current-observation-issue-time.md)가
-  이를 명시적으로 범위 밖이라고 기록합니다. 그래서 이 factory는 `selectLatestKmaCurrentObservationBaseTime`을
-  직접 호출하며, 존재하지 않는 policy를 위한 주입 seam을 미리 만들지 않습니다. 이후 초단기실황
-  availability-delay selector가 추가되면 그때 이 factory에 같은 모양의 seam을 추가할 수
-  있습니다 — 지금 사용되지 않는 seam을 추가하는 것은 미리 앞서가는 abstraction이므로 하지
-  않았습니다.
 
-factory의 나머지 구조(injected clock, side-effect-free 생성, 호출당 clock 1회, 새 result union·
-error type 없음, fresh output)는 forecast factory와 동일한 원칙입니다.
+forecast factory가 PR #15에서 추가한 **주입 가능한 base-time selector seam**은 이 factory에도
+있습니다: 두 번째 인자 `baseTimeSelector`(default: PR #64 schedule-only selector)를 생략하지
+않고 주입할 수 있습니다. 초단기실황에는 아직 대응하는 availability-delay selector가
+없습니다 — [kma-current-observation-issue-time.md](./kma-current-observation-issue-time.md)가
+이를 명시적으로 범위 밖이라고 기록합니다 — 그래서 **현재 production composition은 이 seam에
+non-default selector를 주입하지 않으며**, 두 번째 인자를 생략한 호출은 계속 PR #64 selector만
+사용합니다. Seam 자체는 forecast factory와 동일한 이유로 미리 존재합니다: 이후 초단기실황
+availability-delay selector가 추가되면, 이 factory를 변경하지 않고 composition이 새 selector를
+주입할 수 있습니다.
+
+factory의 나머지 구조(injected clock, side-effect-free 생성, 호출당 clock 1회·selector 1회, 새
+result union·error type 없음, fresh output)는 forecast factory와 동일한 원칙입니다.
 
 ## 공개 API
 
@@ -61,6 +64,10 @@ error type 없음, fresh output)는 forecast factory와 동일한 원칙입니�
 export interface KmaCurrentObservationRequestClock {
   readonly nowEpochMilliseconds: () => number;
 }
+
+export type KmaCurrentObservationBaseTimeSelector = (
+  input: SelectLatestKmaCurrentObservationBaseTimeInput,
+) => KmaCurrentObservationBaseTime;
 
 export interface KmaCurrentObservationRequestFactoryInput {
   readonly nx: number;
@@ -75,12 +82,31 @@ export interface KmaCurrentObservationRequestFactory {
 
 export function createKmaCurrentObservationRequestFactory(
   clock: KmaCurrentObservationRequestClock,
+  baseTimeSelector?: KmaCurrentObservationBaseTimeSelector, // default: selectLatestKmaCurrentObservationBaseTime (PR #64)
 ): KmaCurrentObservationRequestFactory;
 ```
 
-메서드 이름이 `createScheduledRequest`인 이유는 forecast factory와 동일합니다: selector가 최신
-공식 **발표 schedule**만 선택하며, 실제 API 자료가 준비됐음(availability)을 보장하지 않기
-때문입니다.
+메서드 이름이 `createScheduledRequest`인 이유는 forecast factory와 동일합니다: default selector가
+최신 공식 **발표 schedule**만 선택하며, 실제 API 자료가 준비됐음(availability)을 보장하지 않기
+때문입니다 — 주입된 selector라도 이 보장을 만들어내지 않습니다.
+
+## injected selector contract
+
+`baseTimeSelector`는 **선택적으로 주입**하며, 생략하면 PR #64
+`selectLatestKmaCurrentObservationBaseTime`으로 default됩니다.
+
+- factory는 selector를 **opaque function**으로 취급합니다: 재검증·clone·spread·변형하지 않습니다.
+- **factory 생성 시 selector를 호출하지 않습니다**(side-effect-free 생성) — clock도 마찬가지입니다.
+- `createScheduledRequest()`를 호출할 때마다 selector를 **정확히 한 번** 호출합니다.
+- selector에 전달하는 input은 매 호출마다 새로 만든 object이며, own key는 정확히
+  `referenceEpochMilliseconds` 하나입니다 — `product`나 다른 key를 넣지 않습니다.
+- clock에서 읽은 epoch value를 selector에 **그대로** 전달합니다 — 반올림·truncate·보정·coercion을
+  하지 않습니다.
+- selector가 반환한 `{ baseDate, baseTime }`을 요청에 **그대로** 사용합니다.
+- selector가 throw하면 **동일한 error reference**가 catch·wrap·재메시지·logging 없이 그대로
+  전파됩니다.
+- 현재 어떤 production composition도 non-default selector를 주입하지 않습니다 — 두 번째 인자를
+  생략한 모든 호출은 PR #64 schedule-only selector만 사용합니다.
 
 ## injected clock contract
 
@@ -140,9 +166,11 @@ close over할 뿐입니다. 같은 instance를 여러 번 사용할 수 있고, 
 
 이 factory는 새로운 result union도, 새로운 오류 type도 만들지 않습니다.
 
-- **selector 오류**: PR #64의 `RangeError`(invalid epoch milliseconds, 지원 연도 범위 밖)를
-  catch하거나 다른 오류로 wrapping하지 않고 **그대로** 전파합니다.
-- **clock 오류**: 주입된 clock이 throw하면 **동일한 error reference**가 그대로 전파됩니다.
+- **selector 오류**: default PR #64 selector의 `RangeError`(invalid epoch milliseconds, 지원
+  연도 범위 밖)든, 주입된 non-default selector가 던진 임의의 오류든 catch하거나 다른 오류로
+  wrapping하지 않고 **동일한 error reference**로 그대로 전파합니다.
+- **clock 오류**: 주입된 clock이 throw하면 **동일한 error reference**가 그대로 전파됩니다. clock이
+  throw하면 selector는 호출되지 않습니다.
 - 광범위한 `try/catch`, invented 오류, 오류 메시지 재작성, raw input 추가, logging을 하지
   않습니다.
 
@@ -174,8 +202,8 @@ close over할 뿐입니다. 같은 instance를 여러 번 사용할 수 있고, 
    composition 선택 사항
 4. `WeatherOverview`의 `current` section 조립, `SourceMetadata`
 5. `POST /weather`로의 current 데이터 연결
-6. current-observation availability-delay selector(존재하게 되면)를 위한 injectable selector
-   seam 추가 여부 재검토
+6. current-observation availability-delay selector 구현 자체(존재하면 이 factory는 변경 없이
+   `baseTimeSelector` seam에 주입만 받으면 됨) — 이 selector의 구현은 아직 이 PR 범위 밖
 
 ## 변경 이력
 
@@ -183,9 +211,21 @@ close over할 뿐입니다. 같은 instance를 여러 번 사용할 수 있고, 
 v1 / PR #66 / 2026-08
 - injected clock 기반 KMA current-observation request factory 추가
 - PR #64 issue-time selector(selectLatestKmaCurrentObservationBaseTime)와 nx/ny 결합
-- product 필드 없음, 주입 가능한 base-time selector seam 없음(대응 availability-delay selector가
-  아직 없으므로 미리 추가하지 않음)
+- product 필드 없음
 - forecast request factory(PR #9)와 별도·병렬 구현, 어느 쪽도 리팩터하지 않음
 - Provider 자동 호출·격자 변환·application service·composition·route·POST /weather 연결은
   이 PR 범위 밖
+
+v2 / PR #66 focused remediation / 2026-08 (base-time selector seam 복원)
+- v1이 Owner가 이미 승인한 injectable base-time-selector seam을 제거하고 PR #64 selector를
+  factory 내부에 직접 고정한 것을 시정
+- forecast factory(PR #15)와 동일한 모양의 두 번째 인자 baseTimeSelector 추가(생략 시 PR #64
+  selectLatestKmaCurrentObservationBaseTime default → one-argument 호출 동작 불변)
+- KmaCurrentObservationBaseTimeSelector 공개 type 추가·export
+- createScheduledRequest는 매 호출마다 baseTimeSelector를 정확히 한 번, 새로 만든
+  { referenceEpochMilliseconds } 한 key짜리 input으로 호출; product나 다른 key는 넣지 않음
+- 주입된 selector가 던진 임의의 오류는 동일한 reference로 그대로 전파(clock 오류 정책과 동일)
+- 현재 어떤 production composition도 non-default selector를 주입하지 않음 — availability-delay
+  selector 자체는 여전히 존재하지 않고, 이 factory는 availability 정책을 계속 고정하지 않음
+- product 필드 없음은 v1과 동일하게 유지(초단기실황은 단일 operation)
 ```

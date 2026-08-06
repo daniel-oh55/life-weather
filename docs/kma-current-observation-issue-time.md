@@ -216,6 +216,7 @@ v1 / PR #64 / 2026-08
 v2 / PR #66 / 2026-08 (request factory에서 소비)
 - apps/api/src/services의 KMA current-observation request factory
   (createKmaCurrentObservationRequestFactory,
-  kma-current-observation-request-factory.md)가 이 selector를 소비
+  kma-current-observation-request-factory.md)가 이 selector를 **injectable
+  baseTimeSelector 인자의 default**로 소비 — 인자를 생략한 호출만 이 selector를 사용
 - 이 selector 자체(공개 API, previous-day rollover 없음, RangeError 정책)는 변경되지 않음
 ```

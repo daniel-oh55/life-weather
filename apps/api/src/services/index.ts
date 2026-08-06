@@ -172,13 +172,15 @@
  *
  * 13. The PR #66 KMA current-observation (초단기실황) **request factory**
  *    (`createKmaCurrentObservationRequestFactory`): the current-observation counterpart of
- *    component 2, combining an injected clock with the PR #64 pure selector
- *    (`selectLatestKmaCurrentObservationBaseTime`) and caller-supplied `nx`/`ny` into a complete
- *    `KmaCurrentObservationRequest`. Unlike component 2 it has no `product` field and no
- *    injectable base-time-selector seam — 초단기실황 is a single operation and no
- *    availability-delay selector exists for it yet. It calls the clock exactly once and the
- *    selector exactly once per `createScheduledRequest()` call, assembles no more than the
- *    request, and is not consumed by any service, composition, or route yet.
+ *    component 2, combining an injected clock, an injectable base-time selector, and
+ *    caller-supplied `nx`/`ny` into a complete `KmaCurrentObservationRequest`. The selector is a
+ *    `KmaCurrentObservationBaseTimeSelector`; when omitted it defaults to the PR #64 schedule-only
+ *    `selectLatestKmaCurrentObservationBaseTime`. Unlike component 2 it has no `product` field,
+ *    and unlike component 2 no production composition injects a non-default selector yet — no
+ *    current-observation availability-delay selector exists for it yet. The factory itself fixes
+ *    **no** availability policy: it calls the clock exactly once and the selector exactly once
+ *    per `createScheduledRequest()` call, assembles no more than the request, and is not consumed
+ *    by any service, composition, or route yet.
  *
  * The grid-based single-request **production composition root** (system clock adapter,
  * provider-from-env wiring, a live facade instance) is built in PR #11 and lives in `../composition`;
@@ -301,6 +303,7 @@ export {
 
 export {
   createKmaCurrentObservationRequestFactory,
+  type KmaCurrentObservationBaseTimeSelector,
   type KmaCurrentObservationRequestClock,
   type KmaCurrentObservationRequestFactory,
   type KmaCurrentObservationRequestFactoryInput,

@@ -314,12 +314,16 @@
   (`createKmaCurrentObservationRequestFactory`, `apps/api/src/services/kma-current-observation-request.ts`)를
   추가했습니다 — PR #9 forecast request factory와 같은 원칙(injected clock, 호출당 clock 정확히
   1회, fresh output, selector/clock 오류 그대로 전파)을 따르는 별도·병렬 구현입니다. 초단기실황은
-  `product` 선택이 없고 대응하는 availability-delay selector가 아직 없으므로, 이 factory는
-  `product` 필드도 주입 가능한 base-time-selector seam도 갖지 않고
-  `selectLatestKmaCurrentObservationBaseTime`을 직접 호출합니다. forecast request factory
-  (`kma-forecast-request.ts`)와 그 production wiring은 변경하지 않았습니다. Provider 자동 호출,
-  위치→격자 변환, application service/composition/route, `POST /weather` 연결은 이 PR 범위가
-  아닙니다. 자세한 내용은
+  `product` 선택이 없으므로 이 factory의 `KmaCurrentObservationRequestFactoryInput`은 `product`
+  필드를 갖지 않습니다. Focused remediation(2026-08)에서 factory는 forecast factory(PR #15)와
+  동일한 모양의 **주입 가능한 base-time-selector seam**(`baseTimeSelector`, 두 번째 인자)을
+  갖도록 시정했습니다 — 생략 시 `selectLatestKmaCurrentObservationBaseTime`으로 default되고,
+  대응하는 availability-delay selector가 아직 없으므로 현재 어떤 production composition도
+  non-default selector를 주입하지 않습니다. factory 자체는 availability 정책을 고정하지
+  않습니다. forecast request factory(`kma-forecast-request.ts`)와 그 production wiring은
+  변경하지 않았습니다. Provider 자동 호출, 위치→격자 변환, application
+  service/composition/route, `POST /weather` 연결, availability-delay selector 구현 자체는 이
+  PR 범위가 아닙니다. 자세한 내용은
   [kma-current-observation-request-factory.md](./kma-current-observation-request-factory.md) 참고.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
