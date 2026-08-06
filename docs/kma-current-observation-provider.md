@@ -391,13 +391,16 @@ provider에도 동일하게 적용됩니다.
 
 **후속 PR 범위(이 PR에서 구현하지 않음):**
 
-* current를 `POST /weather`에 연결(application service, composition, route)
+* current를 `POST /weather`에 연결(composition, route)
 * ~~current observation base-time selector(정시 발표 스케줄 자동 선택)~~ — **PR #64에서 pure
   weather-core selector로 완료**(`selectLatestKmaCurrentObservationBaseTime`,
   [kma-current-observation-issue-time.md](./kma-current-observation-issue-time.md)). ~~이 selector를
   소비하는 request factory~~ — **PR #66에서 완료**(`createKmaCurrentObservationRequestFactory`,
   [kma-current-observation-request-factory.md](./kma-current-observation-request-factory.md)).
-  production wiring과 `POST /weather` 연결은 여전히 후속입니다.
+  ~~이 provider와 normalizer를 잇는 application service~~ — **PR #67에서 완료**
+  (`createKmaCurrentObservationService`,
+  [kma-current-observation-service.md](./kma-current-observation-service.md)). 위경도 → grid
+  변환, production composition wiring과 `POST /weather` 연결은 여전히 후속입니다.
 * `WeatherOverview`의 `current` section 조립, `SourceMetadata`(`sourceId`/`issuedAt`/
   `retrievalMode` 등)
 * 실제 KMA endpoint 호출, 실제 service key 사용, 실기기/실제 API smoke 검증

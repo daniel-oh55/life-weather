@@ -181,6 +181,17 @@
  *    **no** availability policy: it calls the clock exactly once and the selector exactly once
  *    per `createScheduledRequest()` call, assembles no more than the request, and is not consumed
  *    by any service, composition, or route yet.
+ * 14. The PR #67 KMA current-observation (초단기실황) **application service**
+ *    (`createKmaCurrentObservationService`): the current-observation counterpart of component 1,
+ *    running the PR #63 current-observation HTTP provider and the PR #63 `normalizeKmaCurrentObservation`
+ *    adapter in sequence over an already-built `KmaCurrentObservationRequest` (the component 13
+ *    factory output). It calls the injected provider **exactly once**, forwarding `request`/`options`
+ *    (including `signal`) unchanged; a provider failure is returned verbatim as a `PROVIDER`-stage
+ *    error; a provider success is handed to the real normalizer exactly once, and a normalization
+ *    failure is returned verbatim as a `NORMALIZATION`-stage error; a normalization success returns
+ *    only `{ ok: true, current }`. It creates **no** request, calls **no** clock/base-time selector,
+ *    performs **no** location→grid conversion, and is not yet consumed by any composition, route, or
+ *    `POST /weather`.
  *
  * The grid-based single-request **production composition root** (system clock adapter,
  * provider-from-env wiring, a live facade instance) is built in PR #11 and lives in `../composition`;
@@ -203,8 +214,9 @@
  * `docs/kma-fallback-request-plan.md`, `docs/kma-hourly-fallback.md`,
  * `docs/kma-location-hourly-fallback.md`, `docs/kma-hourly-fallback-selection.md`,
  * `docs/kma-hourly-weather-overview.md`, `docs/kma-location-hourly-overview.md`,
- * `docs/kma-selected-hourly-source-metadata.md`, and
- * `docs/kma-current-observation-request-factory.md`.
+ * `docs/kma-selected-hourly-source-metadata.md`,
+ * `docs/kma-current-observation-request-factory.md`, and
+ * `docs/kma-current-observation-service.md`.
  */
 
 export {
@@ -308,3 +320,10 @@ export {
   type KmaCurrentObservationRequestFactory,
   type KmaCurrentObservationRequestFactoryInput,
 } from './kma-current-observation-request.js';
+
+export {
+  createKmaCurrentObservationService,
+  type KmaCurrentObservationService,
+  type KmaCurrentObservationServiceOptions,
+  type KmaCurrentObservationServiceResult,
+} from './kma-current-observation.js';

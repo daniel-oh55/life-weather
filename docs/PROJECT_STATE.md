@@ -28,11 +28,16 @@
 - current/daily sections (KMA 초단기실황(`getUltraSrtNcst`) **provider boundary**는 **PR #63**에서
   구현됐습니다 — request 검증·URL 생성, raw JSON schema, 성공/upstream/invalid 분류, category
   grouping, 기존 HTTP transport 정책을 재사용하는 provider(`createKmaCurrentObservationProvider`),
-  공유 `CurrentWeather`로의 순수 normalizer(`normalizeKmaCurrentObservation`)까지입니다. 이
-  provider는 아직 `POST /weather`·`services`·`composition`·`routes`에 연결되지 않았으므로,
-  production 응답의 `current`는 이 PR 이후에도 계속 missing입니다. daily sections은 여전히
-  미구현입니다. 자세한 내용은
-  [kma-current-observation-provider.md](./kma-current-observation-provider.md) 참고.
+  공유 `CurrentWeather`로의 순수 normalizer(`normalizeKmaCurrentObservation`)까지입니다. **PR
+  #66**이 이 provider가 소비하는 request factory(`createKmaCurrentObservationRequestFactory`)를,
+  **PR #67**이 이 provider와 normalizer를 잇는 application
+  service(`createKmaCurrentObservationService`)를 각각 추가했지만, 이 request factory와 service는
+  서로 연결되지 않았고(scheduled facade 미구현) 어느 쪽도 아직 `POST /weather`·`composition`·
+  `routes`에 연결되지 않았으므로, production 응답의 `current`는 이 PR들 이후에도 계속
+  missing입니다. daily sections은 여전히 미구현입니다. 자세한 내용은
+  [kma-current-observation-provider.md](./kma-current-observation-provider.md),
+  [kma-current-observation-request-factory.md](./kma-current-observation-request-factory.md),
+  [kma-current-observation-service.md](./kma-current-observation-service.md) 참고.
 - AirKorea air quality
 - alerts
 - response cache
@@ -325,5 +330,17 @@
   service/composition/route, `POST /weather` 연결, availability-delay selector 구현 자체는 이
   PR 범위가 아닙니다. 자세한 내용은
   [kma-current-observation-request-factory.md](./kma-current-observation-request-factory.md) 참고.
+- **PR #67**은 PR #63 KMA 초단기실황 provider와 PR #63 normalizer를 잇는 **application
+  service**(`createKmaCurrentObservationService`,
+  `apps/api/src/services/kma-current-observation.ts`)를 추가했습니다 — PR #7 hourly application
+  service와 같은 원칙(injected provider, side-effect-free 생성, 호출당 provider 정확히 1회,
+  provider 성공에만 normalizer 호출, `PROVIDER`/`NORMALIZATION` stage 구분, 광범위한 `try/catch`
+  없음)을 따르는 별도·병렬 구현입니다. 성공 결과는 `hourly` 배열이 아니라 단일
+  `current: CurrentWeather`를 담고, provider의 방어적 `slot: null` 성공은 재분류 없이 그대로
+  normalizer에 전달되어(모든 category `ABSENT`) 필수 `T1H` 부재로 인한 `NORMALIZATION` 실패로
+  자연스럽게 이어집니다. 이 service는 PR #66 request factory를 호출하지 않고 여전히 완성된
+  `KmaCurrentObservationRequest`를 입력받으며, 위경도→grid 변환, composition, `POST /weather`
+  연결은 이 PR 범위가 아닙니다. hourly service와 forecast request factory는 변경하지 않았습니다.
+  자세한 내용은 [kma-current-observation-service.md](./kma-current-observation-service.md) 참고.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
