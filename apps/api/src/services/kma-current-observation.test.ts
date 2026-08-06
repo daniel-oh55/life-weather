@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { currentWeather } from '@life-weather/contracts';
 
@@ -123,6 +123,32 @@ function deepFreeze<T>(value: T): T {
 }
 
 /**
+ * Load a fresh, isolated instance of the service module with `normalizeKmaCurrentObservation`
+ * replaced by `normalizeMock`, while every other export of the provider barrel stays the real one.
+ *
+ * The service imports the normalizer statically from `'../providers/kma/index.js'`, so mocking that
+ * same specifier — via a non-hoisted `vi.doMock` plus a fresh `vi.resetModules()` and dynamic
+ * `import()` — intercepts exactly what the service sees, without adding any test-only seam to
+ * production code. Callers must clean up (see the `afterEach` in the isolated-boundary `describe`
+ * below) so the mock never leaks into the real-normalizer tests elsewhere in this file, including
+ * under shuffle.
+ */
+async function withIsolatedNormalizerMock(
+  normalizeMock: (
+    ...args: Parameters<typeof import('../providers/kma/index.js').normalizeKmaCurrentObservation>
+  ) => ReturnType<typeof import('../providers/kma/index.js').normalizeKmaCurrentObservation>,
+): Promise<typeof import('./kma-current-observation.js')> {
+  vi.resetModules();
+  vi.doMock('../providers/kma/index.js', async () => {
+    const actual = await vi.importActual<typeof import('../providers/kma/index.js')>(
+      '../providers/kma/index.js',
+    );
+    return { ...actual, normalizeKmaCurrentObservation: normalizeMock };
+  });
+  return import('./kma-current-observation.js');
+}
+
+/**
  * Fresh, isolated fixtures for one success run. Each test builds its own context so the fake
  * provider's `calls` log is never shared across tests — order-independent under shuffle.
  */
@@ -237,27 +263,53 @@ describe('createKmaCurrentObservationService — empty observation (slot: null)'
 });
 
 describe('createKmaCurrentObservationService — provider errors surface as PROVIDER stage', () => {
-  // Every variant of the current-observation provider error union, each with a representative payload.
-  const providerErrors: readonly KmaCurrentObservationProviderError[] = [
-    { kind: 'INVALID_REQUEST', issues: [{ field: 'baseDate', reason: 'INVALID' }] },
-    { kind: 'TIMEOUT' },
-    { kind: 'ABORTED' },
-    { kind: 'NETWORK_ERROR' },
-    { kind: 'HTTP_ERROR', status: 503 },
-    { kind: 'RESPONSE_TOO_LARGE' },
-    { kind: 'EMPTY_RESPONSE' },
-    { kind: 'NON_JSON_RESPONSE' },
-    { kind: 'INVALID_JSON' },
-    { kind: 'GATEWAY_ERROR', reasonCode: '30' },
-    { kind: 'GATEWAY_ERROR', reasonCode: null },
-    { kind: 'KMA_UPSTREAM_ERROR', resultCode: '10' },
-    {
+  /**
+   * A mapped type keyed by every `kind` in the real union. `providerErrorByKind` below must supply
+   * exactly one representative per key or the `satisfies` check fails to compile — so adding a new
+   * `kind` to {@link KmaCurrentObservationProviderError} without adding a fixture here is a
+   * type-check failure, not a silently-skipped test case.
+   */
+  type KmaCurrentObservationProviderErrorByKind = {
+    readonly [Kind in KmaCurrentObservationProviderError['kind']]: Extract<
+      KmaCurrentObservationProviderError,
+      { readonly kind: Kind }
+    >;
+  };
+
+  // The exhaustive-by-kind source of truth: one representative payload per union variant.
+  const providerErrorByKind = {
+    INVALID_REQUEST: { kind: 'INVALID_REQUEST', issues: [{ field: 'baseDate', reason: 'INVALID' }] },
+    TIMEOUT: { kind: 'TIMEOUT' },
+    ABORTED: { kind: 'ABORTED' },
+    NETWORK_ERROR: { kind: 'NETWORK_ERROR' },
+    HTTP_ERROR: { kind: 'HTTP_ERROR', status: 503 },
+    RESPONSE_TOO_LARGE: { kind: 'RESPONSE_TOO_LARGE' },
+    EMPTY_RESPONSE: { kind: 'EMPTY_RESPONSE' },
+    NON_JSON_RESPONSE: { kind: 'NON_JSON_RESPONSE' },
+    INVALID_JSON: { kind: 'INVALID_JSON' },
+    GATEWAY_ERROR: { kind: 'GATEWAY_ERROR', reasonCode: '30' },
+    KMA_UPSTREAM_ERROR: { kind: 'KMA_UPSTREAM_ERROR', resultCode: '10' },
+    KMA_INVALID_RESPONSE: {
       kind: 'KMA_INVALID_RESPONSE',
       issues: [{ path: ['response', 'body', 'items', 'item', 0, 'nx'], message: 'expected number' }],
     },
-    { kind: 'DUPLICATE_CATEGORY', category: 'T1H', slotKey: '20260717|0600|60|127' },
-    { kind: 'RESPONSE_MISMATCH', field: 'baseDate' },
-    { kind: 'INCOMPLETE_PAGE', totalCount: 8, receivedCount: 4 },
+    DUPLICATE_CATEGORY: { kind: 'DUPLICATE_CATEGORY', category: 'T1H', slotKey: '20260717|0600|60|127' },
+    RESPONSE_MISMATCH: { kind: 'RESPONSE_MISMATCH', field: 'baseDate' },
+    INCOMPLETE_PAGE: { kind: 'INCOMPLETE_PAGE', totalCount: 8, receivedCount: 4 },
+  } satisfies KmaCurrentObservationProviderErrorByKind;
+
+  // `GATEWAY_ERROR` has two meaningfully different shapes (a real reason code vs. `null`); the
+  // exhaustive-by-kind record above holds one representative per *kind*, so the `null` variant is a
+  // separate, additional fixture rather than a second `GATEWAY_ERROR` entry in that record.
+  const gatewayErrorNullReasonCode: KmaCurrentObservationProviderError = {
+    kind: 'GATEWAY_ERROR',
+    reasonCode: null,
+  };
+
+  // Every variant of the current-observation provider error union, each with a representative payload.
+  const providerErrors: readonly KmaCurrentObservationProviderError[] = [
+    ...Object.values(providerErrorByKind),
+    gatewayErrorNullReasonCode,
   ];
 
   it.each(providerErrors)('returns %o verbatim under stage PROVIDER', async (error) => {
@@ -293,41 +345,16 @@ describe('createKmaCurrentObservationService — provider errors surface as PROV
     expect(JSON.stringify(result)).not.toContain('ServiceKey');
   });
 
-  it('covers every provider error kind (table stays in sync with the union)', () => {
+  it('covers every provider error kind (runtime keys match the compile-time exhaustive record)', () => {
+    // Derived from `providerErrorByKind` (the compile-time source of truth) rather than a second,
+    // independently-typed list of kind literals — so there is only one place a kind can go missing.
     const kinds = new Set(providerErrors.map((error) => error.kind));
-    expect([...kinds].sort()).toEqual(
-      [
-        'ABORTED',
-        'DUPLICATE_CATEGORY',
-        'EMPTY_RESPONSE',
-        'GATEWAY_ERROR',
-        'HTTP_ERROR',
-        'INCOMPLETE_PAGE',
-        'INVALID_JSON',
-        'INVALID_REQUEST',
-        'KMA_INVALID_RESPONSE',
-        'KMA_UPSTREAM_ERROR',
-        'NETWORK_ERROR',
-        'NON_JSON_RESPONSE',
-        'RESPONSE_MISMATCH',
-        'RESPONSE_TOO_LARGE',
-        'TIMEOUT',
-      ].sort(),
-    );
+    expect(kinds).toEqual(new Set(Object.keys(providerErrorByKind)));
   });
 
-  it('does not run the normalizer on a provider failure (no normalization issues appear)', async () => {
-    const provider = fakeProvider({ ok: false, error: { kind: 'TIMEOUT' } });
-    const service = createKmaCurrentObservationService(provider);
-    const result = await service.fetchCurrentWeather(REQUEST);
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
-    expect(result.stage).toBe('PROVIDER');
-    // A provider failure never carries a NORMALIZATION issue list.
-    expect(result).not.toHaveProperty('issues');
-  });
+  // A direct, isolated observation of zero normalizer invocations on a provider failure — not just
+  // the absence of an `issues` property — lives in the "isolated normalizer boundary" describe below
+  // (`normalizeMock` called exactly zero times, verified against a mock that would throw if invoked).
 });
 
 describe('createKmaCurrentObservationService — normalization failure surfaces as NORMALIZATION stage', () => {
@@ -416,7 +443,7 @@ describe('createKmaCurrentObservationService — normalization failure surfaces 
     );
   });
 
-  it('preserves the normalizer issue order and count verbatim (all-or-nothing, exact reference)', async () => {
+  it('collects every normalizer issue together for a combined baseDate + T1H failure (all-or-nothing)', async () => {
     // Both observedAt and temperatureCelsius fail together: malformed baseDate + absent T1H.
     const observation = makeSuccess(makeSlot({ baseDate: 'BADDATE', fields: { PTY: '0' } }), {
       baseDate: 'BADDATE',
@@ -447,6 +474,142 @@ describe('createKmaCurrentObservationService — normalization failure surfaces 
     }
     expect(result.stage).not.toBe('PROVIDER');
     expect(result).not.toHaveProperty('error');
+  });
+});
+
+/**
+ * These three tests replace the injected `normalizeKmaCurrentObservation` with a `vi.fn()` mock via
+ * {@link withIsolatedNormalizerMock}, so they can observe the service's direct interaction with the
+ * normalizer — exact call count, exact argument reference, and exact throw propagation — instead of
+ * only inferring it from the real normalizer's output. The service under test in every case here is
+ * the isolated, dynamically-imported one returned by the helper, never the statically-imported
+ * `createKmaCurrentObservationService` used by the rest of this file, so the real-normalizer tests
+ * above and below are never affected by the mock, in any shuffle order.
+ */
+describe('createKmaCurrentObservationService — isolated normalizer boundary', () => {
+  afterEach(() => {
+    vi.doUnmock('../providers/kma/index.js');
+    vi.resetModules();
+    vi.restoreAllMocks();
+  });
+
+  it('passes the normalizer issues array and its objects through by exact reference and order', async () => {
+    const firstIssue = Object.freeze({
+      field: 'temperatureCelsius',
+      reason: 'ABSENT',
+    } as const);
+    const secondIssue = Object.freeze({
+      field: 'observedAt',
+      reason: 'INVALID',
+    } as const);
+    // Deliberately out of the normalizer's usual emission order, so a service that re-sorts issues
+    // (e.g. `.toSorted(...)`) or rebuilds the array (e.g. `[...normalized.issues]`) would fail the
+    // `toBe` reference check below even though a deep-equality check would still pass.
+    const issues = Object.freeze([secondIssue, firstIssue]);
+
+    const normalizeMock = vi.fn((_observation: KmaCurrentObservationProviderSuccess) => ({
+      ok: false as const,
+      issues,
+    }));
+    const { createKmaCurrentObservationService: createIsolatedService } =
+      await withIsolatedNormalizerMock(normalizeMock);
+
+    const success = makeSuccess(makeSlot());
+    const provider = fakeProvider({ ok: true, observation: success });
+    const service = createIsolatedService(provider);
+
+    const result = await service.fetchCurrentWeather(REQUEST);
+
+    expect(normalizeMock).toHaveBeenCalledTimes(1);
+    expect(normalizeMock.mock.calls[0]?.[0]).toBe(success);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.stage).toBe('NORMALIZATION');
+    if (result.stage !== 'NORMALIZATION') {
+      return;
+    }
+    expect(result.issues).toBe(issues);
+    expect(result.issues).toHaveLength(2);
+    expect(result.issues[0]).toBe(secondIssue);
+    expect(result.issues[1]).toBe(firstIssue);
+    expect(Object.keys(result).sort()).toEqual(['issues', 'ok', 'stage']);
+    expect(result).not.toHaveProperty('current');
+    expect(result).not.toHaveProperty('error');
+    expect(result).not.toHaveProperty('observation');
+    // The frozen fixtures were never mutated by the service.
+    expect(Object.isFrozen(issues)).toBe(true);
+    expect(Object.isFrozen(firstIssue)).toBe(true);
+    expect(Object.isFrozen(secondIssue)).toBe(true);
+    expect(firstIssue).toEqual({ field: 'temperatureCelsius', reason: 'ABSENT' });
+    expect(secondIssue).toEqual({ field: 'observedAt', reason: 'INVALID' });
+  });
+
+  it('never invokes the normalizer when the provider itself fails', async () => {
+    const vacuousPassGuardSentinel = new Error(
+      'CURRENT_NORMALIZER_MUST_NOT_RUN_ON_PROVIDER_FAILURE',
+    );
+    // If the service ever called the normalizer here, this throw would surface as a rejected
+    // `fetchCurrentWeather` promise, failing the test loudly rather than passing vacuously.
+    const normalizeMock = vi.fn((_observation: KmaCurrentObservationProviderSuccess) => {
+      throw vacuousPassGuardSentinel;
+    });
+    const { createKmaCurrentObservationService: createIsolatedService } =
+      await withIsolatedNormalizerMock(normalizeMock);
+
+    const error: KmaCurrentObservationProviderError = { kind: 'TIMEOUT' };
+    const provider = fakeProvider({ ok: false, error });
+    const service = createIsolatedService(provider);
+    const options = { signal: new AbortController().signal };
+
+    const result = await service.fetchCurrentWeather(REQUEST, options);
+
+    expect(provider.calls).toHaveLength(1);
+    expect(provider.calls[0].request).toBe(REQUEST);
+    expect(provider.calls[0].options).toBe(options);
+    expect(normalizeMock).toHaveBeenCalledTimes(0);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.stage).toBe('PROVIDER');
+    if (result.stage !== 'PROVIDER') {
+      return;
+    }
+    expect(result.error).toBe(error);
+    expect(Object.keys(result).sort()).toEqual(['error', 'ok', 'stage']);
+  });
+
+  it('propagates a normalizer synchronous throw as a same-reference Promise rejection', async () => {
+    const sentinel = new Error('CURRENT_NORMALIZER_THROW_SENTINEL_FOR_IDENTITY');
+    const normalizeMock = vi.fn((_observation: KmaCurrentObservationProviderSuccess) => {
+      throw sentinel;
+    });
+    const { createKmaCurrentObservationService: createIsolatedService } =
+      await withIsolatedNormalizerMock(normalizeMock);
+
+    const success = makeSuccess(makeSlot());
+    const provider = fakeProvider({ ok: true, observation: success });
+    const service = createIsolatedService(provider);
+
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const returned = service.fetchCurrentWeather(REQUEST);
+    expect(returned).toBeInstanceOf(Promise);
+    await expect(returned).rejects.toBe(sentinel);
+
+    expect(provider.calls).toHaveLength(1);
+    expect(normalizeMock).toHaveBeenCalledTimes(1);
+    expect(normalizeMock.mock.calls[0]?.[0]).toBe(success);
+    // The service does not catch, wrap, re-message, or log the normalizer's throw.
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    expect(consoleWarnSpy).not.toHaveBeenCalled();
+    expect(consoleLogSpy).not.toHaveBeenCalled();
   });
 });
 
