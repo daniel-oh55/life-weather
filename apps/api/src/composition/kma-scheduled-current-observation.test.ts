@@ -126,6 +126,21 @@ function neverCalled(label: string) {
   });
 }
 
+/**
+ * Run `action` and return whatever it threw, by exact reference — `undefined` if it didn't throw.
+ * `toThrow(sentinel)` only compares `name`/`message`, not object identity; this captures the actual
+ * thrown value so callers can assert exact-reference propagation with `toBe`.
+ */
+function captureThrown(action: () => unknown): unknown {
+  try {
+    action();
+  } catch (error) {
+    return error;
+  }
+
+  return undefined;
+}
+
 describe('createKmaScheduledCurrentObservationCompositionFromEnv — isolated wiring', () => {
   afterEach(() => {
     vi.doUnmock('@life-weather/weather-core');
@@ -488,7 +503,8 @@ describe('createKmaScheduledCurrentObservationCompositionFromEnv — isolated wi
           systemClock: { createKmaSystemClock: systemClockFactory },
         });
 
-      expect(() => composeIsolated(makeEnv(FAKE_KMA_SERVICE_KEY))).toThrow(sentinel);
+      const thrown = captureThrown(() => composeIsolated(makeEnv(FAKE_KMA_SERVICE_KEY)));
+      expect(thrown).toBe(sentinel);
       expect(systemClockFactory).not.toHaveBeenCalled();
       expect(requestFactoryFactory).not.toHaveBeenCalled();
       expect(serviceFactory).not.toHaveBeenCalled();
@@ -523,7 +539,8 @@ describe('createKmaScheduledCurrentObservationCompositionFromEnv — isolated wi
           systemClock: { createKmaSystemClock: systemClockFactory },
         });
 
-      expect(() => composeIsolated(makeEnv(FAKE_KMA_SERVICE_KEY))).toThrow(sentinel);
+      const thrown = captureThrown(() => composeIsolated(makeEnv(FAKE_KMA_SERVICE_KEY)));
+      expect(thrown).toBe(sentinel);
       expect(providerFactory).toHaveBeenCalledTimes(1);
       expect(requestFactoryFactory).not.toHaveBeenCalled();
       expect(serviceFactory).not.toHaveBeenCalled();
@@ -559,9 +576,10 @@ describe('createKmaScheduledCurrentObservationCompositionFromEnv — isolated wi
           },
         });
 
-      expect(() =>
+      const thrown = captureThrown(() =>
         composeIsolated(makeEnv(FAKE_KMA_SERVICE_KEY), { clock: injectedClock }),
-      ).toThrow(sentinel);
+      );
+      expect(thrown).toBe(sentinel);
       expect(providerFactory).toHaveBeenCalledTimes(1);
       expect(requestFactoryFactory).toHaveBeenCalledTimes(1);
       expect(serviceFactory).not.toHaveBeenCalled();
@@ -598,9 +616,10 @@ describe('createKmaScheduledCurrentObservationCompositionFromEnv — isolated wi
           },
         });
 
-      expect(() =>
+      const thrown = captureThrown(() =>
         composeIsolated(makeEnv(FAKE_KMA_SERVICE_KEY), { clock: injectedClock }),
-      ).toThrow(sentinel);
+      );
+      expect(thrown).toBe(sentinel);
       expect(providerFactory).toHaveBeenCalledTimes(1);
       expect(requestFactoryFactory).toHaveBeenCalledTimes(1);
       expect(serviceFactory).toHaveBeenCalledTimes(1);
@@ -638,9 +657,10 @@ describe('createKmaScheduledCurrentObservationCompositionFromEnv — isolated wi
           },
         });
 
-      expect(() =>
+      const thrown = captureThrown(() =>
         composeIsolated(makeEnv(FAKE_KMA_SERVICE_KEY), { clock: injectedClock }),
-      ).toThrow(sentinel);
+      );
+      expect(thrown).toBe(sentinel);
       expect(providerFactory).toHaveBeenCalledTimes(1);
       expect(requestFactoryFactory).toHaveBeenCalledTimes(1);
       expect(serviceFactory).toHaveBeenCalledTimes(1);
