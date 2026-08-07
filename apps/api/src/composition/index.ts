@@ -2,7 +2,7 @@
  * Public surface of `apps/api`'s **server-side production composition** boundary.
  *
  * This layer is the explicit place that assembles the KMA components built by the earlier PRs into
- * live pipelines. **Five** callable production roots are composed here:
+ * live pipelines. **Six** callable production roots are composed here:
  *
  * - The **grid-based single-request** facade (PR #11): the PR #5 provider-from-env → the PR #7 hourly
  *   service, a system clock adapter → the PR #9 request factory, and the PR #10 scheduled facade
@@ -51,6 +51,20 @@
  *   serialize directly. The four existing roots are **unchanged**; this is a fifth parallel root, and
  *   PR #31 now consumes it at startup (see below).
  *
+ * - The **scheduled current-observation** composition (PR #69, new): the PR #63
+ *   `createKmaCurrentObservationProviderFromEnv` → the PR #67 `createKmaCurrentObservationService`, a
+ *   system clock adapter (shared structurally with the hourly clock port) + the PR #64 schedule-only
+ *   `selectLatestKmaCurrentObservationBaseTime` selector, injected **explicitly** (not left to the
+ *   factory's implicit default) → the PR #66 `createKmaCurrentObservationRequestFactory`, and the PR #68
+ *   `createKmaScheduledCurrentObservationFacade` over the two — yielding one live
+ *   `KmaScheduledCurrentObservationFacade` keyed by `nx`/`ny`. This schedule-only selection does **not**
+ *   guarantee the upstream API has actually published the picked issuance's data — there is still no
+ *   current-observation availability-delay selector, so no availability/readiness claim is made. The
+ *   five hourly roots above are **unchanged**; this is a sixth parallel root added beside them, and it
+ *   is **not** connected to any location→grid adapter, `WeatherOverview.current`, current
+ *   `SourceMetadata`, or the `POST /weather` route. See
+ *   `docs/kma-current-observation-production-composition.md`.
+ *
  * PR #31 adds the **production `/weather` route composition**
  * (`createProductionWeatherRouteDependencies`): the adapter that turns the server-only `KMA_SERVICE_KEY`
  * into the PR #30 route's `WeatherRouteDependencies`. It builds the location hourly-overview root above,
@@ -70,18 +84,19 @@
  * - **Construction is network-free.** Building any graph only reads provider configuration and wires
  *   collaborators; the first converter run, the first clock read, and the first `fetch` happen only
  *   when the returned facade's / service's method is called.
- * - **Routing.** The four scheduled/fallback roots remain **unrouted**. The location hourly-overview
- *   root is now consumed by the PR #31 `createProductionWeatherRouteDependencies`, which
- *   `apps/api/src/index.ts` wires into the live `POST /weather` route; startup still issues no external
- *   `fetch` (the graph is lazy).
+ * - **Routing.** The four hourly scheduled/fallback roots and the current-observation root remain
+ *   **unrouted**. The location hourly-overview root is now consumed by the PR #31
+ *   `createProductionWeatherRouteDependencies`, which `apps/api/src/index.ts` wires into the live
+ *   `POST /weather` route; startup still issues no external `fetch` (the graph is lazy).
  *
  * It consumes only the `../providers/kma`, `../services`, `../presenters`, `../routes`, and
- * `@life-weather/weather-core` (the PR #12 converter, the PR #14 availability-delay selector, and the
- * PR #16 candidate selector) public surfaces. The KMA composition roots are exported only from here; the
- * PR #31 route composition is exported here too and consumed by `apps/api/src/index.ts`. See
- * `docs/kma-production-composition.md`, `docs/kma-location-scheduled-hourly.md`,
- * `docs/kma-hourly-fallback-composition.md`, `docs/kma-location-hourly-fallback.md`,
- * `docs/kma-location-hourly-overview-composition.md`, and `docs/weather-production-wiring.md`.
+ * `@life-weather/weather-core` (the PR #12 converter, the PR #14 availability-delay selector, the
+ * PR #16 candidate selector, and the PR #64 current-observation schedule-only selector) public
+ * surfaces. The KMA composition roots are exported only from here; the PR #31 route composition is
+ * exported here too and consumed by `apps/api/src/index.ts`. See `docs/kma-production-composition.md`,
+ * `docs/kma-location-scheduled-hourly.md`, `docs/kma-hourly-fallback-composition.md`,
+ * `docs/kma-location-hourly-fallback.md`, `docs/kma-location-hourly-overview-composition.md`,
+ * `docs/kma-current-observation-production-composition.md`, and `docs/weather-production-wiring.md`.
  */
 
 export { createKmaSystemClock } from './system-clock.js';
@@ -115,6 +130,12 @@ export {
   type CreateKmaLocationHourlyOverviewCompositionResult,
   type KmaLocationHourlyOverviewCompositionDependencies,
 } from './kma-location-hourly-overview.js';
+
+export {
+  createKmaScheduledCurrentObservationCompositionFromEnv,
+  type CreateKmaScheduledCurrentObservationCompositionResult,
+  type KmaScheduledCurrentObservationCompositionDependencies,
+} from './kma-scheduled-current-observation.js';
 
 export {
   createProductionWeatherRouteDependencies,

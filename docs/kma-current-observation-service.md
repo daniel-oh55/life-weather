@@ -249,8 +249,11 @@ Provider의 방어적 success는 `slot: null`을 포함할 수 있습니다(`tot
 - 두 factory→service를 잇는 scheduled facade(hourly의 PR #10과 같은 방식)는 **PR #68**에서
   완료됐습니다(`createKmaScheduledCurrentObservationFacade`,
   [kma-scheduled-current-observation-facade.md](./kma-scheduled-current-observation-facade.md)) —
-  이 service의 **첫 application caller**입니다. 이 service 자체의 책임과 공개 계약은 변경되지
-  않았고, production composition/route에는 여전히 연결되지 않았습니다.
+  이 service의 **첫 application caller**입니다. 이어서 **PR #69**가 이 facade를 소비하는 production
+  composition root(`createKmaScheduledCurrentObservationCompositionFromEnv`,
+  [kma-current-observation-production-composition.md](./kma-current-observation-production-composition.md))를
+  추가해, 이 service를 PR #63 Provider-from-env가 만든 실제 provider와 함께 조립합니다. 이 service
+  자체의 책임과 공개 계약은 변경되지 않았고, route에는 여전히 연결되지 않았습니다.
 
 ## 후속 범위
 
@@ -260,7 +263,10 @@ Provider의 방어적 success는 `slot: null`을 포함할 수 있습니다(`tot
 2. ~~request factory + 이 service를 잇는 scheduled facade (hourly의 PR #10과 같은 방식)~~ —
    **PR #68에서 완료** (`createKmaScheduledCurrentObservationFacade`,
    [kma-scheduled-current-observation-facade.md](./kma-scheduled-current-observation-facade.md))
-3. current-observation 전용 system clock/provider composition
+3. ~~current-observation 전용 system clock/provider composition~~ — **PR #69에서 완료**
+   (`createKmaScheduledCurrentObservationCompositionFromEnv`,
+   [kma-current-observation-production-composition.md](./kma-current-observation-production-composition.md)) —
+   route에는 여전히 연결되지 않음
 4. `CurrentWeather`를 `WeatherOverview.current` section에 조립
 5. `SourceMetadata`(`sourceId`/`issuedAt`/`retrievalMode`) 조립
 6. `POST /weather`로의 current 데이터 연결
@@ -280,4 +286,10 @@ v1 / PR #67 / 2026-08
 - slot: null 방어적 성공을 재분류 없이 그대로 normalizer에 전달(정상 all-or-nothing 경로)
 - hourly application service(PR #7)와 별도·병렬 구현, 어느 쪽도 리팩터하지 않음
 - request factory 호출·grid 변환·composition·route·POST /weather 연결은 이 PR 범위 밖
+
+v2 / PR #69 / 2026-08 (production composition이 이 service를 조립 — service 계약 불변)
+- createKmaScheduledCurrentObservationCompositionFromEnv가 PR #63 provider-from-env가 만든 실제
+  provider를 이 service에 주입해 조립
+- 이 service의 공개 API·오류 정책·side-effect-free 생성은 v1과 동일하게 불변
+- route(POST /weather) 연결은 여전히 없음
 ```

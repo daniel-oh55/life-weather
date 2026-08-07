@@ -188,8 +188,10 @@ facade는 새로운 result union도, 새로운 error type도 만들지 않으며
   존재하지 않습니다).
 - **retry / fallback / cache / stale data** — 없음. 여러 발표시각을 시도하지 않습니다.
 - **`WeatherOverview.current` / `SourceMetadata` 조립** — 없음.
-- **production composition root** — 없음. facade는 두 collaborator를 연결만 하며 Provider·env·system
-  clock을 직접 만들지 않습니다.
+- **production composition root** — 이 facade 자체는 여전히 두 collaborator를 연결만 하며 Provider·
+  env·system clock을 직접 만들지 않습니다. PR #69가 이 facade를 소비하는 별도의 composition root를
+  추가했습니다(위 "PR #69" 절 참고) — 그 composition의 provider/clock/selector 조립 책임은 facade
+  밖에 있습니다.
 - **기존 hourly facade/route** — 이 PR은
   [kma-scheduled-hourly-forecast.ts](../apps/api/src/services/kma-scheduled-hourly-forecast.ts)와 그
   테스트, `kma-forecast-request.ts`, `kma-hourly-forecast.ts`를 수정하지 않습니다. Current-observation
@@ -216,9 +218,23 @@ facade는 새로운 result union도, 새로운 error type도 만들지 않으며
   request/result, controlled Promise, frozen input/options)만 사용합니다. fake timer·environment·
   system clock을 사용하지 않습니다.
 
+## PR #69: 첫 production composition consumer
+
+**PR #69**가 이 facade를 소비하는 첫 production composition root
+(`createKmaScheduledCurrentObservationCompositionFromEnv`,
+[kma-current-observation-production-composition.md](./kma-current-observation-production-composition.md))를
+추가했습니다 — 이 composition은 Provider-from-env, injected/default system clock, 명시적 PR #64
+schedule-only selector, PR #66 request factory, PR #67 current-observation service를 조립한 뒤
+**이 facade의 exact `createKmaScheduledCurrentObservationFacade(requestFactory,
+currentObservationService)` 호출로** 마무리합니다. 이 PR은 facade 자체의 공개 계약(입력/옵션/결과
+pass-through, Promise identity, 호출 순서)을 **전혀 변경하지 않습니다** — composition은 facade를
+그대로 소비할 뿐입니다. route(`/weather`)·location(위경도 → grid) adapter는 이 composition에서도
+여전히 연결되지 않았으므로, production current 데이터는 PR #69 이후에도 계속 missing입니다.
+
 ## 후속 범위
 
-1. current-observation 전용 system clock/provider composition
+1. ~~current-observation 전용 system clock/provider composition~~ — PR #69에서 구현(기존 system
+   clock adapter를 재사용).
 2. 위경도 → KMA grid(nx/ny) 변환을 이 facade 앞단에 잇는 location adapter
 3. `WeatherOverview.current` section 조립
 4. current `SourceMetadata`(`sourceId`/`issuedAt`/`retrievalMode`) 조립
