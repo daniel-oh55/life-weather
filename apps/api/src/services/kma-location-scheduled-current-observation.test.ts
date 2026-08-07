@@ -272,6 +272,37 @@ describe('createKmaLocationScheduledCurrentObservationFacade — supported locat
     }
   });
 
+  it('does not forward a caller extra enumerable own property into the converter input (rejects input spreading)', async () => {
+    // A caller input with a distinct, enumerable extra own property beyond latitude/longitude —
+    // proves the converter input is freshly built field-by-field, not `{ ...input }`.
+    const input = Object.freeze({
+      latitude: SEOUL_LATITUDE,
+      longitude: SEOUL_LONGITUDE,
+      boundarySentinel: 'must-not-cross-converter-boundary',
+    });
+    const { convert, calls: converterCalls } = fakeConverter(SEOUL_GRID);
+    const { facade: scheduled } = fakeScheduledFacade(
+      Promise.resolve({ ok: true, current: makeCurrent() }),
+    );
+    const facade = createKmaLocationScheduledCurrentObservationFacade(convert, scheduled);
+
+    await facade.fetchScheduledCurrentWeatherForLocation(input);
+
+    expect(convert).toHaveBeenCalledTimes(1);
+    expect(converterCalls).toHaveLength(1);
+    const converterInput = converterCalls[0].input;
+
+    // A fresh object, not the caller's input reference.
+    expect(converterInput).not.toBe(input);
+    // Own keys are exactly latitude/longitude — the extra sentinel never crosses the boundary.
+    expect(Object.keys(converterInput)).toEqual(['latitude', 'longitude']);
+    expect(converterInput).toEqual({
+      latitude: input.latitude,
+      longitude: input.longitude,
+    });
+    expect(converterInput).not.toHaveProperty('boundarySentinel');
+  });
+
   it('forwards exactly undefined (never a synthesized {}) when options are omitted', async () => {
     const { convert } = fakeConverter(SEOUL_GRID);
     const { facade: scheduled, fetchScheduledCurrentWeather, calls } = fakeScheduledFacade(
