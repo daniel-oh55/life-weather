@@ -37,13 +37,23 @@
   `fetchScheduledCurrentWeather`)를 추가했습니다 — hourly의 PR #10 scheduled facade와 같은
   원칙(input/request/options/AbortSignal exact reference, 반환 Promise identity 유지, factory→
   service 순서, factory throw 시 service 0회, 새 result union·stage 없음)을 따르는 별도·병렬
-  구현입니다. 이 facade도 여전히 production composition·`POST /weather`·`routes`에 연결되지
-  않았으므로, production 응답의 `current`는 이 PR 이후에도 계속 missing입니다. daily sections은
-  여전히 미구현입니다. 자세한 내용은
+  구현입니다. 이어서 **PR #69**가 이 facade를 소비하는 여섯 번째 callable production composition
+  root(`createKmaScheduledCurrentObservationCompositionFromEnv`,
+  `apps/api/src/composition/kma-scheduled-current-observation.ts`)를 추가했습니다 — PR #63
+  provider-from-env, (injected 또는 기존 `createKmaSystemClock()` 재사용) system clock, PR #64
+  schedule-only selector(explicit 주입, availability-delay selector는 아직 없음), PR #66 request
+  factory, PR #67 service, PR #68 facade를 정해진 순서로 조립하는 **callable function**입니다(모듈
+  import 시 조립 없음). 성공은 `{ ok, facade }`만 노출하고, config 실패는 Provider factory의
+  `KmaProviderConfigError`를 동일 reference로 반환하며, construction 시 clock read·selector 실행·
+  network fetch가 0회입니다. 이 composition은 여전히 `apps/api/src/index.ts`·`POST /weather`·
+  location(위경도 → grid) adapter에 연결되지 않았으므로, production 응답의 `current`는 이 PR
+  이후에도 계속 missing입니다. daily sections은 여전히 미구현입니다. 자세한 내용은
   [kma-current-observation-provider.md](./kma-current-observation-provider.md),
   [kma-current-observation-request-factory.md](./kma-current-observation-request-factory.md),
   [kma-current-observation-service.md](./kma-current-observation-service.md),
-  [kma-scheduled-current-observation-facade.md](./kma-scheduled-current-observation-facade.md) 참고.
+  [kma-scheduled-current-observation-facade.md](./kma-scheduled-current-observation-facade.md),
+  [kma-current-observation-production-composition.md](./kma-current-observation-production-composition.md)
+  참고.
 - AirKorea air quality
 - alerts
 - response cache
@@ -360,5 +370,20 @@
   production composition, location→grid adapter, `POST /weather` route에 연결되지 않았으므로,
   production current 데이터는 이 PR 이후에도 여전히 missing입니다. 자세한 내용은
   [kma-scheduled-current-observation-facade.md](./kma-scheduled-current-observation-facade.md) 참고.
+- **PR #69**는 PR #68 facade를 실제 server 환경에서 조립하는 **여섯 번째 callable production
+  composition root**(`createKmaScheduledCurrentObservationCompositionFromEnv`,
+  `apps/api/src/composition/kma-scheduled-current-observation.ts`)를 추가했습니다 — PR #63
+  provider-from-env, PR #67 service, (injected 또는 기존 hourly composition과 동일한
+  `createKmaSystemClock()` 재사용) system clock, PR #64 schedule-only selector(explicit 주입), PR
+  #66 request factory, PR #68 facade를 정해진 순서로 조립합니다. Provider 환경설정 실패는 기존
+  `KmaProviderConfigError`를 동일 reference로 반환하고, construction 시 clock read·selector 실행·
+  network fetch는 0회이며, 성공 결과는 `{ ok, facade }`만 노출합니다. 이 selector는 여전히
+  schedule-only이므로 upstream 자료가 실제로 준비됐음을 보장하지 않고, current 전용
+  availability-delay selector는 이 PR에서도 구현되지 않았습니다. location(위경도 → grid)
+  adapter·`WeatherOverview.current`·current `SourceMetadata`·`POST /weather` route 연결은 여전히
+  이 PR 범위가 아니므로, production current 데이터는 이 PR 이후에도 여전히 missing입니다. 자세한
+  내용은
+  [kma-current-observation-production-composition.md](./kma-current-observation-production-composition.md)
+  참고.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.

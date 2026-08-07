@@ -6,6 +6,13 @@ component들을 실제 서버 환경에서 하나의 live `KmaScheduledHourlyFor
 **명시적으로 호출 가능한 composition function**을 제공합니다. import만으로 자동 조립되는 singleton은
 만들지 않습니다.
 
+**이 문서는 주로 forecast(단기예보/초단기예보) hourly composition을 설명합니다.** current-observation
+(초단기실황) counterpart는 PR #69에서 추가한 별도의, 병렬 composition
+(`createKmaScheduledCurrentObservationCompositionFromEnv`)이며, 그 공개 계약·dependency graph·
+construction 경계는 이 문서가 아니라
+[kma-current-observation-production-composition.md](./kma-current-observation-production-composition.md)에
+기록됩니다. 이 문서의 기존 forecast policy나 계약은 PR #69로 변경되지 않았습니다.
+
 구현 위치:
 
 - [system-clock.ts](../apps/api/src/composition/system-clock.ts) — production system clock adapter
@@ -520,6 +527,33 @@ service를 하나의 live `KmaLocationHourlyOverviewService`로 조립합니다.
   아님).
 - **미연결**: 이 root도 `apps/api/src/index.ts`·startup·`/weather` route에 연결되지 않았습니다.
 
+## PR #69: 여섯 번째 callable root — current-observation composition (별도 문서)
+
+PR #69는 위 다섯 hourly root(grid/location × scheduled/fallback + location hourly overview)를
+**교체하지 않고 그 옆에 병렬로** 여섯 번째 callable production root를 추가합니다. 이 root는 hourly
+component가 아니라 PR #63/#64/#66/#67/#68 **current-observation** component를 조립합니다 — 자세한
+공개 계약, dependency graph, construction/오류 경계는 이 문서가 아니라
+[kma-current-observation-production-composition.md](./kma-current-observation-production-composition.md)에
+있습니다.
+
+- **구현 위치**: [kma-scheduled-current-observation.ts](../apps/api/src/composition/kma-scheduled-current-observation.ts)
+  및 [kma-scheduled-current-observation.test.ts](../apps/api/src/composition/kma-scheduled-current-observation.test.ts).
+  barrel [index.ts](../apps/api/src/composition/index.ts)에 export를 추가합니다.
+- **공개 API 요약**: `createKmaScheduledCurrentObservationCompositionFromEnv(env?, dependencies?)` →
+  `{ ok: true, facade: KmaScheduledCurrentObservationFacade } | { ok: false, error:
+  KmaProviderConfigError }`. `dependencies`는 `{ fetchImpl?, clock? }`로 이 문서의 hourly
+  dependencies와 **같은 모양**이지만 별도 타입(`KmaScheduledCurrentObservationCompositionDependencies`)입니다.
+- **selector 선택**: 이 root는 hourly composition의 PR #14 availability-delay selector에 대응하는
+  current 전용 selector가 아직 없으므로, PR #64 **schedule-only** selector
+  (`selectLatestKmaCurrentObservationBaseTime`)를 명시적으로 주입합니다 — availability/readiness를
+  보장하지 않습니다.
+- **clock 재사용**: 이 root는 새 current 전용 system clock을 만들지 않고 이 문서의 기존
+  `createKmaSystemClock()`을 그대로 재사용합니다(구조적으로 동일한 `nowEpochMilliseconds()` port).
+- **기존 root와의 parallel 관계**: 기존 다섯 hourly root와 그 공개 API·runtime은 **변경되지
+  않습니다.** callable production composition root 수는 **5 → 6**이 됩니다.
+- **미연결**: 이 root도 `apps/api/src/index.ts`·startup·`/weather` route·location(위경도 → grid)
+  adapter에 연결되지 않았습니다.
+
 ## 후속 범위
 
 primary/previous selection policy(PR #22)·hourly-only `WeatherOverview` assembler(PR #23)·이 셋을
@@ -652,4 +686,16 @@ v15 / PR #27 / 2026-07 (다섯 번째 callable root — location hourly overview
 - 성공 시 { ok, service }, config 실패는 KmaProviderConfigError exact reference pass-through, construction network-free
 - 기존 네 callable root와 그 공개 API·runtime 불변; callable production composition root 수 4 → 5
 - 결과는 PR #24 internal application result 그대로(future route는 overview-only mapping 필요); startup/route·cache는 여전히 미구현
+
+v16 / PR #69 / 2026-08 (여섯 번째 callable root — current-observation composition 추가; 이 문서는
+forecast hourly composition만 기록, current 상세는 별도 문서)
+- createKmaScheduledCurrentObservationCompositionFromEnv가 PR #63 provider-from-env + PR #67
+  current-observation service + injected/default system clock(재사용) + explicit PR #64
+  schedule-only selector + PR #66 request factory + PR #68 scheduled facade를 조립
+- 성공 { ok, facade }, config 실패는 KmaProviderConfigError exact reference pass-through,
+  construction 시 clock/fetch/selector 0회
+- 기존 다섯 hourly root와 그 공개 API·runtime 불변; callable production composition root 수 5 → 6
+- current 전용 availability-delay selector·location adapter·WeatherOverview.current·
+  SourceMetadata·POST /weather 연결은 여전히 미구현
+- 상세 계약은 kma-current-observation-production-composition.md 참고
 ```

@@ -1,14 +1,22 @@
 /**
- * The **production system clock adapter** for the KMA request factory.
+ * The **production system clock adapter** for the KMA request factories.
  *
- * The PR #9 request factory reads "now" only through an injected
+ * The PR #9 forecast request factory reads "now" only through an injected
  * {@link KmaForecastRequestClock}; it deliberately provides no default and never reads a wall clock
  * of its own. This adapter is the single production implementation of that injected port: its one
  * method returns the current instant as absolute epoch milliseconds via `Date.now()`.
  *
- * It is the **only** place in the composition layer that is allowed to read the system time. The
+ * The PR #66 current-observation request factory's injected clock port
+ * (`KmaCurrentObservationRequestClock`) is **structurally identical** — the same single
+ * `nowEpochMilliseconds(): number` method — so the PR #69 current-observation composition
+ * (`docs/kma-current-observation-production-composition.md`) reuses this exact adapter rather than
+ * defining a separate current-only clock implementation. This file's implementation and function
+ * signature are unchanged by that reuse; only this docblock records the structural compatibility.
+ *
+ * It is the **only** place in the composition layer that is allowed to read the system time. A
  * composition root itself never reads a clock — it merely selects this adapter (or a caller-injected
- * clock) and hands the reference to the request factory. See `docs/kma-production-composition.md`.
+ * clock) and hands the reference to the relevant request factory. See
+ * `docs/kma-production-composition.md`.
  *
  * Clock contract:
  *

@@ -105,8 +105,13 @@ export function createKmaCurrentObservationRequestFactory(
 - selector가 반환한 `{ baseDate, baseTime }`을 요청에 **그대로** 사용합니다.
 - selector가 throw하면 **동일한 error reference**가 catch·wrap·재메시지·logging 없이 그대로
   전파됩니다.
-- 현재 어떤 production composition도 non-default selector를 주입하지 않습니다 — 두 번째 인자를
-  생략한 모든 호출은 PR #64 schedule-only selector만 사용합니다.
+- **PR #69** production composition
+  (`createKmaScheduledCurrentObservationCompositionFromEnv`,
+  [kma-current-observation-production-composition.md](./kma-current-observation-production-composition.md))이
+  이제 이 seam에 selector를 **명시적으로** 주입합니다 — 다만 주입하는 값은 여전히 PR #64
+  schedule-only selector이므로, 두 번째 인자를 생략한 호출과 **결과적으로 동일한** selector를
+  사용합니다. 이 factory의 default 자체와 공개 계약은 변경되지 않았고, 여전히 어떤 production
+  composition도 **non-default**(availability-delay) selector를 주입하지 않습니다.
 
 ## injected clock contract
 
@@ -193,8 +198,11 @@ close over할 뿐입니다. 같은 instance를 여러 번 사용할 수 있고, 
   application consumer**로 PR #68 scheduled current-observation facade
   (`createKmaScheduledCurrentObservationFacade`,
   [kma-scheduled-current-observation-facade.md](./kma-scheduled-current-observation-facade.md))가
-  이 factory와 그 service를 순서대로 연결했습니다. 이 factory 자체의 책임과 공개 계약은 변경되지
-  않았고, production composition/route에는 여전히 연결되지 않았습니다.
+  이 factory와 그 service를 순서대로 연결했습니다. 이어서 **PR #69**가 이 facade를 소비하는
+  production composition root(`createKmaScheduledCurrentObservationCompositionFromEnv`)를
+  추가해, 이 factory에 (injected 또는 default) system clock과 explicit PR #64 selector를
+  주입합니다. 이 factory 자체의 책임과 공개 계약은 변경되지 않았고, route에는 여전히 연결되지
+  않았습니다.
 
 ## 실제 key·외부 네트워크 테스트 없음
 
@@ -211,9 +219,12 @@ close over할 뿐입니다. 같은 instance를 여러 번 사용할 수 있고, 
    service를 잇는 scheduled facade~~ — **PR #68에서 완료**
    (`createKmaScheduledCurrentObservationFacade`,
    [kma-scheduled-current-observation-facade.md](./kma-scheduled-current-observation-facade.md)).
-   Production composition은 여전히 후속입니다.
-3. current-observation 전용 system clock 주입(또는 forecast와 동일한 clock adapter 재사용) —
-   composition 선택 사항
+   ~~Production composition~~ — **PR #69에서 완료**
+   (`createKmaScheduledCurrentObservationCompositionFromEnv`,
+   [kma-current-observation-production-composition.md](./kma-current-observation-production-composition.md)).
+3. ~~current-observation 전용 system clock 주입(또는 forecast와 동일한 clock adapter 재사용)~~ —
+   **PR #69에서 완료**: forecast와 동일한 `createKmaSystemClock()` adapter를 재사용(default 시)
+   또는 injected clock을 그대로 wiring.
 4. `WeatherOverview`의 `current` section 조립, `SourceMetadata`
 5. `POST /weather`로의 current 데이터 연결
 6. current-observation availability-delay selector 구현 자체(존재하면 이 factory는 변경 없이
@@ -242,4 +253,11 @@ v2 / PR #66 focused remediation / 2026-08 (base-time selector seam 복원)
 - 현재 어떤 production composition도 non-default selector를 주입하지 않음 — availability-delay
   selector 자체는 여전히 존재하지 않고, 이 factory는 availability 정책을 계속 고정하지 않음
 - product 필드 없음은 v1과 동일하게 유지(초단기실황은 단일 operation)
+
+v3 / PR #69 / 2026-08 (production composition이 system clock + explicit selector 주입)
+- createKmaScheduledCurrentObservationCompositionFromEnv가 이 factory에 (injected 또는 default)
+  system clock과 PR #64 schedule-only selector를 명시적으로 주입
+- 주입되는 selector는 여전히 default와 동일한 값이므로 factory의 결과·계약은 변경되지 않음
+- 이 factory의 default·공개 API·오류 전파는 v2와 동일하게 불변
+- availability-delay selector는 여전히 미구현, route 연결도 여전히 없음
 ```
