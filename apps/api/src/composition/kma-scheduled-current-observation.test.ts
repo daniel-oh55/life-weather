@@ -38,21 +38,28 @@ function expectExactKeys(value: object, keys: readonly string[]): void {
   expect(Object.keys(value).sort()).toEqual([...keys].sort());
 }
 
-/** Spy on the three console methods and provide silence assertion + restore. */
+/** Spy on all five console methods and provide silence assertion + restore. */
 function spyOnConsole() {
-  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+  const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+
   return {
     expectSilent(): void {
       expect(log).not.toHaveBeenCalled();
       expect(error).not.toHaveBeenCalled();
       expect(warn).not.toHaveBeenCalled();
+      expect(info).not.toHaveBeenCalled();
+      expect(debug).not.toHaveBeenCalled();
     },
     restore(): void {
       log.mockRestore();
       error.mockRestore();
       warn.mockRestore();
+      info.mockRestore();
+      debug.mockRestore();
     },
   };
 }
@@ -129,7 +136,7 @@ describe('createKmaScheduledCurrentObservationCompositionFromEnv — isolated wi
     vi.restoreAllMocks();
   });
 
-  it('performs no provider/clock/factory/service/facade/selector call merely by importing the module', async () => {
+  it('performs no provider/clock/factory/service/facade/selector call and no direct env/time/logging/timer/listener side effect merely by importing the module', async () => {
     const providerFactory = vi.fn();
     const systemClockFactory = vi.fn();
     const requestFactoryFactory = vi.fn();
@@ -137,23 +144,86 @@ describe('createKmaScheduledCurrentObservationCompositionFromEnv — isolated wi
     const facadeFactory = vi.fn();
     const selector = vi.fn();
 
-    await loadIsolatedComposition({
-      weatherCore: { selectLatestKmaCurrentObservationBaseTime: selector },
-      providers: { createKmaCurrentObservationProviderFromEnv: providerFactory },
-      services: {
-        createKmaCurrentObservationRequestFactory: requestFactoryFactory,
-        createKmaCurrentObservationService: serviceFactory,
-        createKmaScheduledCurrentObservationFacade: facadeFactory,
+    // Track a direct read of the one env var this pipeline's config depends on
+    // (`KMA_SERVICE_KEY`), via a reversible Proxy swapped in for `process.env` — never observing or
+    // mutating any real value. Node rejects an accessor descriptor on an individual `process.env`
+    // property ("'process.env' does not accept an accessor(getter/setter) descriptor"), so the trap
+    // must live on a replacement object for the whole `env` reference instead. A trap that recorded
+    // *every* property read was tried first, but Vitest's own dynamic-`import()` machinery reads
+    // unrelated env keys internally (e.g. its watch-mode dependency reporting), making a whole-object
+    // read count indistinguishable from a real regression. Filtering the trap to this one property
+    // name is the minimal equivalent that still catches the composition module reading the service
+    // key directly at import time, while every other property passes through untouched.
+    const KMA_SERVICE_KEY_PROPERTY = 'KMA_SERVICE_KEY';
+    const originalEnvDescriptor = Object.getOwnPropertyDescriptor(process, 'env');
+    const originalEnv = process.env;
+    const kmaServiceKeyGet = vi.fn();
+    const proxiedEnv = new Proxy(originalEnv, {
+      get(target, property, receiver) {
+        if (property === KMA_SERVICE_KEY_PROPERTY) {
+          kmaServiceKeyGet();
+        }
+        return Reflect.get(target, property, receiver);
       },
-      systemClock: { createKmaSystemClock: systemClockFactory },
     });
 
-    expect(providerFactory).not.toHaveBeenCalled();
-    expect(systemClockFactory).not.toHaveBeenCalled();
-    expect(requestFactoryFactory).not.toHaveBeenCalled();
-    expect(serviceFactory).not.toHaveBeenCalled();
-    expect(facadeFactory).not.toHaveBeenCalled();
-    expect(selector).not.toHaveBeenCalled();
+    const dateNowSpy = vi.spyOn(Date, 'now');
+    const consoleSpy = spyOnConsole();
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
+    const setImmediateSpy = vi.spyOn(globalThis, 'setImmediate');
+    const addEventListenerSpy = vi.spyOn(EventTarget.prototype, 'addEventListener');
+    const processOnSpy = vi.spyOn(process, 'on');
+    const processAddListenerSpy = vi.spyOn(process, 'addListener');
+
+    try {
+      if (originalEnvDescriptor) {
+        Object.defineProperty(process, 'env', {
+          ...originalEnvDescriptor,
+          value: proxiedEnv,
+        });
+      }
+
+      await loadIsolatedComposition({
+        weatherCore: { selectLatestKmaCurrentObservationBaseTime: selector },
+        providers: { createKmaCurrentObservationProviderFromEnv: providerFactory },
+        services: {
+          createKmaCurrentObservationRequestFactory: requestFactoryFactory,
+          createKmaCurrentObservationService: serviceFactory,
+          createKmaScheduledCurrentObservationFacade: facadeFactory,
+        },
+        systemClock: { createKmaSystemClock: systemClockFactory },
+      });
+
+      expect(providerFactory).not.toHaveBeenCalled();
+      expect(systemClockFactory).not.toHaveBeenCalled();
+      expect(requestFactoryFactory).not.toHaveBeenCalled();
+      expect(serviceFactory).not.toHaveBeenCalled();
+      expect(facadeFactory).not.toHaveBeenCalled();
+      expect(selector).not.toHaveBeenCalled();
+
+      expect(kmaServiceKeyGet).not.toHaveBeenCalled();
+      expect(dateNowSpy).not.toHaveBeenCalled();
+      consoleSpy.expectSilent();
+      expect(setTimeoutSpy).not.toHaveBeenCalled();
+      expect(setIntervalSpy).not.toHaveBeenCalled();
+      expect(setImmediateSpy).not.toHaveBeenCalled();
+      expect(addEventListenerSpy).not.toHaveBeenCalled();
+      expect(processOnSpy).not.toHaveBeenCalled();
+      expect(processAddListenerSpy).not.toHaveBeenCalled();
+    } finally {
+      if (originalEnvDescriptor) {
+        Object.defineProperty(process, 'env', originalEnvDescriptor);
+      }
+      dateNowSpy.mockRestore();
+      consoleSpy.restore();
+      setTimeoutSpy.mockRestore();
+      setIntervalSpy.mockRestore();
+      setImmediateSpy.mockRestore();
+      addEventListenerSpy.mockRestore();
+      processOnSpy.mockRestore();
+      processAddListenerSpy.mockRestore();
+    }
   });
 
   describe('config failure', () => {
@@ -440,6 +510,7 @@ describe('createKmaScheduledCurrentObservationCompositionFromEnv — isolated wi
       const requestFactoryFactory = neverCalled('request factory factory');
       const serviceFactory = neverCalled('service factory');
       const facadeFactory = neverCalled('facade factory');
+      const consoleSpy = spyOnConsole();
 
       const { createKmaScheduledCurrentObservationCompositionFromEnv: composeIsolated } =
         await loadIsolatedComposition({
@@ -457,6 +528,8 @@ describe('createKmaScheduledCurrentObservationCompositionFromEnv — isolated wi
       expect(requestFactoryFactory).not.toHaveBeenCalled();
       expect(serviceFactory).not.toHaveBeenCalled();
       expect(facadeFactory).not.toHaveBeenCalled();
+      consoleSpy.expectSilent();
+      consoleSpy.restore();
     });
 
     it('propagates a request-factory construction throw before service/facade construction', async () => {
@@ -474,6 +547,7 @@ describe('createKmaScheduledCurrentObservationCompositionFromEnv — isolated wi
       const injectedClock: KmaCurrentObservationRequestClock = {
         nowEpochMilliseconds: vi.fn(),
       };
+      const consoleSpy = spyOnConsole();
 
       const { createKmaScheduledCurrentObservationCompositionFromEnv: composeIsolated } =
         await loadIsolatedComposition({
@@ -492,6 +566,8 @@ describe('createKmaScheduledCurrentObservationCompositionFromEnv — isolated wi
       expect(requestFactoryFactory).toHaveBeenCalledTimes(1);
       expect(serviceFactory).not.toHaveBeenCalled();
       expect(facadeFactory).not.toHaveBeenCalled();
+      consoleSpy.expectSilent();
+      consoleSpy.restore();
     });
 
     it('propagates a current-observation-service construction throw before facade construction', async () => {
@@ -510,6 +586,7 @@ describe('createKmaScheduledCurrentObservationCompositionFromEnv — isolated wi
       const injectedClock: KmaCurrentObservationRequestClock = {
         nowEpochMilliseconds: vi.fn(),
       };
+      const consoleSpy = spyOnConsole();
 
       const { createKmaScheduledCurrentObservationCompositionFromEnv: composeIsolated } =
         await loadIsolatedComposition({
@@ -528,6 +605,8 @@ describe('createKmaScheduledCurrentObservationCompositionFromEnv — isolated wi
       expect(requestFactoryFactory).toHaveBeenCalledTimes(1);
       expect(serviceFactory).toHaveBeenCalledTimes(1);
       expect(facadeFactory).not.toHaveBeenCalled();
+      consoleSpy.expectSilent();
+      consoleSpy.restore();
     });
 
     it('propagates a facade construction throw', async () => {
@@ -547,6 +626,7 @@ describe('createKmaScheduledCurrentObservationCompositionFromEnv — isolated wi
       const injectedClock: KmaCurrentObservationRequestClock = {
         nowEpochMilliseconds: vi.fn(),
       };
+      const consoleSpy = spyOnConsole();
 
       const { createKmaScheduledCurrentObservationCompositionFromEnv: composeIsolated } =
         await loadIsolatedComposition({
@@ -565,6 +645,8 @@ describe('createKmaScheduledCurrentObservationCompositionFromEnv — isolated wi
       expect(requestFactoryFactory).toHaveBeenCalledTimes(1);
       expect(serviceFactory).toHaveBeenCalledTimes(1);
       expect(facadeFactory).toHaveBeenCalledTimes(1);
+      consoleSpy.expectSilent();
+      consoleSpy.restore();
     });
   });
 });
