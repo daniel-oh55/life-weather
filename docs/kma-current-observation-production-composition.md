@@ -226,14 +226,39 @@ clock만 사용합니다.
 이 composition은 `apps/api/src/index.ts`·`apps/api/src/api-app.ts`·어떤 route에도 연결되지
 않았습니다. `POST /weather`는 이 PR 이후에도 `current` section이 계속 missing으로 응답합니다.
 
+## PR #70과의 관계 — location application facade는 추가됐지만 이 composition에는 아직 미연결
+
+**PR #70**이 latitude/longitude → KMA grid(nx/ny) 변환을 PR #68 scheduled current-observation
+facade 앞단에 잇는 application-level location facade
+(`createKmaLocationScheduledCurrentObservationFacade`,
+[kma-location-scheduled-current-observation.md](./kma-location-scheduled-current-observation.md))를
+추가했습니다. 이 composition(`createKmaScheduledCurrentObservationCompositionFromEnv`) 자체의 공개
+계약, 조립 순서, construction side-effect 경계는 **전혀 변경되지 않았습니다** — PR #70의 location
+facade는 이 composition이 반환하는 `facade`를 아직 소비하지 않는 독립된 단위 구성 요소입니다.
+production converter 선택과 이 composition에 location facade를 연결하는 production location
+composition은 여전히 없습니다.
+
+PR #70 이후 상태:
+
+- location application facade: 구현됨(PR #70, production composition 미연결)
+- production converter 선택/production location composition: 여전히 없음
+- `WeatherOverview.current`: 여전히 없음
+- current `SourceMetadata`: 여전히 없음
+- `POST /weather` 연결: 여전히 없음
+- current-observation availability-delay selector: 여전히 없음
+- 실제 인증 KMA API 검증: 여전히 없음
+
 ## 후속 범위
 
-1. latitude/longitude → KMA grid(nx/ny) 변환을 이 composition 앞단에 잇는 location adapter
-2. `WeatherOverview.current` section 조립
-3. current `SourceMetadata`(`sourceId`/`issuedAt`/`retrievalMode`) 조립
-4. `POST /weather`로의 current 데이터 연결
-5. current-observation availability-delay selector(hourly의 PR #14에 대응하는 current 전용 정책)
-6. 실제 인증 KMA API 호출을 통한 live 검증
+1. ~~latitude/longitude → KMA grid(nx/ny) 변환을 이 composition 앞단에 잇는 location adapter~~ —
+   PR #70에서 application facade 자체는 구현(이 composition에 대한 production 연결은 아직 없음).
+2. 이 composition을 소비하는 production location composition(PR #70 location facade에 production
+   converter를 선택해 조립).
+3. `WeatherOverview.current` section 조립
+4. current `SourceMetadata`(`sourceId`/`issuedAt`/`retrievalMode`) 조립
+5. `POST /weather`로의 current 데이터 연결
+6. current-observation availability-delay selector(hourly의 PR #14에 대응하는 current 전용 정책)
+7. 실제 인증 KMA API 호출을 통한 live 검증
 
 이 PR이 production current 데이터를 제공한다고 표현하지 않습니다 — `POST /weather`는 이 PR
 이후에도 계속 current를 missing으로 응답합니다.
@@ -251,4 +276,10 @@ v1 / PR #69 / 2026-08
   이 PR 범위 밖
 - 기존 hourly composition, current provider/request factory/service/facade는 변경하지 않음, 새
   generic 공통 abstraction 없음
+
+v2 / PR #70 / 2026-08 (location application facade 추가; 이 composition 자체는 불변)
+- 이 composition의 공개 계약·조립 순서·construction side-effect 경계 변경 없음
+- PR #70 location facade(createKmaLocationScheduledCurrentObservationFacade)는 이 composition이
+  반환하는 facade를 아직 소비하지 않는 독립된 application-level 단위
+- production converter 선택/production location composition은 여전히 이 PR 범위 밖
 ```

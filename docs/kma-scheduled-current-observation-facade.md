@@ -231,11 +231,23 @@ pass-through, Promise identity, 호출 순서)을 **전혀 변경하지 않습�
 그대로 소비할 뿐입니다. route(`/weather`)·location(위경도 → grid) adapter는 이 composition에서도
 여전히 연결되지 않았으므로, production current 데이터는 PR #69 이후에도 계속 missing입니다.
 
+## PR #70: 첫 위경도 location facade consumer
+
+**PR #70**이 이 facade를 소비하는 새 application-level location facade
+(`createKmaLocationScheduledCurrentObservationFacade`,
+[kma-location-scheduled-current-observation.md](./kma-location-scheduled-current-observation.md))를
+추가했습니다 — 기존 위·경도 → KMA 격자 변환 함수를 이 facade 앞에 두는 얇은 adapter입니다. 이 PR은
+facade 자체의 공개 계약(`nx`/`ny` 입력, 입력/옵션/결과 pass-through, Promise identity, 호출 순서)을
+**전혀 변경하지 않습니다** — location facade는 이 facade를 그대로 소비할 뿐입니다. 이 location
+facade를 PR #69 grid-based production composition에 연결하는 production location composition은
+여전히 없으므로, production current 데이터는 PR #70 이후에도 계속 missing입니다.
+
 ## 후속 범위
 
 1. ~~current-observation 전용 system clock/provider composition~~ — PR #69에서 구현(기존 system
    clock adapter를 재사용).
-2. 위경도 → KMA grid(nx/ny) 변환을 이 facade 앞단에 잇는 location adapter
+2. ~~위경도 → KMA grid(nx/ny) 변환을 이 facade 앞단에 잇는 location adapter~~ — PR #70에서 구현
+   (production converter 선택과 PR #69 composition 연결은 아직 없음).
 3. `WeatherOverview.current` section 조립
 4. current `SourceMetadata`(`sourceId`/`issuedAt`/`retrievalMode`) 조립
 5. `POST /weather`로의 current 데이터 연결
@@ -254,4 +266,10 @@ v1 / PR #68 / 2026-08
 - product 필드 없음(초단기실황은 단일 operation) — 새 nx/ny 이외 필드 없음
 - production composition root, location adapter, POST /weather 연결은 이 PR 범위 밖
 - 기존 hourly facade/request factory/service는 변경하지 않음, generic 공통 abstraction 없음
+
+v2 / PR #70 / 2026-08 (첫 위경도 location facade consumer 추가; 이 facade는 불변)
+- 이 facade의 공개 계약(nx/ny 입력, pass-through, Promise identity, 호출 순서) 변경 없음
+- 새 location facade(createKmaLocationScheduledCurrentObservationFacade)가 이 facade를 그대로 소비
+- production location composition·WeatherOverview.current·SourceMetadata·POST /weather 연결·
+  availability-delay selector는 여전히 이 PR 범위 밖
 ```

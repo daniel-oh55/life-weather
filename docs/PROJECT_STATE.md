@@ -53,7 +53,16 @@
   [kma-current-observation-service.md](./kma-current-observation-service.md),
   [kma-scheduled-current-observation-facade.md](./kma-scheduled-current-observation-facade.md),
   [kma-current-observation-production-composition.md](./kma-current-observation-production-composition.md)
-  참고.
+  참고. 이어서 **PR #70**이 기존 위경도 → KMA grid 변환 함수를 PR #68 scheduled facade 앞단에 잇는
+  application-level location facade(`createKmaLocationScheduledCurrentObservationFacade`,
+  `apps/api/src/services/kma-location-scheduled-current-observation.ts`)를 추가했습니다 — hourly의 PR
+  #13 location scheduled facade와 같은 원칙(explicit `{ latitude, longitude }` 입력, fresh converter
+  input, 지원 위치의 fresh `{ nx, ny }` 입력, options/AbortSignal exact reference, exact Promise
+  pass-through, converter `null`만 value-free LOCATION/UNSUPPORTED_LOCATION result로 변환, converter
+  throw는 동일 reference로 동기 전파)을 따르는 별도·병렬 구현입니다. 이 PR은 production converter를
+  선택하지 않고 PR #69 grid-based production composition에도 연결하지 않으므로, production current
+  데이터는 이 PR 이후에도 여전히 missing입니다. 자세한 내용은
+  [kma-location-scheduled-current-observation.md](./kma-location-scheduled-current-observation.md) 참고.
 - AirKorea air quality
 - alerts
 - response cache
@@ -384,6 +393,23 @@
   이 PR 범위가 아니므로, production current 데이터는 이 PR 이후에도 여전히 missing입니다. 자세한
   내용은
   [kma-current-observation-production-composition.md](./kma-current-observation-production-composition.md)
+  참고.
+- **PR #70**은 기존 위·경도 → KMA grid 변환 함수(`convertKmaLatitudeLongitudeToGrid`)를 PR #68
+  scheduled current-observation facade 앞단에 잇는 **application-level location
+  facade**(`createKmaLocationScheduledCurrentObservationFacade`,
+  `apps/api/src/services/kma-location-scheduled-current-observation.ts`)를 추가했습니다 — PR #13
+  location scheduled hourly facade와 같은 원칙을 따르는 별도·병렬 구현입니다. 호출자가
+  `latitude`/`longitude`만 제공하면, converter를 정확히 한 번 호출한 fresh `{ latitude, longitude }`
+  결과로 지원 위치를 판정하고, 지원 위치이면 fresh `{ nx, ny }`와 caller의 `options`(그 안의
+  `AbortSignal` 포함) 그대로를 PR #68 scheduled facade에 정확히 한 번 전달해 그 Promise를 그대로
+  반환합니다(성공·`PROVIDER`·`NORMALIZATION`·동기 throw·rejection 모두 exact reference 보존).
+  converter가 `null`이면 scheduled facade를 호출하지 않고 값이 없는(latitude/longitude/nx/ny 비노출)
+  fresh `{ ok: false, stage: 'LOCATION', error: { kind: 'UNSUPPORTED_LOCATION' } }`를 반환하며,
+  converter가 throw하면(`RangeError` 포함) 동일 reference가 동기적으로 전파됩니다. 이 PR은 production
+  converter를 선택하지 않고 PR #69 grid-based production composition에도 연결하지 않으므로,
+  `WeatherOverview.current`·current `SourceMetadata`·`POST /weather` 연결·availability-delay
+  selector는 이 PR 이후에도 여전히 missing/미구현입니다. 자세한 내용은
+  [kma-location-scheduled-current-observation.md](./kma-location-scheduled-current-observation.md)
   참고.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
