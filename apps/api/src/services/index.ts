@@ -201,6 +201,17 @@
  *    and returns the service's Promise verbatim; on a factory throw the service is **not** called
  *    and the same error reference propagates. It creates **no** request/result union of its own,
  *    is not `async`, and is not yet consumed by any composition, route, or `POST /weather`.
+ * 16. The PR #70 KMA **location scheduled current-observation facade**
+ *    (`createKmaLocationScheduledCurrentObservationFacade`): the current-observation counterpart of
+ *    component 4, a thin adapter that puts an injected latitude/longitude → grid converter in front
+ *    of component 15 (input → grid → scheduled current-observation result), adding only a
+ *    `LOCATION`-stage `UNSUPPORTED_LOCATION` result for a physically valid coordinate the KMA grid
+ *    does not cover. It calls the converter **exactly once** with a fresh
+ *    `{ latitude, longitude }`; on a supported location it calls component 15 **exactly once** with
+ *    a fresh `{ nx, ny }` and returns its Promise verbatim; on an unsupported location it returns a
+ *    fresh `LOCATION` result and never calls component 15; and a converter throw propagates
+ *    synchronously. It selects **no** concrete production converter (that is the composition
+ *    layer's job) and is not yet consumed by any composition, route, or `POST /weather`.
  *
  * The grid-based single-request **production composition root** (system clock adapter,
  * provider-from-env wiring, a live facade instance) is built in PR #11 and lives in `../composition`;
@@ -225,8 +236,9 @@
  * `docs/kma-hourly-weather-overview.md`, `docs/kma-location-hourly-overview.md`,
  * `docs/kma-selected-hourly-source-metadata.md`,
  * `docs/kma-current-observation-request-factory.md`,
- * `docs/kma-current-observation-service.md`, and
- * `docs/kma-scheduled-current-observation-facade.md`.
+ * `docs/kma-current-observation-service.md`,
+ * `docs/kma-scheduled-current-observation-facade.md`, and
+ * `docs/kma-location-scheduled-current-observation.md`.
  */
 
 export {
@@ -345,3 +357,13 @@ export {
   type KmaScheduledCurrentObservationOptions,
   type KmaScheduledCurrentObservationResult,
 } from './kma-scheduled-current-observation.js';
+
+export {
+  createKmaLocationScheduledCurrentObservationFacade,
+  type KmaCurrentObservationUnsupportedLocationError,
+  type KmaLocationCurrentObservationGridConverter,
+  type KmaLocationScheduledCurrentObservationFacade,
+  type KmaLocationScheduledCurrentObservationInput,
+  type KmaLocationScheduledCurrentObservationOptions,
+  type KmaLocationScheduledCurrentObservationResult,
+} from './kma-location-scheduled-current-observation.js';
