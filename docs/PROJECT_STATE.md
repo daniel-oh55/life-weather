@@ -411,5 +411,26 @@
   selector는 이 PR 이후에도 여전히 missing/미구현입니다. 자세한 내용은
   [kma-location-scheduled-current-observation.md](./kma-location-scheduled-current-observation.md)
   참고.
+- **PR #71**은 PR #69 grid-based current-observation production composition과 PR #70 location
+  application facade를 연결하는 **location production composition**
+  (`createKmaLocationScheduledCurrentObservationCompositionFromEnv`,
+  `apps/api/src/composition/kma-location-scheduled-current-observation.ts`)을 추가했습니다 —
+  hourly의 PR #13 location composition과 같은 원칙을 따르는 별도·병렬 구현입니다. PR #69
+  composition을 재구현하지 않고 `env`/`dependencies`를 exact reference로 그대로 전달해 호출하며,
+  PR #69의 config 실패(`KmaProviderConfigError`)를 동일 reference로 pass-through하고(이 경우 location
+  facade 생성·converter 실행·clock read·network가 0회), 성공하면 기존 production
+  `convertKmaLatitudeLongitudeToGrid`(exact function reference)와 PR #69 결과의 exact scheduled
+  facade reference를 PR #70 `createKmaLocationScheduledCurrentObservationFacade`에 그대로 전달해
+  location facade를 조립합니다. 성공 결과는 `{ ok, facade }`만 노출하고, composition 호출 시점에도
+  converter 실행·clock read·fetch는 0회입니다(모두 반환된 facade의
+  `fetchScheduledCurrentWeatherForLocation()` 실행 시에만 발생). 매 호출은 독립된 그래프를
+  만듭니다(module-level singleton/cache 없음). PR #69 composition과 PR #70 location facade의 공개
+  계약은 이 PR에서 전혀 변경되지 않았습니다. 이 composition은 여전히 `apps/api/src/index.ts`·
+  `POST /weather` route·`WeatherOverview.current`·current `SourceMetadata`·current-observation
+  availability-delay selector에 연결/구현되지 않았으므로, production current 데이터는 이 PR
+  이후에도 계속 missing입니다. 자세한 내용은
+  [kma-location-scheduled-current-observation.md](./kma-location-scheduled-current-observation.md),
+  [kma-current-observation-production-composition.md](./kma-current-observation-production-composition.md)
+  참고.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
