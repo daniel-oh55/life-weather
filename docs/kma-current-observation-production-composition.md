@@ -235,13 +235,37 @@ facade 앞단에 잇는 application-level location facade
 추가했습니다. 이 composition(`createKmaScheduledCurrentObservationCompositionFromEnv`) 자체의 공개
 계약, 조립 순서, construction side-effect 경계는 **전혀 변경되지 않았습니다** — PR #70의 location
 facade는 이 composition이 반환하는 `facade`를 아직 소비하지 않는 독립된 단위 구성 요소입니다.
-production converter 선택과 이 composition에 location facade를 연결하는 production location
-composition은 여전히 없습니다.
 
-PR #70 이후 상태:
+## PR #71: location production composition — 이 composition은 그대로 재사용됨
 
-- location application facade: 구현됨(PR #70, production composition 미연결)
-- production converter 선택/production location composition: 여전히 없음
+**PR #71**이 PR #70 location facade에 production converter를 선택해 연결하는 **location production
+composition root**
+(`createKmaLocationScheduledCurrentObservationCompositionFromEnv`,
+[apps/api/src/composition/kma-location-scheduled-current-observation.ts](../apps/api/src/composition/kma-location-scheduled-current-observation.ts),
+[kma-location-scheduled-current-observation.md](./kma-location-scheduled-current-observation.md))를
+추가했습니다.
+
+```text
+environment / injected dependencies
+  → createKmaScheduledCurrentObservationCompositionFromEnv   // 이 composition, 그대로 재사용
+  → live KmaScheduledCurrentObservationFacade
+          +
+convertKmaLatitudeLongitudeToGrid                            // 기존 production converter
+          ↓
+createKmaLocationScheduledCurrentObservationFacade            // PR #70
+  → live KmaLocationScheduledCurrentObservationFacade
+```
+
+PR #71은 이 composition을 **재구현하지 않고 그대로 호출**합니다 — `env`/`dependencies`를 exact
+reference로 전달하고, 이 composition의 config 실패(`KmaProviderConfigError`)를 동일 reference로
+pass-through하며, 성공하면 이 composition의 exact `facade` reference를 PR #70 location facade
+factory의 두 번째 인자로 그대로 넘깁니다. **이 composition 자체의 공개 계약·조립 순서·
+construction side-effect 경계·스케줄-only selector 선택은 PR #71에서도 전혀 변경되지 않았습니다.**
+
+PR #71 이후 상태:
+
+- location application facade: 구현됨(PR #70)
+- **production converter 선택/production location composition: 구현됨(PR #71)**
 - `WeatherOverview.current`: 여전히 없음
 - current `SourceMetadata`: 여전히 없음
 - `POST /weather` 연결: 여전히 없음
@@ -251,16 +275,16 @@ PR #70 이후 상태:
 ## 후속 범위
 
 1. ~~latitude/longitude → KMA grid(nx/ny) 변환을 이 composition 앞단에 잇는 location adapter~~ —
-   PR #70에서 application facade 자체는 구현(이 composition에 대한 production 연결은 아직 없음).
-2. 이 composition을 소비하는 production location composition(PR #70 location facade에 production
-   converter를 선택해 조립).
+   PR #70에서 application facade 자체는 구현.
+2. ~~이 composition을 소비하는 production location composition(PR #70 location facade에 production
+   converter를 선택해 조립)~~ — PR #71에서 구현.
 3. `WeatherOverview.current` section 조립
 4. current `SourceMetadata`(`sourceId`/`issuedAt`/`retrievalMode`) 조립
 5. `POST /weather`로의 current 데이터 연결
 6. current-observation availability-delay selector(hourly의 PR #14에 대응하는 current 전용 정책)
 7. 실제 인증 KMA API 호출을 통한 live 검증
 
-이 PR이 production current 데이터를 제공한다고 표현하지 않습니다 — `POST /weather`는 이 PR
+이 PR들이 production current 데이터를 제공한다고 표현하지 않습니다 — `POST /weather`는 PR #71
 이후에도 계속 current를 missing으로 응답합니다.
 
 ## 변경 이력
@@ -282,4 +306,14 @@ v2 / PR #70 / 2026-08 (location application facade 추가; 이 composition 자�
 - PR #70 location facade(createKmaLocationScheduledCurrentObservationFacade)는 이 composition이
   반환하는 facade를 아직 소비하지 않는 독립된 application-level 단위
 - production converter 선택/production location composition은 여전히 이 PR 범위 밖
+
+v3 / PR #71 / 2026-08 (location production composition이 이 composition을 소비; 이 composition 자체는 불변)
+- 이 composition의 공개 계약·조립 순서·construction side-effect 경계·schedule-only selector 선택
+  변경 없음
+- 새 location production composition(createKmaLocationScheduledCurrentObservationCompositionFromEnv)이
+  이 composition을 exact env/dependencies reference로 호출하고, 성공 시 exact facade reference를
+  PR #70 location facade에 연결하며, config 실패는 동일 KmaProviderConfigError reference로
+  pass-through
+- WeatherOverview.current·SourceMetadata·POST /weather 연결·availability-delay selector는 여전히
+  이 PR 범위 밖
 ```
