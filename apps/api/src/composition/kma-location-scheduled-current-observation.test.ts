@@ -104,12 +104,20 @@ interface IsolatedMocks {
   readonly weatherCore?: Record<string, unknown>;
   readonly services?: Record<string, unknown>;
   readonly scheduledComposition?: Record<string, unknown>;
+  readonly weatherRouteComposition?: Record<string, unknown>;
+  readonly routes?: Record<string, unknown>;
 }
 
 /**
  * Reset the module registry, install the requested partial mocks (spread over the real module so
  * unmocked exports stay real), and dynamically re-import the composition module. Every isolated test
  * gets a fresh module instance — no cross-test mock leakage.
+ *
+ * `weatherRouteComposition`/`routes` mock the route/startup boundaries this composition explicitly
+ * does **not** import (`./weather-route.js`'s `createProductionWeatherRouteDependencies`,
+ * `../routes/index.js`'s `createWeatherRoute`) with bare sentinel-only replacements — never
+ * `importActual` — so a future mutant that imports/calls either at module scope trips an observable
+ * sentinel instead of silently running real route/startup code.
  */
 async function loadIsolatedComposition(
   mocks: IsolatedMocks,
@@ -139,6 +147,14 @@ async function loadIsolatedComposition(
       return { ...actual, ...mocks.scheduledComposition };
     });
   }
+  if (mocks.weatherRouteComposition) {
+    const weatherRouteComposition = mocks.weatherRouteComposition;
+    vi.doMock('./weather-route.js', () => weatherRouteComposition);
+  }
+  if (mocks.routes) {
+    const routes = mocks.routes;
+    vi.doMock('../routes/index.js', () => routes);
+  }
   return import('./kma-location-scheduled-current-observation.js');
 }
 
@@ -147,14 +163,47 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — iso
     vi.doUnmock('@life-weather/weather-core');
     vi.doUnmock('../services/index.js');
     vi.doUnmock('./kma-scheduled-current-observation.js');
+    vi.doUnmock('./weather-route.js');
+    vi.doUnmock('../routes/index.js');
     vi.resetModules();
     vi.restoreAllMocks();
   });
 
-  it('performs no scheduled-composition/converter/location-facade call and no direct time/logging/timer/listener side effect merely by importing the module', async () => {
+  it('performs no scheduled-composition/converter/location-facade/selector/route call and no direct env/time/logging/timer/listener/network side effect merely by importing the module', async () => {
     const scheduledCompositionFactory = vi.fn();
     const locationFacadeFactory = vi.fn();
     const converter = vi.fn();
+    // The PR #69 schedule-only selector this composition must never import/run directly — proves a
+    // future regression can't quietly take ownership of PR #69's selector policy at this layer.
+    const selector = vi.fn();
+    // Route/startup boundaries this composition explicitly does not wire — see the
+    // `loadIsolatedComposition` doc comment above.
+    const createProductionWeatherRouteDependenciesSentinel = vi.fn();
+    const createWeatherRouteSentinel = vi.fn();
+
+    // Track a direct read of the one env var this pipeline's config depends on
+    // (`KMA_SERVICE_KEY`), via a reversible Proxy swapped in for `process.env` — never observing or
+    // mutating any real value. Node rejects an accessor descriptor on an individual `process.env`
+    // property ("'process.env' does not accept an accessor(getter/setter) descriptor"), so the trap
+    // must live on a replacement object for the whole `env` reference instead. A trap that recorded
+    // *every* property read was tried first, but Vitest's own dynamic-`import()` machinery reads
+    // unrelated env keys internally (e.g. its watch-mode dependency reporting), making a whole-object
+    // read count indistinguishable from a real regression. Filtering the trap to this one property
+    // name is the minimal equivalent that still catches the composition module reading the service
+    // key directly at import time, while every other property passes through untouched. Same pattern
+    // as `kma-scheduled-current-observation.test.ts`'s isolated wiring test.
+    const KMA_SERVICE_KEY_PROPERTY = 'KMA_SERVICE_KEY';
+    const originalEnvDescriptor = Object.getOwnPropertyDescriptor(process, 'env');
+    const originalEnv = process.env;
+    const kmaServiceKeyGet = vi.fn();
+    const proxiedEnv = new Proxy(originalEnv, {
+      get(target, property, receiver) {
+        if (property === KMA_SERVICE_KEY_PROPERTY) {
+          kmaServiceKeyGet();
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
 
     const dateNowSpy = vi.spyOn(Date, 'now');
     const consoleSpy = spyOnConsole();
@@ -164,19 +213,45 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — iso
     const addEventListenerSpy = vi.spyOn(EventTarget.prototype, 'addEventListener');
     const processOnSpy = vi.spyOn(process, 'on');
     const processAddListenerSpy = vi.spyOn(process, 'addListener');
+    // A guard, not a functional mock: it throws the instant it is called, so any call fails the test
+    // loudly instead of silently reaching the network.
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+      throw new Error('isolated wiring test: global fetch must not be called merely by importing the module');
+    });
 
     try {
+      if (originalEnvDescriptor) {
+        Object.defineProperty(process, 'env', {
+          ...originalEnvDescriptor,
+          value: proxiedEnv,
+        });
+      }
+
       await loadIsolatedComposition({
-        weatherCore: { convertKmaLatitudeLongitudeToGrid: converter },
+        weatherCore: {
+          convertKmaLatitudeLongitudeToGrid: converter,
+          selectLatestKmaCurrentObservationBaseTime: selector,
+        },
         services: { createKmaLocationScheduledCurrentObservationFacade: locationFacadeFactory },
         scheduledComposition: {
           createKmaScheduledCurrentObservationCompositionFromEnv: scheduledCompositionFactory,
+        },
+        weatherRouteComposition: {
+          createProductionWeatherRouteDependencies: createProductionWeatherRouteDependenciesSentinel,
+        },
+        routes: {
+          createWeatherRoute: createWeatherRouteSentinel,
         },
       });
 
       expect(scheduledCompositionFactory).not.toHaveBeenCalled();
       expect(locationFacadeFactory).not.toHaveBeenCalled();
       expect(converter).not.toHaveBeenCalled();
+      expect(selector).not.toHaveBeenCalled();
+      expect(createProductionWeatherRouteDependenciesSentinel).not.toHaveBeenCalled();
+      expect(createWeatherRouteSentinel).not.toHaveBeenCalled();
+      expect(kmaServiceKeyGet).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
       expect(dateNowSpy).not.toHaveBeenCalled();
       consoleSpy.expectSilent();
       expect(setTimeoutSpy).not.toHaveBeenCalled();
@@ -186,6 +261,9 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — iso
       expect(processOnSpy).not.toHaveBeenCalled();
       expect(processAddListenerSpy).not.toHaveBeenCalled();
     } finally {
+      if (originalEnvDescriptor) {
+        Object.defineProperty(process, 'env', originalEnvDescriptor);
+      }
       dateNowSpy.mockRestore();
       consoleSpy.restore();
       setTimeoutSpy.mockRestore();
@@ -194,6 +272,7 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — iso
       addEventListenerSpy.mockRestore();
       processOnSpy.mockRestore();
       processAddListenerSpy.mockRestore();
+      fetchSpy.mockRestore();
     }
   });
 
@@ -877,40 +956,54 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — dow
     }
   });
 
-  it('surfaces a missing required T1H category as a NORMALIZATION-stage issue (not re-classified as LOCATION)', async () => {
+  it('surfaces a missing required T1H category as a NORMALIZATION-stage issue (not re-classified as LOCATION), runs silently under a 5-channel console guard, exposes exactly { ok, stage, issues }, and leaks no grid coordinate', async () => {
     const items = [item({ category: 'PTY', obsrValue: '0' })];
     const { fetchImpl, calls: fetchCalls } = recordingFetch(() => jsonOk(successBody(items)));
     const { clock, nowEpochMilliseconds } = fixedClock(CLOCK_AT_0600_KST_20260718);
     const facade = composeOrThrow(makeEnv(FAKE_KMA_SERVICE_KEY), { fetchImpl, clock });
+    // Installed before the call and asserted/restored only after every normalization assertion below,
+    // so a regression such as `console.error(rawKmaPayload)` on the normalization-failure path is caught.
+    const consoleSpy = spyOnConsole();
 
-    const result = await facade.fetchScheduledCurrentWeatherForLocation({
-      latitude: SEOUL_LATITUDE,
-      longitude: SEOUL_LONGITUDE,
-    });
+    try {
+      const result = await facade.fetchScheduledCurrentWeatherForLocation({
+        latitude: SEOUL_LATITUDE,
+        longitude: SEOUL_LONGITUDE,
+      });
 
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      throw new Error('expected a normalization failure');
-    }
-    expect(result.stage).toBe('NORMALIZATION');
-    if (result.stage !== 'NORMALIZATION') {
-      throw new Error(`expected NORMALIZATION stage, got ${result.stage}`);
-    }
-    expect(result.issues).toContainEqual({ field: 'temperatureCelsius', reason: 'ABSENT' });
-    expect(nowEpochMilliseconds).toHaveBeenCalledTimes(1);
-    expect(fetchCalls).toHaveLength(1);
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        throw new Error('expected a normalization failure');
+      }
+      expect(result.stage).toBe('NORMALIZATION');
+      if (result.stage !== 'NORMALIZATION') {
+        throw new Error(`expected NORMALIZATION stage, got ${result.stage}`);
+      }
+      expect(result.issues).toContainEqual({ field: 'temperatureCelsius', reason: 'ABSENT' });
+      expectExactKeys(result, ['ok', 'stage', 'issues']);
+      expect(nowEpochMilliseconds).toHaveBeenCalledTimes(1);
+      expect(fetchCalls).toHaveLength(1);
 
-    expect('current' in result).toBe(false);
-    const serialized = JSON.stringify(result);
-    for (const forbidden of [
-      FAKE_KMA_SERVICE_KEY,
-      'apis.data.go.kr',
-      'ServiceKey',
-      'obsrValue',
-      'latitude',
-      'longitude',
-    ]) {
-      expect(serialized).not.toContain(forbidden);
+      expect('current' in result).toBe(false);
+      const serialized = JSON.stringify(result);
+      for (const forbidden of [
+        FAKE_KMA_SERVICE_KEY,
+        'apis.data.go.kr',
+        'ServiceKey',
+        'obsrValue',
+        'latitude',
+        'longitude',
+      ]) {
+        expect(serialized).not.toContain(forbidden);
+      }
+      // The grid coordinate the location facade computed internally must never leak into the
+      // outward-facing normalization failure, even though it is present in the raw KMA response.
+      expect(serialized).not.toContain('"nx"');
+      expect(serialized).not.toContain('"ny"');
+
+      consoleSpy.expectSilent();
+    } finally {
+      consoleSpy.restore();
     }
   });
 });
