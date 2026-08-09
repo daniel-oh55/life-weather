@@ -282,13 +282,17 @@ createKmaLocationScheduledCurrentObservationFacade            // PR #70, 이 문
 
 1. ~~production converter 선택과 이 facade를 PR #69 grid-based composition에 연결하는 location
    production composition root~~ — PR #71에서 구현.
-2. `WeatherOverview.current` section 조립.
+2. ~~`WeatherOverview.current` section 조립~~ — **PR #72**가 별도 pure
+   assembler(`assembleKmaCurrentWeatherOverview`,
+   [kma-current-weather-overview.md](./kma-current-weather-overview.md))를 추가했지만, 이
+   assembler는 이 facade나 PR #71 production composition을 소비/연결하지 않는 독립 단위입니다 —
+   location current pipeline과의 application orchestration은 여전히 미구현입니다.
 3. current `SourceMetadata`(`sourceId`/`issuedAt`/`retrievalMode`) 조립.
 4. `POST /weather`로의 current 데이터 연결.
 5. current-observation availability-delay selector.
 6. 실제 인증 KMA API 호출을 통한 live 검증.
 
-이 PR들이 production current 데이터를 제공한다고 표현하지 않습니다 — `POST /weather`는 PR #71
+이 PR들이 production current 데이터를 제공한다고 표현하지 않습니다 — `POST /weather`는 PR #72
 이후에도 계속 current를 missing으로 응답합니다.
 
 ## 변경 이력

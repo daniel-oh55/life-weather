@@ -272,19 +272,34 @@ PR #71 이후 상태:
 - current-observation availability-delay selector: 여전히 없음
 - 실제 인증 KMA API 검증: 여전히 없음
 
+PR #72 이후 상태(이 composition 자체는 변경 없음):
+
+- `WeatherOverview.current` **assembler**: 구현됨(PR #72,
+  [kma-current-weather-overview.md](./kma-current-weather-overview.md)) — 이 assembler는 이
+  composition이나 PR #71 location production composition을 소비/연결하지 않는 독립 pure 함수입니다
+- current `SourceMetadata`: 여전히 없음
+- location current pipeline과 이 assembler를 잇는 application orchestration: 여전히 없음
+- `POST /weather` 연결: 여전히 없음
+- current-observation availability-delay selector: 여전히 없음
+- 실제 인증 KMA API 검증: 여전히 없음
+
 ## 후속 범위
 
 1. ~~latitude/longitude → KMA grid(nx/ny) 변환을 이 composition 앞단에 잇는 location adapter~~ —
    PR #70에서 application facade 자체는 구현.
 2. ~~이 composition을 소비하는 production location composition(PR #70 location facade에 production
    converter를 선택해 조립)~~ — PR #71에서 구현.
-3. `WeatherOverview.current` section 조립
+3. ~~`WeatherOverview.current` section 조립~~ — **PR #72**가 별도 pure
+   assembler(`assembleKmaCurrentWeatherOverview`,
+   [kma-current-weather-overview.md](./kma-current-weather-overview.md))를 추가했지만, 이
+   composition을 소비/연결하지 않는 독립 단위입니다 — 이 composition 자체는 전혀 변경되지
+   않았습니다.
 4. current `SourceMetadata`(`sourceId`/`issuedAt`/`retrievalMode`) 조립
 5. `POST /weather`로의 current 데이터 연결
 6. current-observation availability-delay selector(hourly의 PR #14에 대응하는 current 전용 정책)
 7. 실제 인증 KMA API 호출을 통한 live 검증
 
-이 PR들이 production current 데이터를 제공한다고 표현하지 않습니다 — `POST /weather`는 PR #71
+이 PR들이 production current 데이터를 제공한다고 표현하지 않습니다 — `POST /weather`는 PR #72
 이후에도 계속 current를 missing으로 응답합니다.
 
 ## 변경 이력
@@ -316,4 +331,12 @@ v3 / PR #71 / 2026-08 (location production composition이 이 composition을 소
   pass-through
 - WeatherOverview.current·SourceMetadata·POST /weather 연결·availability-delay selector는 여전히
   이 PR 범위 밖
+
+v4 / PR #72 / 2026-08 (WeatherOverview.current assembler 추가; 이 composition 자체는 불변)
+- 이 composition의 공개 계약·조립 순서·construction side-effect 경계·schedule-only selector 선택
+  변경 없음
+- 새 pure assembler(assembleKmaCurrentWeatherOverview,
+  kma-current-weather-overview.md)가 CurrentWeather → WeatherOverview.current를 조립하지만, 이
+  composition이나 PR #71 location production composition을 소비/연결하지 않는 독립 단위
+- SourceMetadata·POST /weather 연결·availability-delay selector는 여전히 이 PR 범위 밖
 ```

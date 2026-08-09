@@ -432,5 +432,25 @@
   [kma-location-scheduled-current-observation.md](./kma-location-scheduled-current-observation.md),
   [kma-current-observation-production-composition.md](./kma-current-observation-production-composition.md)
   참고.
+- **PR #72**는 PR #63/#67 pipeline이 이미 반환하는 contracts `CurrentWeather`를 받아
+  `WeatherOverview.current`만 채워진 **current-only partial `WeatherOverview`**를 만드는 pure
+  synchronous assembler(`assembleKmaCurrentWeatherOverview`,
+  `apps/api/src/services/kma-current-weather-overview.ts`)를 추가했습니다 — hourly의 PR #23
+  assembler(`assembleKmaHourlyWeatherOverview`)와 같은 형태를 따르는 별도·병렬 구현입니다. 입력은
+  `WeatherLocation`과 `CurrentWeather` 두 field뿐이며, caller가 전달한 `CurrentWeather`를 재계산
+  없이 그대로 `current`에 쓰고, `missingSections`는 정확히 `HOURLY`/`DAILY`/`AIR_QUALITY_CURRENT`/
+  `AIR_QUALITY_FORECAST`/`ALERTS` 5개(`CURRENT`는 항상 제외)이며, `sources`는 정확히 `[]`입니다 —
+  contracts `weatherOverview` schema는 `current` 존재 시 `SourceMetadata` 존재를 강제하지 않으므로
+  이 PR은 current provenance(`sourceId`/`issuedAt`/`observedAt`/`fetchedAt`/`retrievalMode`)를
+  발명하지 않습니다. 최종 payload는 `weatherOverview.parse()`로 runtime validate되어 malformed
+  location/current는 synchronous Zod error가 됩니다. pure/synchronous/no I/O(clock·env·fetch·
+  console 없음), frozen input 지원, 매 호출 fresh output입니다. 이 assembler는 PR #67
+  application service, PR #68/#70 scheduled/location facade, PR #69/#71 production composition
+  어느 것도 호출하거나 연결하지 않는 독립 단위입니다 — location current pipeline과의 application
+  orchestration, current `SourceMetadata` resolver, production composition integration,
+  `POST /weather` current wiring, current-observation availability-delay selector, 실제 인증 KMA
+  API 호출은 모두 여전히 미구현입니다. 자세한 내용은
+  [kma-current-weather-overview.md](./kma-current-weather-overview.md) 참고. 따라서 PR #72 이후에도
+  production `POST /weather`의 `current`는 계속 missing입니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
