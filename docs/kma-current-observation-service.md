@@ -267,7 +267,11 @@ Provider의 방어적 success는 `slot: null`을 포함할 수 있습니다(`tot
    (`createKmaScheduledCurrentObservationCompositionFromEnv`,
    [kma-current-observation-production-composition.md](./kma-current-observation-production-composition.md)) —
    route에는 여전히 연결되지 않음
-4. `CurrentWeather`를 `WeatherOverview.current` section에 조립
+4. ~~`CurrentWeather`를 `WeatherOverview.current` section에 조립~~ — **PR #72에서 완료**
+   (`assembleKmaCurrentWeatherOverview`,
+   [kma-current-weather-overview.md](./kma-current-weather-overview.md)) — 이 assembler는 이
+   service의 출력을 소비하는 별도 pure 함수일 뿐, application orchestration/production
+   composition/route 연결은 여전히 없음
 5. `SourceMetadata`(`sourceId`/`issuedAt`/`retrievalMode`) 조립
 6. `POST /weather`로의 current 데이터 연결
 7. current-observation availability-delay selector
@@ -292,4 +296,10 @@ v2 / PR #69 / 2026-08 (production composition이 이 service를 조립 — servi
   provider를 이 service에 주입해 조립
 - 이 service의 공개 API·오류 정책·side-effect-free 생성은 v1과 동일하게 불변
 - route(POST /weather) 연결은 여전히 없음
+
+v3 / PR #72 / 2026-08 (WeatherOverview.current assembler 추가 — service 계약 불변)
+- assembleKmaCurrentWeatherOverview가 이 service가 반환하는 CurrentWeather를 소비해 current-only
+  partial WeatherOverview를 조립 (별도 pure 함수, 이 service를 직접 호출하지 않음)
+- 이 service의 공개 API·오류 정책·side-effect-free 생성은 v1/v2와 동일하게 불변
+- application orchestration/production composition/route(POST /weather) 연결은 여전히 없음
 ```
