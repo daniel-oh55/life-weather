@@ -7,12 +7,17 @@ current-observation facade 앞단에 두는 **얇은 adapter**일 뿐입니다 �
 하나를 제외하면 새로운 KMA 데이터 규칙이나 오류 정책을 도입하지 않습니다. 이 facade는
 [kma-location-scheduled-hourly.md](./kma-location-scheduled-hourly.md)의 PR #13 location scheduled
 hourly facade와 **같은 원칙을 따르는 별도의, 병렬** 구현입니다 — hourly location facade와 current
-location facade를 generic abstraction으로 합치지 않습니다.
+location facade를 generic abstraction으로 합치지 않습니다. 이어서 **PR #71**이 이 facade에 production
+converter를 선택해 연결하는 production composition을 추가했습니다 — 아래 "PR #71: production
+composition" 절 참고.
 
 구현 위치:
 
-- [kma-location-scheduled-current-observation.ts](../apps/api/src/services/kma-location-scheduled-current-observation.ts) — application facade
-- [kma-location-scheduled-current-observation 테스트](../apps/api/src/services/kma-location-scheduled-current-observation.test.ts)
+- [kma-location-scheduled-current-observation.ts (facade)](../apps/api/src/services/kma-location-scheduled-current-observation.ts) — application facade
+- [kma-location-scheduled-current-observation 테스트 (facade)](../apps/api/src/services/kma-location-scheduled-current-observation.test.ts)
+- [kma-location-scheduled-current-observation.ts (composition)](../apps/api/src/composition/kma-location-scheduled-current-observation.ts) — PR #71 production composition root
+- [kma-location-scheduled-current-observation 테스트 (composition)](../apps/api/src/composition/kma-location-scheduled-current-observation.test.ts)
+- [composition/index.ts](../apps/api/src/composition/index.ts) — composition barrel(PR #71 export 추가)
 
 ## 목적
 
@@ -211,7 +216,7 @@ integration 테스트 하나를 두어 shape drift를 방지합니다 — 서울
 - 실제 `KMA_SERVICE_KEY`를 사용하지 않고, 자동 테스트는 실제 네트워크를 호출하지 않습니다.
 - runtime은 logging하지 않습니다.
 
-## 이 PR의 범위 밖
+## 이 PR(#70)의 범위 밖
 
 - **production converter 선택 / production location composition** — 없음. PR #69의 grid-based
   production composition(`createKmaScheduledCurrentObservationCompositionFromEnv`)에 이 facade를
@@ -229,18 +234,62 @@ integration 테스트 하나를 두어 shape drift를 방지합니다 — 서울
 - **기존 hourly location facade/scheduled current facade 변경** — 없음. current와 hourly의 location
   facade를 합치는 generic abstraction도 추가하지 않습니다.
 
+## PR #71: production composition
+
+**PR #71**이 이 facade에 production converter를 선택해 연결하는 **production composition root**
+(`createKmaLocationScheduledCurrentObservationCompositionFromEnv`,
+[apps/api/src/composition/kma-location-scheduled-current-observation.ts](../apps/api/src/composition/kma-location-scheduled-current-observation.ts))를
+추가했습니다 — hourly의 PR #13
+([kma-location-scheduled-hourly.md](./kma-location-scheduled-hourly.md)) composition과 같은
+원칙을 따르는 별도·병렬 구현입니다.
+
+```text
+environment / injected dependencies
+  → createKmaScheduledCurrentObservationCompositionFromEnv   // PR #69, 그대로 재사용
+  → live KmaScheduledCurrentObservationFacade
+          +
+convertKmaLatitudeLongitudeToGrid                            // 기존 production converter
+          ↓
+createKmaLocationScheduledCurrentObservationFacade            // PR #70, 이 문서의 facade
+  → live KmaLocationScheduledCurrentObservationFacade
+```
+
+- PR #69의 provider-from-env, clock 선택, request factory, current-observation service, scheduled
+  facade 조립 그래프를 **재구현하지 않고** `createKmaScheduledCurrentObservationCompositionFromEnv(env,
+  dependencies)`를 그대로 호출합니다 — `env`/`dependencies`는 exact reference로 전달됩니다(clone·
+  spread·mutation·구조분해 후 재조립 없음).
+- PR #69 composition이 config 실패(`{ ok: false, error }`)를 반환하면 **동일 error reference**를
+  그대로 반환하고, 이 경우 이 facade factory 호출·converter 실행·clock read·network가 **0회**입니다.
+  `LOCATION_CONFIG`/`CURRENT_CONFIG`/`COMPOSITION_ERROR`/`STARTUP_ERROR`/`INTERNAL_ERROR`/`UNKNOWN`
+  같은 새 error kind를 만들지 않습니다.
+- 성공하면 기존 production `convertKmaLatitudeLongitudeToGrid`(exact function reference, wrapper
+  없음)와 PR #69 결과의 exact facade reference를 `createKmaLocationScheduledCurrentObservationFacade(
+  gridConverter, scheduledFacade)`에 그대로 전달해 이 문서의 location facade를 조립합니다.
+- 성공 result는 정확히 `{ ok, facade }`만 노출합니다 — `scheduledFacade`/`provider`/`requestFactory`/
+  `clock`/`env`/`dependencies`/`serviceKey` 등 내부 그래프는 노출하지 않습니다.
+- module import 시점에는 env read·provider 생성·converter 실행·clock read·fetch가 없고, composition
+  함수 호출 시점에도 converter 실행·clock read·fetch는 **0회**입니다 — 이들은 반환된 facade의
+  `fetchScheduledCurrentWeatherForLocation()`이 실행될 때만 발생합니다.
+- 매 호출은 독립된 그래프를 만듭니다(module-level singleton/cache 없음) — 같은 env/dependencies로
+  두 번 호출해도 반환된 facade는 서로 다른 reference입니다.
+- 이 PR도 **`WeatherOverview.current` / current `SourceMetadata` / `POST /weather` route 연결 /
+  availability-delay selector**를 구현하지 않습니다 — production current 데이터는 이 PR 이후에도
+  계속 missing입니다. 자세한 계약은
+  [kma-current-observation-production-composition.md](./kma-current-observation-production-composition.md)의
+  "PR #71" 절 참고.
+
 ## 후속 범위
 
-1. production converter 선택과 이 facade를 PR #69 grid-based composition에 연결하는 location production
-   composition root.
+1. ~~production converter 선택과 이 facade를 PR #69 grid-based composition에 연결하는 location
+   production composition root~~ — PR #71에서 구현.
 2. `WeatherOverview.current` section 조립.
 3. current `SourceMetadata`(`sourceId`/`issuedAt`/`retrievalMode`) 조립.
 4. `POST /weather`로의 current 데이터 연결.
 5. current-observation availability-delay selector.
 6. 실제 인증 KMA API 호출을 통한 live 검증.
 
-이 PR이 production current 데이터를 제공한다고 표현하지 않습니다 — `POST /weather`는 이 PR 이후에도
-계속 current를 missing으로 응답합니다.
+이 PR들이 production current 데이터를 제공한다고 표현하지 않습니다 — `POST /weather`는 PR #71
+이후에도 계속 current를 missing으로 응답합니다.
 
 ## 변경 이력
 
@@ -254,4 +303,11 @@ v1 / PR #70 / 2026-08
   availability-delay selector는 이 PR 범위 밖
 - 기존 nx/ny 기반 scheduled current-observation facade·request factory·service·hourly location
   facade는 변경하지 않음, 새 generic 공통 abstraction 없음
+
+v2 / PR #71 / 2026-08 (production composition 추가; 이 facade 자체는 불변)
+- 이 facade의 공개 계약(latitude/longitude 입력, pass-through, Promise identity, 호출 순서) 변경 없음
+- 새 production composition(createKmaLocationScheduledCurrentObservationCompositionFromEnv)이 PR #69
+  grid production composition을 그대로 재사용하고 production converter를 선택해 이 facade에 연결
+- WeatherOverview.current·SourceMetadata·POST /weather 연결·availability-delay selector는 여전히 이
+  범위 밖
 ```
