@@ -2,7 +2,7 @@
  * Public surface of `apps/api`'s **application services** — the orchestration layer that sequences
  * the KMA provider boundary and the domain normalizers, and assembles the requests they consume.
  *
- * Seventeen application components live here so far:
+ * Eighteen application components live here so far:
  *
  * 1. The PR #7 KMA **hourly-forecast orchestration** (`createKmaHourlyForecastService`): it calls
  *    the PR #5 HTTP provider and the PR #6 hourly normalizer in order and reports a `PROVIDER`- or
@@ -215,23 +215,42 @@
  *
  * 17. The PR #72 KMA **current-only `WeatherOverview` assembler**
  *    (`assembleKmaCurrentWeatherOverview`): the current-observation counterpart of component 10, a
- *    **pure, synchronous** function that consumes a caller's `WeatherLocation` and already-normalized
- *    `CurrentWeather` and assembles the current-only partial contracts `WeatherOverview`. The
- *    caller's `current` becomes the overview's `current` unchanged (no field is recomputed,
- *    rounded, defaulted, or re-derived); every other section is a fixed placeholder (`hourly: []`,
- *    `daily: []`, `airQuality.current: null`, `airQuality.daily: []`, `alerts: []`), so
- *    `missingSections` is always exactly `['HOURLY', 'DAILY', 'AIR_QUALITY_CURRENT',
- *    'AIR_QUALITY_FORECAST', 'ALERTS']` (never `CURRENT`, since `current` is always present).
- *    `sources` is fixed `[]` — unlike component 10's `HOURLY` source metadata, this assembler
- *    invents **no** current `SourceMetadata` (`sourceId`/`provider`/`sections`/`issuedAt`/
- *    `observedAt`/`fetchedAt`/`retrievalMode`); the contracts schema does not require one whenever
- *    `current` is present, and resolving current provenance is a later PR's responsibility. It then
- *    validates the whole payload with `weatherOverview.parse` (a malformed location/current-weather
- *    or invariant breach throws a synchronous Zod error), allocates a fresh output every call, and
- *    mutates nothing. It calls **no** Provider/service/facade/composition, performs **no**
+ *    **pure, synchronous** function that consumes a caller's `WeatherLocation`, already-normalized
+ *    `CurrentWeather`, and (since PR #73) a caller-supplied source context, and assembles the
+ *    current-only partial contracts `WeatherOverview`. The caller's `current` becomes the
+ *    overview's `current` unchanged (no field is recomputed, rounded, defaulted, or re-derived);
+ *    every other section is a fixed placeholder (`hourly: []`, `daily: []`,
+ *    `airQuality.current: null`, `airQuality.daily: []`, `alerts: []`), so `missingSections` is
+ *    always exactly `['HOURLY', 'DAILY', 'AIR_QUALITY_CURRENT', 'AIR_QUALITY_FORECAST', 'ALERTS']`
+ *    (never `CURRENT`, since `current` is always present). As of PR #73 `sources` carries exactly
+ *    one KMA `CURRENT` `SourceMetadata` entry: the caller supplies `sourceId`/`fetchedAt`/
+ *    `retrievalMode` (`KmaCurrentSourceMetadataInput`), and the assembler fixes `provider: 'KMA'`,
+ *    `sections: ['CURRENT']`, `issuedAt: null`, and `observedAt: input.current.observedAt` from
+ *    current-data semantics — built from explicit named fields, never a `{ ...input.source }`
+ *    spread, so an extra runtime property on `input.source` can never override the fixed policy
+ *    fields. (PR #72's `sources: []` behavior — provenance deferred entirely — is superseded by
+ *    this metadata-aware contract.) It then validates the whole payload with `weatherOverview.parse`
+ *    (a malformed location/current-weather/`sourceId`/`fetchedAt`/`retrievalMode` or invariant
+ *    breach throws a synchronous Zod error), allocates a fresh output every call, and mutates
+ *    nothing. It calls **no** Provider/service/facade/resolver/composition, performs **no**
  *    location→grid conversion, and reads no clock/environment/network. It is not the hourly
  *    assembler generalized — the two remain separate, parallel implementations — and it is **not
  *    yet** consumed by any application orchestration, composition root, or `POST /weather` route.
+ * 18. The PR #73 KMA **live current source metadata resolver**
+ *    (`createKmaLiveCurrentSourceMetadataResolver`): the current-observation counterpart of
+ *    component 12, a nullary `KmaCurrentSourceMetadataResolver` that materializes the three
+ *    provenance facts component 17's `KmaCurrentSourceMetadataInput` needs. Unlike component 12 it
+ *    takes **no input** — current observation has no issuance identity or `PRIMARY`/`PREVIOUS`
+ *    selection to correlate — so every fact is either a fixed constant or the injected clock:
+ *    `sourceId` is the fixed canonical `'kma-ultra-short-current-observation'` identifier (no
+ *    location, coordinate, grid cell, base date/time, or observation instant encoded); `retrievalMode`
+ *    is fixed `'LIVE'`; `fetchedAt` is read from the injected clock **exactly once** per valid call,
+ *    meaning "resolver materialization time", not an exact transport timestamp. An invalid clock
+ *    value or a throwing clock propagates synchronously (same error reference) as a **static**
+ *    `RangeError` after that single read. Construction reads the clock zero times. It is a separate,
+ *    parallel implementation from component 12 — current and forecast provenance semantics are not
+ *    generalized into a shared abstraction — and it is **not yet** wired into component 17, any
+ *    application orchestration, composition root, or `POST /weather` route.
  *
  * The grid-based single-request **production composition root** (system clock adapter,
  * provider-from-env wiring, a live facade instance) is built in PR #11 and lives in `../composition`;
@@ -258,8 +277,9 @@
  * `docs/kma-current-observation-request-factory.md`,
  * `docs/kma-current-observation-service.md`,
  * `docs/kma-scheduled-current-observation-facade.md`,
- * `docs/kma-location-scheduled-current-observation.md`, and
- * `docs/kma-current-weather-overview.md`.
+ * `docs/kma-location-scheduled-current-observation.md`,
+ * `docs/kma-current-weather-overview.md`, and
+ * `docs/kma-current-source-metadata.md`.
  */
 
 export {
@@ -391,5 +411,12 @@ export {
 
 export {
   assembleKmaCurrentWeatherOverview,
+  type KmaCurrentSourceMetadataInput,
   type KmaCurrentWeatherOverviewInput,
 } from './kma-current-weather-overview.js';
+
+export {
+  createKmaLiveCurrentSourceMetadataResolver,
+  type KmaCurrentSourceMetadataClock,
+  type KmaCurrentSourceMetadataResolver,
+} from './kma-current-source-metadata.js';
