@@ -293,11 +293,15 @@ createKmaLocationScheduledCurrentObservationFacade            // PR #70, 이 문
    ([kma-location-current-overview.md](./kma-location-current-overview.md))로 이 facade → 주입된
    nullary resolver → assembler 순서를 연결했습니다. PR #74는 production resolver를 스스로 선택하지
    않고 production composition에도 연결하지 않습니다.
-5. `POST /weather`로의 current 데이터 연결.
-6. current-observation availability-delay selector.
-7. 실제 인증 KMA API 호출을 통한 live 검증.
+5. ~~PR #74 service를 production resolver·이 composition과 함께 조립하는 production composition
+   root~~ — **PR #75**가 `createKmaLocationCurrentOverviewCompositionFromEnv`
+   ([kma-location-current-overview-composition.md](./kma-location-current-overview-composition.md))로
+   구현했습니다. 이 문서의 PR #71 composition/PR #70 facade 공개 계약은 변경되지 않았습니다.
+6. `POST /weather`로의 current 데이터 연결.
+7. current-observation availability-delay selector.
+8. 실제 인증 KMA API 호출을 통한 live 검증.
 
-이 PR들이 production current 데이터를 제공한다고 표현하지 않습니다 — `POST /weather`는 PR #74
+이 PR들이 production current 데이터를 제공한다고 표현하지 않습니다 — `POST /weather`는 PR #75
 이후에도 계속 current를 missing으로 응답합니다.
 
 ## 변경 이력

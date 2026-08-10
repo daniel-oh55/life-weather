@@ -495,5 +495,24 @@
   production `POST /weather`의 `current`는 계속 missing이며, production composition integration,
   `POST /weather` current wiring, current-observation availability-delay selector, 실제 인증 KMA API
   호출은 모두 여전히 미구현입니다.
+- **PR #75**는 PR #71 location scheduled current-observation composition, PR #73 live current source
+  metadata resolver, PR #74 location current overview application service를 하나로 잇는 **여덟 번째
+  callable production composition root**(`createKmaLocationCurrentOverviewCompositionFromEnv`,
+  `apps/api/src/composition/kma-location-current-overview.ts`)를 추가했습니다 — hourly의 PR #27
+  location hourly-overview composition과 같은 원칙을 따르는 별도·병렬 구현입니다. PR #71 composition을
+  재구현하지 않고 `env`/`dependencies`를 exact reference로 그대로 전달해 호출하며, PR #71의 config
+  실패(`KmaProviderConfigError`)를 동일 reference로 pass-through합니다(이 경우 resolver clock 선택·PR
+  #73 resolver·PR #74 service 생성·network가 0회). 성공하면 injected `dependencies.clock`이 있을 때는
+  그 동일 reference를 PR #73 resolver의 clock으로도 공유하고(정상 성공 current 요청 1회당 clock 정확히
+  2회 read), 없을 때는 기존 PR #71/#69 그래프의 내부 clock은 건드리지 않고 resolver 전용 fresh
+  `createKmaSystemClock()` adapter를 새로 만듭니다. 성공 결과는 `{ ok, service }`만 노출하고,
+  composition 호출 시점에도 clock read·converter 실행·fetch는 0회입니다(모두 반환된 service의
+  `fetchCurrentWeatherOverviewForLocation()` 실행 시에만 발생). 매 호출은 독립된 그래프를 만듭니다
+  (module-level singleton/cache 없음). PR #69/#71/#73/#74의 공개 계약은 이 PR에서 전혀 변경되지
+  않았습니다. 이 composition은 여전히 `apps/api/src/routes/**`·`presenters/**`·`index.ts`·
+  `api-app.ts`·`weather-route.ts`에 연결되지 않았으므로, production `POST /weather`의 `current`는 이
+  PR 이후에도 계속 missing입니다. current-observation availability-delay selector, cache/stale-data,
+  실제 인증 KMA API 호출도 여전히 미구현입니다. 자세한 내용은
+  [kma-location-current-overview-composition.md](./kma-location-current-overview-composition.md) 참고.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.

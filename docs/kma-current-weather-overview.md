@@ -169,12 +169,15 @@ orchestration(`createKmaLocationCurrentOverviewService`,
 [kma-location-current-overview.md](./kma-location-current-overview.md))을 구현했습니다. 다음은
 여전히 미구현입니다.
 
-- production composition integration
 - `POST /weather` current wiring
 - current-observation availability-delay selector
 - 실제 인증 KMA API 호출을 통한 live 검증
 
-즉 PR #74 이후에도 `POST /weather`의 production 응답에서 `current`는 계속 missing입니다.
+이어서 **PR #75**가 이 assembler를 사용하는 PR #74 service를 production composition
+(`createKmaLocationCurrentOverviewCompositionFromEnv`,
+[kma-location-current-overview-composition.md](./kma-location-current-overview-composition.md))으로
+조립했습니다 — 이 assembler 자체의 공개 계약은 변경되지 않았습니다. `POST /weather` route는 PR #75도
+연결하지 않으므로, production 응답에서 `current`는 이 PR 이후에도 계속 missing입니다.
 
 ## 실제 key·네트워크·좌표 미사용
 
@@ -208,4 +211,10 @@ v3 / PR #74 / 2026-08 (이 assembler 자체는 불변)
 - 이 assembler의 공개 계약(입력/출력/pure/synchronous) 변경 없음
 - createKmaLocationCurrentOverviewService가 location facade → resolver → 이 assembler 순서로 연결
 - production composition/POST 연결/availability-delay selector는 여전히 범위 밖
+
+v4 / PR #75 / 2026-08 (이 assembler 자체는 불변)
+- 이 assembler의 공개 계약 변경 없음
+- production composition root(createKmaLocationCurrentOverviewCompositionFromEnv)가 PR #74
+  service를 조립(별도 파일/PR)
+- POST /weather 연결/availability-delay selector는 여전히 범위 밖
 ```
