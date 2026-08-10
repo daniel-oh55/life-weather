@@ -2,10 +2,11 @@
 
 이 문서는 PR #75에서 추가한 **production composition root**
 (`createKmaLocationCurrentOverviewCompositionFromEnv`)의 책임과 경계를 기록합니다. 이 root는 이전
-building block 두 개를 실제 server 환경에서 조립합니다.
+building block 세 개를 실제 server 환경에서 조립합니다.
 
 - PR #71 location scheduled current-observation composition
 - PR #73 live current source metadata resolver
+- PR #74 location current WeatherOverview application service
 
 이 root는 [kma-location-hourly-overview-composition.md](./kma-location-hourly-overview-composition.md)의
 PR #27 location hourly-overview composition과 같은 원칙을 따르는 **별도·병렬** 구현입니다 —

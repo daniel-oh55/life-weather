@@ -111,8 +111,8 @@
  * - **Construction is network-free.** Building any graph only reads provider configuration and wires
  *   collaborators; the first converter run, the first clock read, and the first `fetch` happen only
  *   when the returned facade's / service's method is called.
- * - **Routing.** The four hourly scheduled/fallback roots and the current-observation root remain
- *   **unrouted**. The location hourly-overview root is now consumed by the PR #31
+ * - **Routing.** The four hourly scheduled/fallback roots and all three current roots (PR #69, PR #71,
+ *   PR #75) remain **unrouted**. The location hourly-overview root is now consumed by the PR #31
  *   `createProductionWeatherRouteDependencies`, which `apps/api/src/index.ts` wires into the live
  *   `POST /weather` route; startup still issues no external `fetch` (the graph is lazy).
  *
