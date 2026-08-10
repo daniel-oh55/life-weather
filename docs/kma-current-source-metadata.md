@@ -264,16 +264,21 @@ key만 가집니다.
   다릅니다.
 - module-level mutable state가 없습니다. construction은 clock을 closure로 잡을 뿐입니다.
 
-## application orchestration — 이번 PR 금지
+## application orchestration — 이번 PR 금지, PR #74에서 연결됨
 
-다음 pipeline은 이 PR에서 연결하지 않습니다.
+다음 pipeline은 이 PR(#73)에서 연결하지 않았습니다.
 
 ```text
 location facade → current result → resolver → assembler
 ```
 
 `createKmaLocationCurrentWeatherOverviewService` 또는 이에 준하는 orchestration component는
-이 PR 범위 밖입니다. resolver와 assembler는 독립된 building block으로만 존재합니다.
+이 PR 범위 밖이었습니다 — resolver와 assembler는 독립된 building block으로만 존재했습니다. **PR
+#74**가 `createKmaLocationCurrentOverviewService`
+([kma-location-current-overview.md](./kma-location-current-overview.md))로 이 pipeline을
+연결했습니다 — 다만 PR #74도 production resolver를 스스로 선택하지 않고(resolver는 여전히 필수
+주입) production composition에도 연결하지 않으므로, `POST /weather`의 `current`는 PR #74 이후에도
+계속 missing입니다.
 
 ## production composition / route — 이번 PR 금지
 
@@ -320,7 +325,8 @@ application-layer(assembler) 결정이지 contract 강제 규칙이 아닙니다
 
 ## 범위 밖
 
-- location current pipeline과 resolver/assembler를 잇는 application orchestration
+- ~~location current pipeline과 resolver/assembler를 잇는 application orchestration~~ — PR #74에서
+  구현
 - production composition integration
 - `POST /weather` current wiring
 - current-observation availability-delay selector
@@ -342,4 +348,9 @@ v1 / PR #73 / 2026-08
 - explicit-field SourceMetadata 구성(spread 없음) — 나머지 4 field override/leak 방지
 - application orchestration / production composition / POST /weather wiring / availability-delay
   selector / 실제 KMA 호출은 이 PR 범위 밖 (후속 PR)
+
+v2 / PR #74 / 2026-08 (이 resolver/assembler 자체는 불변)
+- 이 문서의 resolver·assembler 공개 계약 변경 없음
+- application orchestration을 createKmaLocationCurrentOverviewService가 구현(별도 파일/PR)
+- production composition/POST 연결/availability-delay selector는 여전히 범위 밖
 ```

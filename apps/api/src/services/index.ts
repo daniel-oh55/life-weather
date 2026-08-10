@@ -2,7 +2,7 @@
  * Public surface of `apps/api`'s **application services** — the orchestration layer that sequences
  * the KMA provider boundary and the domain normalizers, and assembles the requests they consume.
  *
- * Eighteen application components live here so far:
+ * Nineteen application components live here so far:
  *
  * 1. The PR #7 KMA **hourly-forecast orchestration** (`createKmaHourlyForecastService`): it calls
  *    the PR #5 HTTP provider and the PR #6 hourly normalizer in order and reports a `PROVIDER`- or
@@ -251,6 +251,24 @@
  *    parallel implementation from component 12 — current and forecast provenance semantics are not
  *    generalized into a shared abstraction — and it is **not yet** wired into component 17, any
  *    application orchestration, composition root, or `POST /weather` route.
+ * 19. The PR #74 KMA **location current `WeatherOverview` application service**
+ *    (`createKmaLocationCurrentOverviewService`): the current-observation counterpart of
+ *    component 11, connecting component 16 (the location scheduled current-observation facade),
+ *    component 18 (the injected nullary current source metadata resolver), and component 17 (the
+ *    current assembler) into a single call. Per call it (a) runs the contracts `weatherLocation`
+ *    runtime parse on the caller's location **upfront** — an invalid location throws a
+ *    **synchronous** Zod error and **no** collaborator runs — then (b) runs component 16 with the
+ *    parsed `latitude`/`longitude`, (c) returns any `ok: false` result (`LOCATION`/`PROVIDER`/
+ *    `NORMALIZATION`) **verbatim** (never reinterpreted, never promoted to a partial success —
+ *    current has no "no usable data" success branch the way hourly does), and (d) on a success calls
+ *    the **injected**, required, **nullary** resolver **exactly once** and the assembler **exactly
+ *    once**, returning `{ ok: true, overview }`. The method is intentionally **not** `async`: an
+ *    invalid location and a facade synchronous throw propagate synchronously (same error reference),
+ *    while a facade rejection and a resolver/assembler throw reject the returned Promise (same error
+ *    reference), with **no** broad `try`/`catch`, wrapping, logging, or partial result. This service
+ *    owns **no** clock/env/network and injects no default resolver — the production PR #73 live
+ *    resolver is not selected here. It is not yet consumed by any production composition root or
+ *    `POST /weather` route.
  *
  * The grid-based single-request **production composition root** (system clock adapter,
  * provider-from-env wiring, a live facade instance) is built in PR #11 and lives in `../composition`;
@@ -278,8 +296,9 @@
  * `docs/kma-current-observation-service.md`,
  * `docs/kma-scheduled-current-observation-facade.md`,
  * `docs/kma-location-scheduled-current-observation.md`,
- * `docs/kma-current-weather-overview.md`, and
- * `docs/kma-current-source-metadata.md`.
+ * `docs/kma-current-weather-overview.md`,
+ * `docs/kma-current-source-metadata.md`, and
+ * `docs/kma-location-current-overview.md`.
  */
 
 export {
@@ -420,3 +439,11 @@ export {
   type KmaCurrentSourceMetadataClock,
   type KmaCurrentSourceMetadataResolver,
 } from './kma-current-source-metadata.js';
+
+export {
+  createKmaLocationCurrentOverviewService,
+  type KmaLocationCurrentOverviewInput,
+  type KmaLocationCurrentOverviewOptions,
+  type KmaLocationCurrentOverviewResult,
+  type KmaLocationCurrentOverviewService,
+} from './kma-location-current-overview.js';

@@ -475,5 +475,25 @@
   [kma-current-source-metadata.md](./kma-current-source-metadata.md),
   [kma-current-weather-overview.md](./kma-current-weather-overview.md) 참고. 따라서 PR #73 이후에도
   production `POST /weather`의 `current`는 계속 missing입니다.
+- **PR #74**는 PR #70 location scheduled current-observation facade, PR #73 nullary current source
+  metadata resolver seam, PR #72/#73 current-only `WeatherOverview` assembler를 하나의
+  orchestration으로 잇는 **location current `WeatherOverview` application
+  service**(`createKmaLocationCurrentOverviewService`,
+  `apps/api/src/services/kma-location-current-overview.ts`)를 추가했습니다 — hourly의 PR #24
+  location hourly overview service와 같은 원칙을 따르는 별도·병렬 구현입니다. `weatherLocation.parse`를
+  facade 호출 전 upfront로 실행해 invalid location은 동기 `ZodError`로 전파하고(어떤 collaborator도
+  호출되지 않음), PR #70 facade를 parsed `latitude`/`longitude`로 정확히 한 번 호출합니다. Current는
+  fallback 선택이나 "사용 가능한 데이터 없음" success 분기가 없으므로, facade의 모든 `ok: false`
+  결과(`LOCATION`/`PROVIDER`/`NORMALIZATION`)는 **그대로** 반환되고 resolver/assembler는 호출되지
+  않습니다. facade 성공 시에만 주입된 **필수, nullary** source metadata resolver를 정확히 한 번, 이어서
+  assembler를 정확히 한 번 호출해 `{ ok: true, overview }`를 반환합니다. `async` 없이 작성되어 invalid
+  location과 facade 동기 throw는 동기 전파되고, facade rejection·resolver throw·assembler throw는
+  반환된 Promise를 동일 reference로 reject합니다. Production live resolver(PR #73)를 스스로 선택하지
+  않고 system clock을 주입하지 않으며, `apps/api/src/composition/**`·`routes/**`·`presenters/**`·
+  `index.ts`·`api-app.ts`는 변경하지 않았습니다. 자세한 내용은
+  [kma-location-current-overview.md](./kma-location-current-overview.md) 참고. 따라서 PR #74 이후에도
+  production `POST /weather`의 `current`는 계속 missing이며, production composition integration,
+  `POST /weather` current wiring, current-observation availability-delay selector, 실제 인증 KMA API
+  호출은 모두 여전히 미구현입니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
