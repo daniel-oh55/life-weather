@@ -33,7 +33,7 @@ WeatherOverview
   - hourly / daily / alerts: []
   - airQuality.current: null / airQuality.daily: []
   - missingSections: ['HOURLY', 'DAILY', 'AIR_QUALITY_CURRENT', 'AIR_QUALITY_FORECAST', 'ALERTS']
-  - sources: []
+  - sources: exactly one KMA `CURRENT` `SourceMetadata`
 ```
 
 ## 공개 API
