@@ -2,7 +2,7 @@
  * Public surface of `apps/api`'s **application services** — the orchestration layer that sequences
  * the KMA provider boundary and the domain normalizers, and assembles the requests they consume.
  *
- * Nineteen application components live here so far:
+ * Twenty application components live here so far:
  *
  * 1. The PR #7 KMA **hourly-forecast orchestration** (`createKmaHourlyForecastService`): it calls
  *    the PR #5 HTTP provider and the PR #6 hourly normalizer in order and reports a `PROVIDER`- or
@@ -270,6 +270,29 @@
  *    resolver is not selected here. It is not yet consumed by any production composition root or
  *    `POST /weather` route.
  *
+ * 20. The PR #76 KMA **current + hourly `WeatherOverview` aggregate assembler**
+ *    (`assembleKmaCurrentHourlyWeatherOverview`): a **pure, synchronous** function that combines an
+ *    already-computed component 11 hourly overview success with an optional already-computed
+ *    component 19 current overview success into a single current+hourly partial contracts
+ *    `WeatherOverview`. It calls **neither** service — it only reads the two services' public result
+ *    types (`Extract<..., { ok: true }>` of each) and composes their already-produced `overview`
+ *    values. The hourly success `overview` is the baseline for every non-current section (`hourly`,
+ *    `daily`, `airQuality`, `alerts`, the non-`CURRENT` `missingSections`, and hourly `sources`); it
+ *    reads only `input.hourly.overview`, **never** `input.hourly.selection` (the PR #22 execution
+ *    trace). `input.current === null` means only that the caller has already decided current
+ *    contributes nothing to this aggregate — the assembler never inspects or infers why (LOCATION,
+ *    PROVIDER, or NORMALIZATION failure), and that degradation policy is deliberately left to a later
+ *    application orchestration. When `current` is present, its location must equal the hourly
+ *    baseline's location **by value** (every `WeatherLocation` contract field, not object identity) or
+ *    the assembler throws a synchronous, static, value-free `RangeError`; otherwise `current` and
+ *    `sources` overlay the baseline — `CURRENT` is removed from the baseline's `missingSections` (and
+ *    nothing else changes; the current overview's own `missingSections` is never unioned in), and
+ *    `sources` becomes the current overview's sources followed by the baseline's sources (deterministic
+ *    order, no sort/dedupe/merge). It validates the assembled payload with `weatherOverview.parse` — the
+ *    sole runtime invariant guard — reads no clock/environment/network, mutates nothing, and allocates a
+ *    fresh output every call. It re-implements **no** PR #23/#72/#73 assembler policy, and it is **not
+ *    yet** wired into any production composition root, `POST /weather` route, or presenter.
+ *
  * The grid-based single-request **production composition root** (system clock adapter,
  * provider-from-env wiring, a live facade instance) is built in PR #11 and lives in `../composition`;
  * PR #12 added the latitude/longitude → grid converter in `@life-weather/weather-core`; PR #13's
@@ -297,8 +320,9 @@
  * `docs/kma-scheduled-current-observation-facade.md`,
  * `docs/kma-location-scheduled-current-observation.md`,
  * `docs/kma-current-weather-overview.md`,
- * `docs/kma-current-source-metadata.md`, and
- * `docs/kma-location-current-overview.md`.
+ * `docs/kma-current-source-metadata.md`,
+ * `docs/kma-location-current-overview.md`, and
+ * `docs/kma-current-hourly-weather-overview.md`.
  */
 
 export {
@@ -447,3 +471,8 @@ export {
   type KmaLocationCurrentOverviewResult,
   type KmaLocationCurrentOverviewService,
 } from './kma-location-current-overview.js';
+
+export {
+  assembleKmaCurrentHourlyWeatherOverview,
+  type KmaCurrentHourlyWeatherOverviewInput,
+} from './kma-current-hourly-weather-overview.js';
