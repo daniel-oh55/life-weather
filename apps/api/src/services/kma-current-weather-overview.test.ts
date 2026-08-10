@@ -9,6 +9,7 @@ import {
 
 import {
   assembleKmaCurrentWeatherOverview,
+  type KmaCurrentSourceMetadataInput,
   type KmaCurrentWeatherOverviewInput,
 } from './kma-current-weather-overview.js';
 
@@ -45,6 +46,17 @@ const CURRENT_KEYS = [
   'windSpeedMetersPerSecond',
 ] as const;
 
+/** The exact own keys of a single `SourceMetadata` entry, sorted. */
+const SOURCE_KEYS = [
+  'fetchedAt',
+  'issuedAt',
+  'observedAt',
+  'provider',
+  'retrievalMode',
+  'sections',
+  'sourceId',
+] as const;
+
 /** The exact `missingSections` this assembler ever produces — CURRENT is never in this set. */
 const MISSING_SECTIONS = [
   'HOURLY',
@@ -54,19 +66,9 @@ const MISSING_SECTIONS = [
   'ALERTS',
 ] as const;
 
-/** Provenance fields this assembler must never invent on a source metadata entry. */
-const FORBIDDEN_SOURCE_KEYS = [
-  'sourceId',
-  'provider',
-  'sections',
-  'issuedAt',
-  'fetchedAt',
-  'retrievalMode',
-] as const;
-
 // ---------------------------------------------------------------------------
 // Fixture builders — every mutable fixture is built fresh per call, so no test
-// shares a mutable input/location/current object.
+// shares a mutable input/location/current/source object.
 // ---------------------------------------------------------------------------
 
 /** A fresh, complete, schema-valid `WeatherLocation` literal; overridable per field for edge cases. */
@@ -105,6 +107,18 @@ function makeCurrent(overrides: Partial<CurrentWeather> = {}): CurrentWeather {
   };
 }
 
+/** A fresh, complete, schema-valid caller source-provenance context; overridable per field. */
+function makeSource(
+  overrides: Partial<KmaCurrentSourceMetadataInput> = {},
+): KmaCurrentSourceMetadataInput {
+  return {
+    sourceId: 'kma-ultra-short-current-observation',
+    fetchedAt: '2026-08-09T05:00:00.000Z',
+    retrievalMode: 'LIVE',
+    ...overrides,
+  };
+}
+
 /** A fresh assembler input; overridable per field. */
 function makeInput(
   overrides: Partial<KmaCurrentWeatherOverviewInput> = {},
@@ -112,6 +126,7 @@ function makeInput(
   return {
     location: overrides.location ?? makeLocation(),
     current: overrides.current ?? makeCurrent(),
+    source: overrides.source ?? makeSource(),
   };
 }
 
@@ -193,7 +208,7 @@ describe('fixture sanity', () => {
 // ---------------------------------------------------------------------------
 
 describe('valid assembly', () => {
-  it('assembles a valid current-only overview from a WeatherLocation and CurrentWeather', () => {
+  it('assembles a valid current-only overview from a WeatherLocation, CurrentWeather, and source', () => {
     const input = makeInput();
 
     const overview = assembleKmaCurrentWeatherOverview(input);
@@ -301,26 +316,64 @@ describe('other data sections fixed empty', () => {
 });
 
 // ---------------------------------------------------------------------------
-// F — sources exact empty.
+// F — sources: exactly one CURRENT SourceMetadata entry, fixed current-data policy.
 // ---------------------------------------------------------------------------
 
-describe('sources exact empty', () => {
-  it('sources is exactly [] — no provenance is fabricated', () => {
+describe('sources — one CURRENT SourceMetadata entry', () => {
+  it('has exactly one source entry with the exact seven SourceMetadata own keys', () => {
     const overview = assembleKmaCurrentWeatherOverview(makeInput());
 
-    expect(overview.sources).toEqual([]);
-    expect(overview.sources).toHaveLength(0);
+    expect(overview.sources).toHaveLength(1);
+    expect(Object.keys(overview.sources[0]).sort()).toEqual([...SOURCE_KEYS]);
   });
 
-  it('never produces a source metadata entry carrying any provenance field', () => {
-    const overview = assembleKmaCurrentWeatherOverview(makeInput());
-    const serialized = JSON.stringify(overview);
+  it('uses the caller-supplied sourceId', () => {
+    const source = makeSource({ sourceId: 'kma-ultra-short-current-observation' });
+    const overview = assembleKmaCurrentWeatherOverview(makeInput({ source }));
 
-    for (const key of FORBIDDEN_SOURCE_KEYS) {
-      // sources is empty, so none of these keys can appear at all in the serialized payload's
-      // sources array; this also guards against a mutant that fabricates a lone source entry.
-      expect(serialized.includes(`"${key}"`)).toBe(false);
-    }
+    expect(overview.sources[0].sourceId).toBe(
+      'kma-ultra-short-current-observation',
+    );
+  });
+
+  it('fixes provider to KMA', () => {
+    const overview = assembleKmaCurrentWeatherOverview(makeInput());
+
+    expect(overview.sources[0].provider).toBe('KMA');
+  });
+
+  it('fixes sections to exactly [CURRENT]', () => {
+    const overview = assembleKmaCurrentWeatherOverview(makeInput());
+
+    expect(overview.sources[0].sections).toEqual(['CURRENT']);
+  });
+
+  it('fixes issuedAt to null', () => {
+    const overview = assembleKmaCurrentWeatherOverview(makeInput());
+
+    expect(overview.sources[0].issuedAt).toBeNull();
+  });
+
+  it("sets source.observedAt to CurrentWeather.observedAt verbatim", () => {
+    const current = makeCurrent({ observedAt: '2026-08-09T11:22:33+09:00' });
+    const overview = assembleKmaCurrentWeatherOverview(makeInput({ current }));
+
+    expect(overview.sources[0].observedAt).toBe('2026-08-09T11:22:33+09:00');
+    expect(overview.sources[0].observedAt).toBe(overview.current?.observedAt);
+  });
+
+  it('preserves the caller-supplied fetchedAt', () => {
+    const source = makeSource({ fetchedAt: '2026-08-09T05:12:34.567Z' });
+    const overview = assembleKmaCurrentWeatherOverview(makeInput({ source }));
+
+    expect(overview.sources[0].fetchedAt).toBe('2026-08-09T05:12:34.567Z');
+  });
+
+  it('preserves the caller-supplied retrievalMode', () => {
+    const source = makeSource({ retrievalMode: 'LIVE' });
+    const overview = assembleKmaCurrentWeatherOverview(makeInput({ source }));
+
+    expect(overview.sources[0].retrievalMode).toBe('LIVE');
   });
 });
 
@@ -340,7 +393,7 @@ describe('exact keys', () => {
 });
 
 // ---------------------------------------------------------------------------
-// H / I — malformed location / current → synchronous Zod error.
+// H / I — malformed location / current / source → synchronous Zod error.
 // ---------------------------------------------------------------------------
 
 describe('validation failures', () => {
@@ -378,6 +431,24 @@ describe('validation failures', () => {
       name: 'out-of-range wind direction',
       input: () => makeInput({ current: makeCurrent({ windDirectionDegrees: 400 }) }),
     },
+    {
+      name: 'empty sourceId',
+      input: () => makeInput({ source: makeSource({ sourceId: '' }) }),
+    },
+    {
+      name: 'malformed fetchedAt',
+      input: () => makeInput({ source: makeSource({ fetchedAt: 'not-a-timestamp' }) }),
+    },
+    {
+      name: 'non-string retrievalMode (runtime cast)',
+      input: () =>
+        makeInput({
+          source: {
+            ...makeSource(),
+            retrievalMode: 42 as unknown as KmaCurrentSourceMetadataInput['retrievalMode'],
+          },
+        }),
+    },
   ];
 
   for (const { name, input } of invalidCases) {
@@ -414,7 +485,7 @@ describe('immutability', () => {
     expect(overview.current).toEqual(input.current);
   });
 
-  it('does not mutate the input, location, or current weather', () => {
+  it('does not mutate the input, location, current weather, or source', () => {
     const input = makeInput();
     const snapshot = JSON.stringify(input);
 
@@ -442,6 +513,7 @@ describe('fresh output per call', () => {
     expect(first.daily).not.toBe(second.daily);
     expect(first.alerts).not.toBe(second.alerts);
     expect(first.sources).not.toBe(second.sources);
+    expect(first.sources[0]).not.toBe(second.sources[0]);
     expect(first.airQuality).not.toBe(second.airQuality);
     expect(first.airQuality.daily).not.toBe(second.airQuality.daily);
     expect(first.missingSections).not.toBe(second.missingSections);
@@ -478,7 +550,7 @@ describe('fresh output per call', () => {
 
     expect(second.hourly).toEqual([]);
     expect(second.missingSections).toEqual([...MISSING_SECTIONS]);
-    expect(second.sources).toEqual([]);
+    expect(second.sources).toHaveLength(1);
   });
 });
 
@@ -502,6 +574,15 @@ describe('synchronous contract', () => {
     expect(nowSpy).not.toHaveBeenCalled();
   });
 
+  it('never reads process.env', () => {
+    const input = makeInput();
+    const envSpy = vi.spyOn(process, 'env', 'get');
+
+    assembleKmaCurrentWeatherOverview(input);
+
+    expect(envSpy).not.toHaveBeenCalled();
+  });
+
   it('never calls console.log / info / warn / error / debug', () => {
     const spies = spyOnConsole();
 
@@ -522,5 +603,44 @@ describe('synchronous contract', () => {
 
     expect(fetchSpy).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// N — runtime extra source fields cannot leak into or override the fixed policy.
+// ---------------------------------------------------------------------------
+
+describe('explicit-field SourceMetadata construction — no leakage, no override', () => {
+  it('does not leak an extra runtime property on input.source into the output', () => {
+    const source = {
+      ...makeSource(),
+      extraLeak: 'should-not-appear',
+    } as unknown as KmaCurrentSourceMetadataInput;
+
+    const overview = assembleKmaCurrentWeatherOverview(makeInput({ source }));
+
+    expect(Object.keys(overview.sources[0]).sort()).toEqual([...SOURCE_KEYS]);
+    expect(JSON.stringify(overview)).not.toContain('extraLeak');
+    expect(JSON.stringify(overview)).not.toContain('should-not-appear');
+  });
+
+  it('does not let a runtime source override provider/sections/issuedAt/observedAt', () => {
+    const current = makeCurrent({ observedAt: '2026-08-09T10:00:00+09:00' });
+    const source = {
+      ...makeSource(),
+      provider: 'OTHER',
+      sections: ['HOURLY'],
+      issuedAt: '2026-08-09T05:00:00+09:00',
+      observedAt: '1999-01-01T00:00:00Z',
+    } as unknown as KmaCurrentSourceMetadataInput;
+
+    const overview = assembleKmaCurrentWeatherOverview(
+      makeInput({ current, source }),
+    );
+
+    expect(overview.sources[0].provider).toBe('KMA');
+    expect(overview.sources[0].sections).toEqual(['CURRENT']);
+    expect(overview.sources[0].issuedAt).toBeNull();
+    expect(overview.sources[0].observedAt).toBe('2026-08-09T10:00:00+09:00');
   });
 });

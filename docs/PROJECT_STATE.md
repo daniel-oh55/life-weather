@@ -452,5 +452,28 @@
   API 호출은 모두 여전히 미구현입니다. 자세한 내용은
   [kma-current-weather-overview.md](./kma-current-weather-overview.md) 참고. 따라서 PR #72 이후에도
   production `POST /weather`의 `current`는 계속 missing입니다.
+- **PR #73**은 PR #72가 미룬 current `SourceMetadata` 정책을 확정하고, **live current source
+  metadata resolver**(`createKmaLiveCurrentSourceMetadataResolver`,
+  `apps/api/src/services/kma-current-source-metadata.ts`)를 신규 추가했으며, PR #72 assembler
+  (`assembleKmaCurrentWeatherOverview`)를 **metadata-aware**로 확장했습니다 — hourly의 PR #26
+  live resolver와 같은 원칙(injected clock, 유효 호출당 정확히 1회 read, invalid clock 값·throwing
+  clock 모두 static/동일 reference synchronous 전파)을 따르는 별도·병렬 구현입니다. 이 resolver는
+  PR #26과 달리 **입력을 받지 않습니다**(current observation에는 상관시킬 issuance identity나
+  PRIMARY/PREVIOUS selection이 없음) — 매 유효 호출마다 고정 canonical `sourceId`
+  (`kma-ultra-short-current-observation`, 기존 canonical id와 충돌 없음 확인됨), 고정
+  `retrievalMode: 'LIVE'`, injected clock에서 materialize한 `fetchedAt`을 반환합니다. Assembler의
+  `KmaCurrentWeatherOverviewInput`은 이제 caller-provided `source`
+  (`KmaCurrentSourceMetadataInput` = `sourceId`/`fetchedAt`/`retrievalMode`)를 받아 `sources`에
+  정확히 하나의 `CURRENT` `SourceMetadata`를 조립합니다 — `provider: 'KMA'`, `sections: ['CURRENT']`,
+  `issuedAt: null`, `observedAt: CurrentWeather.observedAt`은 assembler가 explicit field로
+  고정하며(spread 없음), `input.source`의 어떤 extra runtime property도 이 고정값을 override하거나
+  leak시킬 수 없습니다. 이 PR은 resolver/assembler를 실제 location current pipeline에 연결하지
+  않습니다 — location facade → current result → resolver → assembler를 잇는 application
+  orchestration, PR #69/#71 production composition integration, `POST /weather` current wiring,
+  current-observation availability-delay selector, 실제 인증 KMA API 호출은 모두 여전히
+  미구현입니다. `packages/contracts/**`와 `CONTRACT_VERSION`은 변경되지 않았습니다. 자세한 내용은
+  [kma-current-source-metadata.md](./kma-current-source-metadata.md),
+  [kma-current-weather-overview.md](./kma-current-weather-overview.md) 참고. 따라서 PR #73 이후에도
+  production `POST /weather`의 `current`는 계속 missing입니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
