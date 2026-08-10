@@ -287,6 +287,13 @@ location facade → current result → resolver → assembler
 - `apps/api/src/routes/**`, `presenters/**`, `index.ts`, `api-app.ts`는 변경하지 않았습니다.
 - `POST /weather`의 `current`는 이 PR 이후에도 계속 missing입니다.
 
+이어서 **PR #75**가 이 live resolver를 PR #71 location composition, PR #74 application service와
+함께 조립하는 production composition root(`createKmaLocationCurrentOverviewCompositionFromEnv`,
+[kma-location-current-overview-composition.md](./kma-location-current-overview-composition.md))를
+추가했습니다 — 이 resolver 자체의 공개 계약(nullary, injected clock, 1회 read, 3-key output)은
+변경되지 않았습니다. PR #75도 `POST /weather` route는 연결하지 않으므로, production `current`는 PR
+#75 이후에도 계속 missing입니다.
+
 ## contracts — 변경 없음
 
 `packages/contracts/**`, `CONTRACT_VERSION`은 변경하지 않았습니다. 기존 `SourceMetadata`와
@@ -327,7 +334,7 @@ application-layer(assembler) 결정이지 contract 강제 규칙이 아닙니다
 
 - ~~location current pipeline과 resolver/assembler를 잇는 application orchestration~~ — PR #74에서
   구현
-- production composition integration
+- ~~production composition integration~~ — PR #75에서 구현
 - `POST /weather` current wiring
 - current-observation availability-delay selector
 - 실제 인증 KMA API 호출을 통한 live 검증
@@ -353,4 +360,10 @@ v2 / PR #74 / 2026-08 (이 resolver/assembler 자체는 불변)
 - 이 문서의 resolver·assembler 공개 계약 변경 없음
 - application orchestration을 createKmaLocationCurrentOverviewService가 구현(별도 파일/PR)
 - production composition/POST 연결/availability-delay selector는 여전히 범위 밖
+
+v3 / PR #75 / 2026-08 (이 resolver/assembler 자체는 불변)
+- 이 문서의 resolver·assembler 공개 계약 변경 없음
+- production composition root(createKmaLocationCurrentOverviewCompositionFromEnv)가 이 live
+  resolver를 PR #71/#74와 함께 조립(별도 파일/PR)
+- POST /weather 연결/availability-delay selector는 여전히 범위 밖
 ```

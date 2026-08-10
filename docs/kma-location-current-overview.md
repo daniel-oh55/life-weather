@@ -227,6 +227,12 @@ counter가 없습니다. 반환된 객체는 collaborator reference를 close ove
 
 이 PR 이후에도 production `POST /weather`의 `current`는 계속 missing입니다.
 
+이어서 **PR #75**가 이 service를 production resolver·PR #71 location composition과 함께 조립하는
+production composition root(`createKmaLocationCurrentOverviewCompositionFromEnv`,
+[kma-location-current-overview-composition.md](./kma-location-current-overview-composition.md))를
+추가했습니다 — 이 service의 공개 계약은 변경되지 않았습니다. `POST /weather` route는 PR #75도
+연결하지 않으므로, production `current`는 계속 missing입니다.
+
 ## 변경 이력
 
 ```text

@@ -2,7 +2,7 @@
  * Public surface of `apps/api`'s **server-side production composition** boundary.
  *
  * This layer is the explicit place that assembles the KMA components built by the earlier PRs into
- * live pipelines. **Seven** callable production roots are composed here:
+ * live pipelines. **Eight** callable production roots are composed here:
  *
  * - The **grid-based single-request** facade (PR #11): the PR #5 provider-from-env → the PR #7 hourly
  *   service, a system clock adapter → the PR #9 request factory, and the PR #10 scheduled facade
@@ -78,6 +78,20 @@
  *   — this root is still **not** connected to any route. See
  *   `docs/kma-location-scheduled-current-observation.md`.
  *
+ * - The **location-based current overview** application service composition (PR #75, new): the PR #71
+ *   location-based scheduled current-observation composition above, the PR #73
+ *   `createKmaLiveCurrentSourceMetadataResolver` live current source metadata resolver, and the PR #74
+ *   `createKmaLocationCurrentOverviewService` current-only `WeatherOverview` application service
+ *   assembled into one live `KmaLocationCurrentOverviewService`. It reuses the PR #71 composition
+ *   verbatim (config failure passed through by the same `KmaProviderConfigError` reference) and only
+ *   *selects* the metadata resolver's clock — the injected clock when supplied (shared with the
+ *   request), else a fresh system clock adapter — leaving the PR #74 service's own default assembler
+ *   untouched. A caller supplies a full `WeatherLocation`; the result is the PR #74 service's own
+ *   `{ ok, overview }` success or its verbatim `LOCATION`/`PROVIDER`/`NORMALIZATION` failure. The seven
+ *   existing roots are **unchanged**; this is an eighth parallel root, and it is **not** connected to
+ *   the `POST /weather` route — `current` remains missing from the production response. See
+ *   `docs/kma-location-current-overview-composition.md`.
+ *
  * PR #31 adds the **production `/weather` route composition**
  * (`createProductionWeatherRouteDependencies`): the adapter that turns the server-only `KMA_SERVICE_KEY`
  * into the PR #30 route's `WeatherRouteDependencies`. It builds the location hourly-overview root above,
@@ -97,8 +111,8 @@
  * - **Construction is network-free.** Building any graph only reads provider configuration and wires
  *   collaborators; the first converter run, the first clock read, and the first `fetch` happen only
  *   when the returned facade's / service's method is called.
- * - **Routing.** The four hourly scheduled/fallback roots and the current-observation root remain
- *   **unrouted**. The location hourly-overview root is now consumed by the PR #31
+ * - **Routing.** The four hourly scheduled/fallback roots and all three current roots (PR #69, PR #71,
+ *   PR #75) remain **unrouted**. The location hourly-overview root is now consumed by the PR #31
  *   `createProductionWeatherRouteDependencies`, which `apps/api/src/index.ts` wires into the live
  *   `POST /weather` route; startup still issues no external `fetch` (the graph is lazy).
  *
@@ -110,7 +124,8 @@
  * `docs/kma-location-scheduled-hourly.md`, `docs/kma-hourly-fallback-composition.md`,
  * `docs/kma-location-hourly-fallback.md`, `docs/kma-location-hourly-overview-composition.md`,
  * `docs/kma-current-observation-production-composition.md`,
- * `docs/kma-location-scheduled-current-observation.md`, and `docs/weather-production-wiring.md`.
+ * `docs/kma-location-scheduled-current-observation.md`,
+ * `docs/kma-location-current-overview-composition.md`, and `docs/weather-production-wiring.md`.
  */
 
 export { createKmaSystemClock } from './system-clock.js';
@@ -156,6 +171,12 @@ export {
   type CreateKmaLocationScheduledCurrentObservationCompositionResult,
   type KmaLocationScheduledCurrentObservationCompositionDependencies,
 } from './kma-location-scheduled-current-observation.js';
+
+export {
+  createKmaLocationCurrentOverviewCompositionFromEnv,
+  type CreateKmaLocationCurrentOverviewCompositionResult,
+  type KmaLocationCurrentOverviewCompositionDependencies,
+} from './kma-location-current-overview.js';
 
 export {
   createProductionWeatherRouteDependencies,
