@@ -162,17 +162,19 @@ Module import 자체도 side-effect-free입니다.
 
 ## route / composition 미연결
 
-이 assembler는 어떤 application orchestration, composition root, `POST /weather` route에도
-연결되지 않았습니다. PR #73으로 current `SourceMetadata` 정책과 live resolver는 구현되었지만,
-다음은 여전히 미구현입니다.
+이 assembler는 어떤 production composition root나 `POST /weather` route에도 연결되지 않았습니다.
+PR #73으로 current `SourceMetadata` 정책과 live resolver는 구현되었고, **PR #74**가 location
+current pipeline과 이 assembler를 잇는 application
+orchestration(`createKmaLocationCurrentOverviewService`,
+[kma-location-current-overview.md](./kma-location-current-overview.md))을 구현했습니다. 다음은
+여전히 미구현입니다.
 
-- location current pipeline과 이 assembler를 잇는 application orchestration
 - production composition integration
 - `POST /weather` current wiring
 - current-observation availability-delay selector
 - 실제 인증 KMA API 호출을 통한 live 검증
 
-즉 PR #73 이후에도 `POST /weather`의 production 응답에서 `current`는 계속 missing입니다.
+즉 PR #74 이후에도 `POST /weather`의 production 응답에서 `current`는 계속 missing입니다.
 
 ## 실제 key·네트워크·좌표 미사용
 
@@ -201,4 +203,9 @@ v2 / PR #73 / 2026-08
 - 자세한 정책 근거는 kma-current-source-metadata.md
 - application orchestration/production composition/POST 연결/availability-delay selector는
   여전히 이 PR 범위 밖
+
+v3 / PR #74 / 2026-08 (이 assembler 자체는 불변)
+- 이 assembler의 공개 계약(입력/출력/pure/synchronous) 변경 없음
+- createKmaLocationCurrentOverviewService가 location facade → resolver → 이 assembler 순서로 연결
+- production composition/POST 연결/availability-delay selector는 여전히 범위 밖
 ```
