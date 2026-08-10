@@ -125,7 +125,7 @@ export function assembleKmaCurrentHourlyWeatherOverview(
   if (input.current === null) {
     const overview = {
       location: baseline.location,
-      current: baseline.current,
+      current: null,
       hourly: baseline.hourly,
       daily: baseline.daily,
       airQuality: baseline.airQuality,

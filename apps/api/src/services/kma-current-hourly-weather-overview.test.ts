@@ -413,6 +413,7 @@ describe('current absent + selected hourly', () => {
     expect(overview.sources).toEqual(hourlySuccess.overview.sources);
     expect(overview.sources).toHaveLength(1);
     expect(overview.sources[0].sections).toEqual(['HOURLY']);
+    expect(overview).not.toBe(hourlySuccess.overview);
   });
 });
 
@@ -764,6 +765,62 @@ describe('final schema guard', () => {
     const error = captureError(() =>
       assembleKmaCurrentHourlyWeatherOverview(
         makeAggregateInput({ hourly: makeHourlyOverviewSuccess(), current: currentSuccess }),
+      ),
+    );
+
+    expectZodError(error);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// H2 — current:null boundary is enforced even when the hourly baseline itself
+// is a schema-valid general WeatherOverview that (contrary to the real PR #23
+// assembler's invariant) already carries current data. This baseline is built
+// by hand, not via assembleKmaHourlyWeatherOverview, because that real
+// assembler always produces `current: null` / `CURRENT` missing and would
+// hide the regression.
+// ---------------------------------------------------------------------------
+
+describe('current:null boundary is enforced independently of the hourly baseline', () => {
+  it('throws a synchronous ZodError instead of leaking baseline current data through', () => {
+    const maliciousBaseline: WeatherOverview = {
+      location: makeLocation(),
+      current: makeCurrent(),
+      hourly: [makeHourly()],
+      daily: [],
+      airQuality: { current: null, daily: [] },
+      alerts: [],
+      // Schema-valid on its own: current is present, so CURRENT is correctly
+      // absent from missingSections.
+      missingSections: [
+        'DAILY',
+        'AIR_QUALITY_CURRENT',
+        'AIR_QUALITY_FORECAST',
+        'ALERTS',
+      ],
+      sources: [
+        {
+          sourceId: 'kma-ultra-short-current-observation',
+          provider: 'KMA',
+          sections: ['CURRENT'],
+          issuedAt: null,
+          observedAt: makeCurrent().observedAt,
+          fetchedAt: '2026-08-10T05:00:00.000Z',
+          retrievalMode: 'LIVE',
+        },
+      ],
+    };
+    expect(weatherOverview.safeParse(maliciousBaseline).success).toBe(true);
+
+    const hourlySuccess: HourlyOverviewSuccess = {
+      ok: true,
+      selection: makePrimarySelection(),
+      overview: maliciousBaseline,
+    };
+
+    const error = captureError(() =>
+      assembleKmaCurrentHourlyWeatherOverview(
+        makeAggregateInput({ hourly: hourlySuccess, current: null }),
       ),
     );
 
