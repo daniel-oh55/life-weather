@@ -28,7 +28,10 @@
 
 ## 아직 구현되지 않은 항목
 
-- current/daily sections (KMA 초단기실황(`getUltraSrtNcst`) **provider boundary**는 **PR #63**에서
+- daily section (아래 current-observation 관련 서술은 PR #63~#80의 historical implementation
+  context이며, current가 현재도 미구현이라는 뜻이 아닙니다 — current는 PR #81부터 production
+  `POST /weather`에 연결되어 있습니다. 위 "현재 baseline" 항목을 참고하세요. KMA
+  초단기실황(`getUltraSrtNcst`) **provider boundary**는 **PR #63**에서
   구현됐습니다 — request 검증·URL 생성, raw JSON schema, 성공/upstream/invalid 분류, category
   grouping, 기존 HTTP transport 정책을 재사용하는 provider(`createKmaCurrentObservationProvider`),
   공유 `CurrentWeather`로의 순수 normalizer(`normalizeKmaCurrentObservation`)까지입니다. **PR
