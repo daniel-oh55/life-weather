@@ -173,11 +173,15 @@ forecast 쪽과 동일한 원칙으로, 이 함수는 "공식 발표 일정상 �
 다음을 **보장하지 않습니다**: 해당 자료가 공공데이터 API에 이미 업로드됨, 발표시각 직후 호출이
 성공함, upstream replication 완료, 공식 발표자료가 지연되지 않음.
 
-이 PR은 forecast의 `selectLatestKmaForecastBaseTimeAfterAvailabilityDelay`
+이 PR(#64)은 forecast의 `selectLatestKmaForecastBaseTimeAfterAvailabilityDelay`
 ([kma-api-availability-time.md](./kma-api-availability-time.md))에 대응하는 **availability-delay
-selector를 초단기실황에 추가하지 않습니다** — 명시적으로 범위 밖입니다. 활용가이드에 초단기실황의
-API 제공 지연이 문서화되면 후속 PR에서 별도 함수로 다룰 수 있습니다(forecast와 동일하게, 이
-schedule-only 함수 자체는 바뀌지 않는 방식으로).
+selector를 초단기실황에 추가하지 않았습니다** — 명시적으로 범위 밖이었습니다. **PR #79**가 이
+대응 selector(`selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay`,
+[kma-current-observation-api-availability-time.md](./kma-current-observation-api-availability-time.md))를
+별도 함수로 추가했습니다 — 이 schedule-only selector 자체(공개 API, previous-day rollover 없음,
+`RangeError` 정책)는 PR #79에서도 전혀 변경되지 않았고, production current-observation
+composition은 여전히 이 schedule-only selector를 명시적으로 주입합니다(PR #79 selector는 아직
+production에 연결되지 않음).
 
 ## weather-core에 두는 이유
 
@@ -219,4 +223,11 @@ v2 / PR #66 / 2026-08 (request factory에서 소비)
   kma-current-observation-request-factory.md)가 이 selector를 **injectable
   baseTimeSelector 인자의 default**로 소비 — 인자를 생략한 호출만 이 selector를 사용
 - 이 selector 자체(공개 API, previous-day rollover 없음, RangeError 정책)는 변경되지 않음
+
+v3 / PR #79 / 2026-08 (대응하는 availability-delay selector 추가; 이 selector 자체는 불변)
+- 별도 함수 selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay
+  (kma-current-observation-api-availability-time.md)가 이 selector를 조합해 10분 프로젝트
+  제공시각 임계값을 적용
+- 이 schedule-only selector 자체(공개 API, previous-day rollover 없음, RangeError 정책)는
+  변경되지 않음, production composition은 여전히 이 selector를 명시적으로 주입
 ```
