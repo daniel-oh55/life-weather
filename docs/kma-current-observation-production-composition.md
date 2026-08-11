@@ -128,10 +128,15 @@ production 선택을 explicit하게 남겨 향후 availability-delay selector로
 - upstream API에 그 issuance의 자료가 **이미 제공됐음을 보장하지 않습니다.**
 - 이 composition은 availability delay, safety margin, live-readiness claim을 추가하지 않습니다.
 - threshold 숫자를 composition에 넣지 않습니다.
-- current-observation availability-delay selector 자체가 이 PR에서 구현되지 않습니다 — hourly
-  composition이 사용하는 PR #14
+- **PR #79**가 hourly composition이 사용하는 PR #14
   [`selectLatestKmaForecastBaseTimeAfterAvailabilityDelay`](./kma-production-composition.md)에
-  대응하는 current 전용 selector는 아직 없습니다.
+  대응하는 current 전용 selector
+  (`selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay`,
+  [kma-current-observation-api-availability-time.md](./kma-current-observation-api-availability-time.md))를
+  `weather-core`에 추가했습니다. 하지만 이 composition은 **여전히 PR #64 schedule-only
+  selector를 명시적으로 주입합니다** — PR #79 selector로 교체하는 wiring은 이 문서 시점에도 아직
+  일어나지 않았으므로, production current-observation의 실제 동작(및 availability 미보장 성질)은
+  전혀 바뀌지 않았습니다.
 
 ## composition 순서
 
@@ -296,7 +301,12 @@ PR #72 이후 상태(이 composition 자체는 변경 없음):
    않았습니다.
 4. current `SourceMetadata`(`sourceId`/`issuedAt`/`retrievalMode`) 조립
 5. `POST /weather`로의 current 데이터 연결
-6. current-observation availability-delay selector(hourly의 PR #14에 대응하는 current 전용 정책)
+6. ~~current-observation availability-delay selector(hourly의 PR #14에 대응하는 current 전용
+   정책)~~ — **PR #79**가 `weather-core`에 순수 selector
+   (`selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay`,
+   [kma-current-observation-api-availability-time.md](./kma-current-observation-api-availability-time.md))로
+   추가했지만, 이 composition은 여전히 PR #64 schedule-only selector를 명시적으로 주입합니다 — 이
+   composition을 PR #79 selector로 교체하는 wiring은 여전히 후속입니다.
 7. 실제 인증 KMA API 호출을 통한 live 검증
 
 이 PR들이 production current 데이터를 제공한다고 표현하지 않습니다 — `POST /weather`는 PR #72
@@ -339,4 +349,14 @@ v4 / PR #72 / 2026-08 (WeatherOverview.current assembler 추가; 이 composition
   kma-current-weather-overview.md)가 CurrentWeather → WeatherOverview.current를 조립하지만, 이
   composition이나 PR #71 location production composition을 소비/연결하지 않는 독립 단위
 - SourceMetadata·POST /weather 연결·availability-delay selector는 여전히 이 PR 범위 밖
+
+v5 / PR #79 / 2026-08 (current-observation availability-delay selector가 weather-core에 추가;
+이 composition 자체는 불변)
+- 이 composition의 공개 계약·조립 순서·construction side-effect 경계·schedule-only selector 선택
+  변경 없음
+- 새 순수 selector(selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay,
+  kma-current-observation-api-availability-time.md)가 weather-core에 추가됐지만, 이 composition은
+  여전히 PR #64 schedule-only selector를 명시적으로 주입 — PR #79 selector로 교체하는 wiring은
+  이 PR 범위 밖
+- SourceMetadata·POST /weather 연결은 여전히 이 PR 범위 밖
 ```

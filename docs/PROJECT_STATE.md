@@ -584,5 +584,32 @@
   [kma-location-current-hourly-overview-composition.md](./kma-location-current-hourly-overview-composition.md)
   참고. 따라서 PR #78 이후에도 production `POST /weather`는 계속 hourly-only이며 `current`는
   missing입니다.
+- **PR #79**는 KMA 초단기실황(`getUltraSrtNcst`)의 공식 발표시각(매시간 정시, `HH00`)에 프로젝트가
+  모델링한 **10분 API 제공시각 임계값(availability threshold)**을 적용하는 순수 weather-core
+  selector(`selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay`,
+  `packages/weather-core/src/kma/current-observation-api-availability-time.ts`)를 추가했습니다 —
+  forecast의 PR #14 `selectLatestKmaForecastBaseTimeAfterAvailabilityDelay`
+  ([kma-api-availability-time.md](./kma-api-availability-time.md))와 같은 원칙(원본 reference로
+  schedule selector를 1회 호출해 기존 검증 계약 재사용, `reference − threshold`로 다시 호출해
+  schedule selection과 rollover/연도 검증 재사용, 새 error class·result union 없음)을 따르는
+  별도·병렬 구현입니다. 근거는 Owner가 제공한 공식 공공데이터포털 참조 ZIP(`기상청41_단기예보
+  조회서비스_오픈API활용가이드_2607.zip`, SHA-256
+  `07f53cd9d6d6512bce6ef870d54cb740046a0a949896e6855caecf739fb8842e`; 내부 DOCX SHA-256
+  `20d855aa3071a2bdda6dce3c13bab6428ebb02f8d4a30688e26ed0851d6d0848`, 저장소에 기존 기록된 hash와
+  일치 확인됨)의 `# 예보 발표시각` → `초단기실황 발표시각` 절이 문서화하는 `API 제공 시간(~이후)`
+  근사 안내(`HH00` → `~HH:10`)이며, 이를 모든 시간에 공통되는 정확한 10분 inclusive threshold로
+  모델링합니다 — 공식 SLA나 live readiness 보장이 아닙니다. schedule-only selector(PR #64,
+  `selectLatestKmaCurrentObservationBaseTime`)는 첫 발표시각이 자정(`0000`)이라 previous-day
+  rollover가 없지만, 이 availability-delay selector는 reference를 10분 과거로 이동시키므로
+  previous-day rollover 가능성이 새로 생기고(`00:09:59.999` → 전일 `2300`), `1000-01-01` 지원
+  연도 하한에서도 adjusted instant가 `0999`로 rollover하면 `RangeError`가 됩니다(원본 reference
+  자체는 하한 안이어도). 이 PR은 current-observation production composition
+  (`createKmaScheduledCurrentObservationCompositionFromEnv`,
+  [kma-current-observation-production-composition.md](./kma-current-observation-production-composition.md))에
+  이 selector를 주입하지 않습니다 — 그 composition은 여전히 PR #64 schedule-only selector를
+  명시적으로 주입하므로, production current-observation 동작은 전혀 바뀌지 않았습니다. `POST
+  /weather`는 이 PR 이후에도 계속 hourly-only이며 `current`는 missing입니다. 자세한 내용은
+  [kma-current-observation-api-availability-time.md](./kma-current-observation-api-availability-time.md)
+  참고.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
