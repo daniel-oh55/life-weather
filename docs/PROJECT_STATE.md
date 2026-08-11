@@ -514,5 +514,29 @@
   PR 이후에도 계속 missing입니다. current-observation availability-delay selector, cache/stale-data,
   실제 인증 KMA API 호출도 여전히 미구현입니다. 자세한 내용은
   [kma-location-current-overview-composition.md](./kma-location-current-overview-composition.md) 참고.
+- **PR #76**은 PR #24 hourly overview application service의 성공 결과와 PR #74 current overview
+  application service의 성공 결과(또는 `null`)를 조합하는 **순수 aggregate
+  assembler**(`assembleKmaCurrentHourlyWeatherOverview`,
+  `apps/api/src/services/kma-current-hourly-weather-overview.ts`)를 추가했습니다 — 어느 service도
+  직접 호출하지 않고, 두 service의 이미 계산된 `overview` 값만 조합합니다. hourly 성공
+  overview가 current가 아닌 모든 section(hourly/daily/airQuality/alerts/non-CURRENT
+  missingSections/hourly sources)의 baseline이며, `input.hourly.overview`만 읽고
+  `input.hourly.selection`(PR #22 execution trace)은 절대 읽지 않습니다. `input.current === null`은
+  caller가 이미 current를 이 aggregate에 기여시키지 않기로 결정했다는 사실만 의미하며, 이
+  assembler는 그 사유(LOCATION/PROVIDER/NORMALIZATION 실패 등)를 검사하거나 추론하지 않습니다 —
+  current 실패 degradation 정책은 이후 application orchestration PR의 책임으로 남습니다. current가
+  있으면 두 overview의 `WeatherLocation`이 **값으로** 일치해야 하며(field-by-field, reference
+  identity 아님), 불일치는 synchronous하고 static하며 value-free한 `RangeError`가 됩니다. 일치하면
+  `current`와 `sources`가 baseline 위에 overlay됩니다 — `missingSections`는 baseline에서 `CURRENT`만
+  제거하고(current overview의 `missingSections`를 union하지 않음), `sources`는 current overview의
+  sources 다음 hourly baseline의 sources 순서로 결정론적으로 이어붙입니다. 최종 payload는
+  `weatherOverview.parse()`로 검증되는 것이 유일한 runtime invariant guard입니다. pure/synchronous/
+  no-I/O(clock·env·fetch·console 없음), frozen input 지원, 매 호출 fresh output이며, PR #23/#72/#73
+  assembler의 selection/provenance/SourceMetadata 정책을 재구현하지 않습니다. 자세한 내용은
+  [kma-current-hourly-weather-overview.md](./kma-current-hourly-weather-overview.md) 참고. 이
+  assembler는 어떤 hourly/current application service도 직접 호출하지 않고, current 실패 degradation
+  정책·동시성/요청 순서 정책·`POST /weather` current wiring·availability-delay selector·cache/
+  stale-data·실제 인증 KMA API 호출 중 어느 것도 구현하지 않습니다 — 이 PR 이후에도 production
+  `POST /weather`의 `current`는 계속 missing입니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
