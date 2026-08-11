@@ -187,6 +187,19 @@ composition은 readiness retry를 추가하지 않으며, 이전 current issuanc
 PR은 선택된 current issuance가 실제로 upstream에 게시되었다는 **어떤 보장도 하지 않습니다** — PR #79
 selector는 결정론적 프로젝트 임계값(10분)일 뿐 공식 SLA나 live-readiness 보장이 아닙니다.
 
+## `POST /weather` 연결 — PR #81
+
+**PR #81**이 `apps/api/src/composition/weather-route.ts`(PR #31 production `/weather` route
+composition)에서 이 root를 소비하도록 변경했습니다 — PR #80까지 그 route composition이 빌드하던 PR #27
+hourly-only root를 대체합니다. 이 파일(`kma-location-current-hourly-overview.ts`) 자체의 코드, 조립
+순서, 공개 계약, clock/fetch 공유, provider 호출 상한(hourly 최대 2 + current 최대 1)은 PR #81로 전혀
+바뀌지 않았습니다 — 바뀐 것은 이 root를 소비하는 쪽뿐입니다. 자세한 내용은
+[weather-production-wiring.md](./weather-production-wiring.md)의 "Current production state (PR #81)"
+절을 참고하세요.
+
+이 아래 "이 PR(#78)의 범위 밖" 절은 PR #78 merge 시점 그대로 보존된 기록입니다 — "`POST /weather` route
+연결 — 없음" 항목은 PR #81 이전 상태를 설명하며, 위 절이 그 이후 상태를 기록합니다.
+
 ## 이 PR(#78)의 범위 밖
 
 - **`POST /weather` route 연결** — 없음. production `POST /weather`는 이 PR 이후에도 계속
@@ -224,4 +237,14 @@ v2 / PR #80 / 2026-08 (하위 PR #69가 PR #79 availability-delay selector로 �
 - PR #75 → PR #71 → PR #69를 그대로 재사용하므로, PR #69가 request factory에 주입하는 selector가
   PR #64 schedule-only에서 PR #79 availability-delay로 바뀐 것을 transitively 상속
 - POST /weather 연결은 여전히 이 PR 범위 밖, current retry/fallback/readiness 보장 여전히 없음
+
+v3 / PR #81 / 2026-08 (이 root를 소비하는 쪽이 바뀜; 이 root 자체는 불변)
+- 이 composition의 코드·조립 순서·공개 계약·clock/fetch 공유·provider 호출 상한(hourly 최대 2 +
+  current 최대 1)은 전혀 변경되지 않음
+- apps/api/src/composition/weather-route.ts(PR #31 production route composition)가 PR #80까지
+  빌드하던 PR #27 hourly-only root 대신 이 root를 빌드하고, 어댑터가
+  fetchCurrentHourlyWeatherOverviewForLocation을 호출하도록 변경됨 — 이 파일이 아니라
+  weather-route.ts만 실행 코드가 바뀜
+- POST /weather는 이제 combined current+hourly production data를 반환함(더 이상 hourly-only 아님)
+- current retry/fallback/readiness 보장은 여전히 없음(PR #77의 기존 degradation 정책 그대로 상속)
 ```

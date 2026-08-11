@@ -1,32 +1,48 @@
 /**
  * The **production composition** for the PR #30 `POST /weather` route — the one place that turns a
  * server-only `KMA_SERVICE_KEY` (plus optional production seams) into the concrete
- * {@link WeatherRouteDependencies} the route factory needs. It is the adapter layer between the existing
- * PR #27 `createKmaLocationHourlyOverviewCompositionFromEnv` production graph and the route's narrow
- * injected ports; the route factory itself (PR #30) is **not** modified here.
+ * {@link WeatherRouteDependencies} the route factory needs. It is the adapter layer between the KMA
+ * production graph and the route's narrow injected ports; the route factory itself (PR #30) is **not**
+ * modified here.
+ *
+ * As of **PR #81**, the production graph is the PR #78 combined
+ * `createKmaLocationCurrentHourlyOverviewCompositionFromEnv` root (hourly **and** current), replacing the
+ * PR #27 hourly-only `createKmaLocationHourlyOverviewCompositionFromEnv` this composition used through
+ * PR #80. The PR #77 result/input/options types the combined root exposes are deliberate aliases of the
+ * PR #24 hourly types, so the route's existing execute port and presenter needed no new contract — see
+ * `docs/weather-production-wiring.md`.
  *
  * It assembles four things and nothing else:
  *
- * 1. **The production KMA service.** It builds the existing PR #27 location hourly-overview production
- *    graph via {@link createKmaLocationHourlyOverviewCompositionFromEnv}, feeding the caller's
- *    `serviceKey` in as `KMA_SERVICE_KEY` and forwarding the optional `fetchImpl`/`clock` seams
- *    unchanged. This reuses the whole KMA graph (provider-from-env + service-key validation, request-plan
- *    factory, hourly service, PR #17 classifier, PR #19 fallback orchestration, PR #12 converter, PR #21
- *    location facade, PR #26 resolver, PR #24 service) — none of it is re-implemented.
+ * 1. **The production KMA service.** It builds the PR #78 combined location current+hourly-overview
+ *    production graph via {@link createKmaLocationCurrentHourlyOverviewCompositionFromEnv}, feeding the
+ *    caller's `serviceKey` in as `KMA_SERVICE_KEY` and forwarding the optional `fetchImpl`/`clock` seams
+ *    unchanged. This reuses the whole combined KMA graph (the PR #27 hourly production graph, the PR #75
+ *    current-overview production graph, and the PR #77 orchestration/degradation policy wiring them
+ *    together) — none of it is re-implemented here.
  * 2. **The service→route adapter.** A {@link WeatherRouteExecuteOverview} that binds the service's
- *    `fetchHourlyWeatherOverviewForLocation(input, { signal })` to the route's `(input, signal)` port —
- *    forwarding `input` unchanged and the `AbortSignal` by the **same reference** inside `{ signal }`. It
- *    creates no `AbortController`, adds no timeout, transforms no result, catches/re-wraps no error, and
- *    never puts the service key on the adapter input or the response.
+ *    `fetchCurrentHourlyWeatherOverviewForLocation(input, { signal })` to the route's `(input, signal)`
+ *    port — forwarding `input` unchanged and the `AbortSignal` by the **same reference** inside
+ *    `{ signal }`. It creates no `AbortController`, adds no timeout, transforms no result, catches/re-wraps
+ *    no error, and never puts the service key on the adapter input or the response.
  * 3. **The server-owned product.** The fixed {@link PRODUCTION_WEATHER_PRODUCT} (`SHORT_FORECAST`). It is
  *    owned here, in one place — never read from an environment variable, the request body/query/headers,
- *    or anywhere a mobile client could set it.
+ *    or anywhere a mobile client could set it. It continues to select the hourly forecast source only;
+ *    the current-observation branch has no client-selectable product.
  * 4. **The production `meta` provider.** A `createMeta(request)` that stamps a fresh `generatedAt`
  *    (current UTC, `Date.prototype.toISOString()` — millisecond `Z`) and a server-generated `requestId`
  *    (`globalThis.crypto.randomUUID()`), **per request**. It never trusts an inbound `x-request-id` /
  *    `x-vercel-id` header or a request-body value, and never falls back to `Math.random`. The route owns
  *    `contractVersion` (always `CONTRACT_VERSION`); the `meta` provider owns only `generatedAt`/
  *    `requestId`.
+ *
+ * ### Provider attempts and current-failure degradation — inherited, not owned
+ *
+ * The combined graph's own PR #19 hourly fallback (at most 2 attempts) and PR #77 current-degradation
+ * policy (a resolved current `LOCATION`/`PROVIDER`/`NORMALIZATION` failure becomes `current: null`, never
+ * a route-level error) are inherited unchanged; this composition inspects or reimplements neither. A
+ * representative supported request now makes **at most 3** provider attempts (hourly 2 + current 1),
+ * up from the pre-PR-81 hourly-only maximum of 2.
  *
  * ### Fail-fast on a missing/invalid service key
  *
@@ -53,9 +69,9 @@ import type {
   WeatherRouteExecuteOverview,
 } from '../routes/index.js';
 import {
-  createKmaLocationHourlyOverviewCompositionFromEnv,
-  type KmaLocationHourlyOverviewCompositionDependencies,
-} from './kma-location-hourly-overview.js';
+  createKmaLocationCurrentHourlyOverviewCompositionFromEnv,
+  type KmaLocationCurrentHourlyOverviewCompositionDependencies,
+} from './kma-location-current-hourly-overview.js';
 
 /**
  * The **server-owned** production KMA forecast product for `/weather`: `SHORT_FORECAST` (단기예보). It is
@@ -115,20 +131,21 @@ export type ProductionWeatherRouteOptions = {
 export function createProductionWeatherRouteDependencies(
   options: ProductionWeatherRouteOptions,
 ): WeatherRouteDependencies {
-  // Reuse the existing PR #27 production graph. The caller's serviceKey is fed in as KMA_SERVICE_KEY, and
-  // the fetch/clock seams are forwarded unchanged (both undefined in production, so the graph keeps its
-  // native fetch and system clock defaults).
-  const compositionDependencies: KmaLocationHourlyOverviewCompositionDependencies = {
+  // Reuse the existing PR #78 combined production graph (hourly + current). The caller's serviceKey is
+  // fed in as KMA_SERVICE_KEY, and the fetch/clock seams are forwarded unchanged (both undefined in
+  // production, so the graph keeps its native fetch and system clock defaults).
+  const compositionDependencies: KmaLocationCurrentHourlyOverviewCompositionDependencies = {
     fetchImpl: options.fetchImpl,
     clock: options.clock,
   };
-  const composition = createKmaLocationHourlyOverviewCompositionFromEnv(
+  const composition = createKmaLocationCurrentHourlyOverviewCompositionFromEnv(
     { KMA_SERVICE_KEY: options.serviceKey },
     compositionDependencies,
   );
 
-  // Fail-fast: a provider config failure (missing / empty / whitespace-only / padded key) becomes a
-  // thrown error with a fixed safe message — no partial route, no key value, no env dump, no network.
+  // Fail-fast: a provider config failure (missing / empty / whitespace-only / padded key, from either the
+  // hourly or the current composition) becomes a thrown error with a fixed safe message — no partial
+  // route, no key value, no env dump, no network.
   if (!composition.ok) {
     throw new Error(KMA_SERVICE_KEY_REQUIRED_MESSAGE);
   }
@@ -138,8 +155,10 @@ export function createProductionWeatherRouteDependencies(
   // Bind the service's `(input, { signal })` method to the route's narrow `(input, signal)` port: input
   // forwarded unchanged, the AbortSignal forwarded by the exact same reference inside `{ signal }`, and
   // the service's Promise returned verbatim — no new controller, no timeout, no result/error rewrapping.
+  // The PR #77 result type is a deliberate alias of the PR #24 hourly result, so this stays assignable to
+  // WeatherRouteExecuteOverview with no cast.
   const executeOverview: WeatherRouteExecuteOverview = (input, signal) =>
-    service.fetchHourlyWeatherOverviewForLocation(input, { signal });
+    service.fetchCurrentHourlyWeatherOverviewForLocation(input, { signal });
 
   // The response `meta` clock and `requestId` factory. Defaults are the real system clock and Web Crypto
   // UUID generator; both are called only inside `createMeta`, once per request.

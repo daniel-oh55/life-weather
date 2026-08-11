@@ -1,13 +1,19 @@
-# Weather route production wiring (PR #31)
+# Weather route production wiring (PR #31; combined current+hourly graph as of PR #81)
 
 PR #31 connects the PR #30 mountable `POST /weather` route factory to the real production Hono app, so
 `POST /weather` is now a **live production endpoint** alongside the unchanged `GET /health`. Before this PR
 the route existed only as a factory exercised by tests; it was **not** mounted into `apps/api/src/index.ts`
 and the only callable production endpoint was `GET /health`.
 
-This PR adds **production startup wiring only**. It does not change the PR #30 route runtime, the KMA
-service/provider/presenter runtimes, the request/response contracts, or the mobile app; it adds no new
-dependency; and it implements no cache, rate-limit, auth, CORS, logging, or telemetry.
+PR #31 added **production startup wiring only**. It did not change the PR #30 route runtime, the KMA
+service/provider/presenter runtimes, the request/response contracts, or the mobile app; it added no new
+dependency; and it implemented no cache, rate-limit, auth, CORS, logging, or telemetry.
+
+**As of PR #81**, the production KMA graph this wiring builds changed from the PR #27 hourly-only root to
+the PR #78 combined current+hourly root — see [Current production state (PR #81)](#current-production-state-pr-81)
+below. The rest of this document (through "Vercel Hono deployment build configuration") is the historical
+PR #31 record and is preserved as originally written; where it says "hourly-overview graph" or
+"hourly-only", read that as the PR #81 update describes.
 
 ## The three pieces
 
@@ -243,12 +249,70 @@ using an already-registered server-only `KMA_SERVICE_KEY` (never printed anywher
 - **Secret/internal non-exposure** — no response or error surfaces the service key, `process.env`, the
   provider URL/query, the raw KMA payload, or the internal `selection`/execution trace.
 
+## Current production state (PR #81)
+
+**PR #81** changed exactly one thing about the wiring this document describes: which production KMA graph
+`apps/api/src/composition/weather-route.ts` builds and which service method the adapter calls. Everything
+else in this document (the route factory, the presenter, `index.ts`/`api-app.ts` runtime, the deployment
+configuration sections above) is unchanged.
+
+- **Combined root, not hourly-only.** `createProductionWeatherRouteDependencies` now builds the PR #78
+  `createKmaLocationCurrentHourlyOverviewCompositionFromEnv` root (hourly **and** current-observation)
+  instead of the PR #27 `createKmaLocationHourlyOverviewCompositionFromEnv` hourly-only root it built
+  through PR #80.
+- **Adapter method changed accordingly:**
+  ```ts
+  const executeOverview: WeatherRouteExecuteOverview = (input, signal) =>
+    service.fetchCurrentHourlyWeatherOverviewForLocation(input, { signal });
+  ```
+  The PR #77 combined service's result/input/options types are deliberate aliases of the PR #24 hourly
+  types (see `docs/kma-location-current-hourly-overview.md`), so this stays assignable to the route's
+  existing `WeatherRouteExecuteOverview` port with **no cast**.
+- **Presenter reused, unchanged.** The route still calls `presentKmaLocationHourlyOverviewResponseV1`,
+  which reads only `result.overview` — since the combined result is exactly
+  `KmaLocationHourlyOverviewResult`-compatible, no new presenter was needed.
+- **Server-owned product unchanged.** `PRODUCTION_WEATHER_PRODUCT` (`SHORT_FORECAST`) still selects only
+  the hourly forecast source; the current-observation branch has no client-selectable product and is not
+  affected by it.
+- **Current-failure degradation is inherited, not reimplemented here.** A resolved current
+  `LOCATION`/`PROVIDER`/`NORMALIZATION` failure becomes `current: null` (and `CURRENT` in
+  `missingSections`) through the existing PR #77 policy — the route composition does not inspect or
+  duplicate it.
+- **Provider-attempt ceiling raised.** A representative supported request now makes **at most 3** provider
+  attempts (hourly's existing PR #19 fallback: at most 2, plus current: at most 1) — up from the
+  hourly-only maximum of 2.
+- **Public response shape.** `POST /weather` now returns `data.current` populated (or `null` on a
+  degraded/unavailable current), and `data.sources` carries the current source first, then the hourly
+  source (the PR #76 assembler's fixed ordering), when both are present.
+
+See `docs/kma-location-current-hourly-overview-composition.md` for the combined root's own wiring and
+`docs/kma-location-current-hourly-overview.md` for the PR #77 orchestration/degradation policy this route
+now serves.
+
+## Current deployment status
+
+As of the current branch HEAD the deployment is green and behaviourally verified on Vercel's Node 22 runtime,
+using an already-registered server-only `KMA_SERVICE_KEY` (never printed anywhere):
+
+- **CI** — the GitHub Actions pipeline completes successfully (the full workspace test suite passes).
+- **Vercel Preview READY** — the Node 22 Preview build (install → build → verify) reaches `READY`.
+- **`GET /health` → 200** — the deterministic health payload is unchanged.
+- **Invalid `POST /weather` → 400** — a malformed/invalid body is a leak-free `INVALID_REQUEST`.
+- **Valid `POST /weather` → 200** — a valid body returns a `WeatherResponseV1` that parses against the
+  contracts producer schema, carrying a live 기상청 hourly overview. (This status record predates PR #81's
+  current-observation wiring; it has not been re-verified against a live 기상청 current-observation call.)
+- **Secret/internal non-exposure** — no response or error surfaces the service key, `process.env`, the
+  provider URL/query, the raw KMA payload, or the internal `selection`/execution trace.
+
 ## Not in this PR (later work)
 
 - A **server-side response cache** / stale fallback — `retrievalMode` stays `LIVE`.
 - The **mobile API client** and screen wiring.
+- **Current-observation retry/previous-issuance fallback, cache, or stale-data policy** — still absent as
+  of PR #81; a resolved current failure degrades to `current: null` rather than retrying.
+- **Daily forecast, AirKorea air quality, and alerts** — still not implemented; `POST /weather` still
+  reports them as missing in `missingSections`.
 - Product selection by environment/request, additional products, rate-limiting, auth/authorization, CORS
-  changes, logging/telemetry, retry/timeout policy changes, AirKorea, alerts, the lifestyle engine, and
-  OpenAPI.
+  changes, logging/telemetry, retry/timeout policy changes, the lifestyle engine, and OpenAPI.
 - A **production (non-Preview) deployment and a linked production domain** — the current verification is on
   the Vercel Node 22 Preview with a registered server-only `KMA_SERVICE_KEY`.

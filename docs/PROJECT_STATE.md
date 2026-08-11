@@ -14,7 +14,10 @@
 - PR #36에서 진행한 compiled Node ESM shared runtime package 작업은 PR #31을 통해 main에
   포함되었습니다.
 - production app에 `GET /health`와 `POST /weather`가 mount되어 있습니다.
-- `POST /weather`는 현재 KMA `SHORT_FORECAST` 기반 location hourly overview를 제공합니다.
+- `POST /weather`는 현재 KMA `SHORT_FORECAST` 기반 location hourly overview와 초단기실황
+  (`getUltraSrtNcst`) 기반 current-observation을 함께 제공합니다(PR #81). current가 실패하면
+  `current: null`과 `missingSections`의 `CURRENT`로 강등되며(PR #77의 기존 degradation 정책), 이
+  경우에도 `HOURLY`는 그대로 유지됩니다.
 - `KMA_SERVICE_KEY`는 server-only이며 누락 시 startup에서 fail-fast합니다.
 - startup 과정에서는 외부 fetch를 수행하지 않습니다.
 - `contracts`와 `weather-core`는 compiled `dist` entrypoint를 사용합니다.
@@ -634,5 +637,27 @@
   뿐입니다. 자세한 내용은
   [kma-current-observation-production-composition.md](./kma-current-observation-production-composition.md)
   참고.
+- **PR #81**은 production `POST /weather` route composition
+  (`createProductionWeatherRouteDependencies`, `apps/api/src/composition/weather-route.ts`)이 PR #80까지
+  빌드하던 PR #27 hourly-only production root(`createKmaLocationHourlyOverviewCompositionFromEnv`) 대신
+  PR #78 combined current+hourly production root
+  (`createKmaLocationCurrentHourlyOverviewCompositionFromEnv`,
+  [kma-location-current-hourly-overview-composition.md](./kma-location-current-hourly-overview-composition.md))를
+  빌드하도록 연결했습니다 — service→route adapter가 이제
+  `service.fetchCurrentHourlyWeatherOverviewForLocation(input, { signal })`를 호출합니다. PR #77 combined
+  결과/입력/옵션 타입이 PR #24 hourly 타입의 의도적 alias이므로, 기존 route factory·presenter
+  (`presentKmaLocationHourlyOverviewResponseV1`)는 **변경되지 않았습니다** — cast 없이 그대로
+  assignable합니다. 이 PR로 production `POST /weather`는 더 이상 hourly-only가 아니며, hourly와 함께
+  current-observation을 응답에 포함합니다. current가 resolve된 `LOCATION`/`PROVIDER`/`NORMALIZATION`
+  실패를 만나면 PR #77의 기존 degradation 정책 그대로 `current: null` + `missingSections`의 `CURRENT`로
+  강등되고(HTTP 500이 아님, 새 정책 아님), hourly가 이미 확보한 데이터는 그대로 유지됩니다. 지원되는
+  요청 한 건의 provider 호출 상한은 hourly 최대 2회 + current 최대 1회 = 최대 3회로 늘었습니다(기존
+  hourly-only 상한 2회에서 증가). 실행 코드 변경은 정확히 이 한 파일
+  (`apps/api/src/composition/weather-route.ts`)로 국한되며,
+  `apps/api/src/routes/**`·`presenters/**`·`index.ts`(실행 코드)·`api-app.ts`·`packages/contracts`·
+  `packages/weather-core`·`packages/lifestyle-engine`·`apps/mobile`는 변경하지 않았습니다. 자세한 내용은
+  [weather-production-wiring.md](./weather-production-wiring.md)의 "Current production state (PR #81)"
+  절 참고. current retry/previous-issuance fallback, response cache, daily forecast, AirKorea air
+  quality, alerts는 이 PR 이후에도 여전히 미구현입니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
