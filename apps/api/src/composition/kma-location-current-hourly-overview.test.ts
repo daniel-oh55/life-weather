@@ -65,9 +65,11 @@ const HOURLY_FETCHED_AT_EPOCH_MS = Date.UTC(2026, 6, 21, 20, 11, 22, 333);
 const HOURLY_FETCHED_AT_ISO = '2026-07-21T20:11:22.333Z';
 
 /**
- * The **third** clock read — the current PR #66 request factory's reference instant. Still within the
- * same KST hour (05:xx) as the first read, so the PR #64 schedule-only selector also truncates to the
- * same `0500` issuance.
+ * The **third** clock read — the current PR #66 request factory's reference instant. `05:12:10.000`
+ * KST is already past the PR #79 availability-delay selector's 10-minute threshold for the `0500`
+ * issuance (`05:00 + 10min = 05:10 <= 05:12:10`) and not yet past the threshold for `0600`
+ * (`06:10 > 05:12:10`), so the selector (injected into production by PR #80) still picks the same
+ * `0500` issuance the pre-PR #80 schedule-only selector picked here.
  */
 const CURRENT_REQUEST_EPOCH_MS = Date.UTC(2026, 6, 21, 20, 12, 10, 0);
 

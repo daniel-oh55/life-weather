@@ -179,9 +179,11 @@ selector를 초단기실황에 추가하지 않았습니다** — 명시적으�
 대응 selector(`selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay`,
 [kma-current-observation-api-availability-time.md](./kma-current-observation-api-availability-time.md))를
 별도 함수로 추가했습니다 — 이 schedule-only selector 자체(공개 API, previous-day rollover 없음,
-`RangeError` 정책)는 PR #79에서도 전혀 변경되지 않았고, production current-observation
-composition은 여전히 이 schedule-only selector를 명시적으로 주입합니다(PR #79 selector는 아직
-production에 연결되지 않음).
+`RangeError` 정책)는 PR #79에서도 전혀 변경되지 않았습니다. **PR #80**이 production
+current-observation composition에 그 PR #79 selector를 explicit 주입했으므로, production은 더
+이상 이 schedule-only selector를 주입하지 않습니다. 이 schedule-only selector는 여전히
+current-observation request factory(`createKmaCurrentObservationRequestFactory`)의 **직접
+one-argument 호출 default**로 남아 있습니다.
 
 ## weather-core에 두는 이유
 
@@ -230,4 +232,11 @@ v3 / PR #79 / 2026-08 (대응하는 availability-delay selector 추가; 이 sele
   제공시각 임계값을 적용
 - 이 schedule-only selector 자체(공개 API, previous-day rollover 없음, RangeError 정책)는
   변경되지 않음, production composition은 여전히 이 selector를 명시적으로 주입
+
+v4 / PR #80 / 2026-08 (production이 PR #79 selector로 전환; 이 selector 자체는 불변)
+- production current-observation composition
+  (createKmaScheduledCurrentObservationCompositionFromEnv)이 PR #79 availability-delay selector를
+  explicit 주입, 이 schedule-only selector는 더 이상 production에 주입되지 않음
+- 이 schedule-only selector는 request factory의 직접 one-argument 호출 default로 유지
+- 이 selector 자체(공개 API, previous-day rollover 없음, RangeError 정책)는 변경되지 않음
 ```

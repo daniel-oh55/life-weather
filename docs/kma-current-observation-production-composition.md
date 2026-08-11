@@ -14,10 +14,11 @@ root와 **같은 원칙을 따르는 별도의, 병렬** 구현입니다 — hou
 
 ## 목적과 dependency graph
 
-지금까지 구현한 current-observation component(PR #63 Provider-from-env, PR #64 schedule-only
+지금까지 구현한 current-observation component(PR #63 Provider-from-env, PR #79 availability-delay
 selector, PR #66 request factory, PR #67 current-observation service, PR #68 scheduled facade)와
 기존 system clock adapter를, 실제 서버 시작 시점(또는 향후 route composition 시점)에 **한 번의 함수
-호출**로 조립합니다.
+호출**로 조립합니다. (원래 PR #69는 PR #64 schedule-only selector를 주입했습니다 — **PR #80**이
+아래 그래프대로 PR #79 selector로 전환했습니다.)
 
 ```text
 environment
@@ -25,7 +26,8 @@ environment
   → createKmaCurrentObservationService (PR #67)           → KmaCurrentObservationService
 
 system clock adapter / injected clock
-  + selectLatestKmaCurrentObservationBaseTime (PR #64)   // explicit schedule-only production choice
+  + selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay (PR #79)   // explicit
+    availability-delay production choice, wired by PR #80
   → createKmaCurrentObservationRequestFactory (PR #66)   → KmaCurrentObservationRequestFactory
 
 request factory + current-observation service
@@ -103,40 +105,35 @@ if (!providerResult.ok) {
   read는 반환된 facade의 `fetchScheduledCurrentWeather()`가 실행되어 request factory가 호출될 때
   처음 발생합니다.
 
-## explicit schedule-only selector production 선택
+## explicit availability-delay selector production 선택 (PR #80)
 
-Production current-observation composition은 PR #64
-[`selectLatestKmaCurrentObservationBaseTime`](./kma-current-observation-issue-time.md)을
-**명시적으로** request factory에 주입합니다.
+Production current-observation composition은 **PR #80**부터 PR #79
+[`selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay`](./kma-current-observation-api-availability-time.md)를
+**명시적으로** request factory에 주입합니다 — PR #69 최초 merge 시점에 주입했던 PR #64
+[`selectLatestKmaCurrentObservationBaseTime`](./kma-current-observation-issue-time.md)
+schedule-only selector는 더 이상 여기서 주입되지 않습니다.
 
 ```ts
 createKmaCurrentObservationRequestFactory(
   clock,
-  selectLatestKmaCurrentObservationBaseTime,
+  selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay,
 );
 ```
 
-Selector argument를 생략해 request factory의 implicit default에 암묵적으로 의존하지 않습니다 — 두
-인자 호출은 request factory의 한 인자 호출과 **결과적으로 동일한 값**을 고르지만, 이 composition은
-production 선택을 explicit하게 남겨 향후 availability-delay selector로 교체할 때 이 한 줄만 바뀌게
-합니다.
+Selector argument를 생략해 request factory의 schedule-only implicit default에 암묵적으로 의존하지
+않습니다 — request factory 자체의 두 번째 인자 default는 여전히 PR #64 schedule-only selector이므로,
+이 factory를 직접(one-argument로) 호출하는 다른 caller는 영향받지 않습니다.
 
-**중요 — 이 selector는 availability를 보장하지 않습니다.**
+**중요 — 이 selector도 여전히 완전한 availability를 보장하지 않습니다.**
 
-- 이 schedule-only selector는 매시간 정시(`HH00`) 중 reference 시각과 같거나 이전인 최신 issuance를
-  고릅니다.
-- upstream API에 그 issuance의 자료가 **이미 제공됐음을 보장하지 않습니다.**
-- 이 composition은 availability delay, safety margin, live-readiness claim을 추가하지 않습니다.
-- threshold 숫자를 composition에 넣지 않습니다.
-- **PR #79**가 hourly composition이 사용하는 PR #14
-  [`selectLatestKmaForecastBaseTimeAfterAvailabilityDelay`](./kma-production-composition.md)에
-  대응하는 current 전용 selector
-  (`selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay`,
-  [kma-current-observation-api-availability-time.md](./kma-current-observation-api-availability-time.md))를
-  `weather-core`에 추가했습니다. 하지만 이 composition은 **여전히 PR #64 schedule-only
-  selector를 명시적으로 주입합니다** — PR #79 selector로 교체하는 wiring은 이 문서 시점에도 아직
-  일어나지 않았으므로, production current-observation의 실제 동작(및 availability 미보장 성질)은
-  전혀 바뀌지 않았습니다.
+- PR #79 selector는 매시간 정시(`HH00`) 발표 중 프로젝트가 모델링한 **10분 제공시각 임계값**을 이미
+  통과한 최신 issuance를 고릅니다 — 임계값은 PR #79 selector 내부에만 있으며, 이 composition은
+  threshold 숫자를 복제하거나 여기에 별도로 추가하지 않습니다.
+- upstream API에 그 issuance의 자료가 실제로 업로드됐음, 특정 호출이 성공함, upstream replication이
+  완료됐음을 **보장하지 않습니다** — 이는 결정론적 프로젝트 정책이지 공식 SLA가 아닙니다.
+- 이 composition은 추가 safety margin이나 별도의 live-readiness claim을 얹지 않습니다.
+- previous-issuance retry/fallback은 여전히 없습니다 — 선택된 issuance에 대한 provider 시도는
+  최대 1회입니다.
 
 ## composition 순서
 
@@ -145,7 +142,7 @@ production 선택을 explicit하게 남겨 향후 availability-delay selector로
 1. `createKmaCurrentObservationProviderFromEnv(env, …)`
 2. provider config result 확인 — 실패면 즉시 `{ ok: false, error }` 반환(동일 reference)
 3. injected clock 또는 `createKmaSystemClock()` 선택
-4. `createKmaCurrentObservationRequestFactory(clock, selectLatestKmaCurrentObservationBaseTime)`
+4. `createKmaCurrentObservationRequestFactory(clock, selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay)`
 5. `createKmaCurrentObservationService(providerResult.provider)`
 6. `createKmaScheduledCurrentObservationFacade(requestFactory, currentObservationService)`
 7. `{ ok: true, facade }` 반환
@@ -206,9 +203,9 @@ component(PR #63/#64/#66/#67/#68)가 그대로 소유합니다 — 이 compositi
 ## full-pipeline result/error pass-through
 
 Layer B 테스트는 **실제** component(Provider-from-env, current-observation service, request
-factory, PR #64 selector, Provider raw-response parser/grouping, current normalizer, scheduled
-facade)를 조립해 검증합니다 — 이들을 mock하지 않고, injected in-memory `fetchImpl`과 결정론적
-clock만 사용합니다.
+factory, PR #79 availability-delay selector, Provider raw-response parser/grouping, current
+normalizer, scheduled facade)를 조립해 검증합니다 — 이들을 mock하지 않고, injected in-memory
+`fetchImpl`과 결정론적 clock만 사용합니다.
 
 - **성공**: 정규화된 `CurrentWeather`가 계약 스키마를 통과하고, `getUltraSrtNcst` URL·쿼리 round-
   trip·`GET`·`Accept: application/json`·`redirect: 'error'`·`AbortSignal` 존재를 검증합니다.
@@ -299,18 +296,20 @@ PR #72 이후 상태(이 composition 자체는 변경 없음):
    [kma-current-weather-overview.md](./kma-current-weather-overview.md))를 추가했지만, 이
    composition을 소비/연결하지 않는 독립 단위입니다 — 이 composition 자체는 전혀 변경되지
    않았습니다.
-4. current `SourceMetadata`(`sourceId`/`issuedAt`/`retrievalMode`) 조립
-5. `POST /weather`로의 current 데이터 연결
+4. current `SourceMetadata`(`sourceId`/`issuedAt`/`retrievalMode`) 조립 — PR #73에서 구현(별도
+   문서 [kma-current-source-metadata.md](./kma-current-source-metadata.md) 참고), 이 composition
+   자체와는 미연결
+5. `POST /weather`로의 current 데이터 연결 — 여전히 후속
 6. ~~current-observation availability-delay selector(hourly의 PR #14에 대응하는 current 전용
-   정책)~~ — **PR #79**가 `weather-core`에 순수 selector
+   정책)를 이 composition에 wiring~~ — **PR #79**가 `weather-core`에 순수 selector
    (`selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay`,
-   [kma-current-observation-api-availability-time.md](./kma-current-observation-api-availability-time.md))로
-   추가했지만, 이 composition은 여전히 PR #64 schedule-only selector를 명시적으로 주입합니다 — 이
-   composition을 PR #79 selector로 교체하는 wiring은 여전히 후속입니다.
+   [kma-current-observation-api-availability-time.md](./kma-current-observation-api-availability-time.md))를
+   추가했고, **PR #80**이 이 composition에 그 selector를 명시적으로 주입했습니다 — 더 이상 PR #64
+   schedule-only selector를 주입하지 않습니다.
 7. 실제 인증 KMA API 호출을 통한 live 검증
 
-이 PR들이 production current 데이터를 제공한다고 표현하지 않습니다 — `POST /weather`는 PR #72
-이후에도 계속 current를 missing으로 응답합니다.
+이 PR들이 production current 데이터를 제공한다고 표현하지 않습니다 — `POST /weather`는 PR #80
+이후에도 계속 current를 missing으로 응답합니다(route는 여전히 hourly-only).
 
 ## 변경 이력
 
@@ -359,4 +358,15 @@ v5 / PR #79 / 2026-08 (current-observation availability-delay selector가 weathe
   여전히 PR #64 schedule-only selector를 명시적으로 주입 — PR #79 selector로 교체하는 wiring은
   이 PR 범위 밖
 - SourceMetadata·POST /weather 연결은 여전히 이 PR 범위 밖
+
+v6 / PR #80 / 2026-08 (production이 PR #79 availability-delay selector로 전환)
+- 이 composition이 request factory에 주입하는 explicit selector를 PR #64 schedule-only selector에서
+  PR #79 selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay로 교체
+- 조립 순서·success result 형태·config error pass-through·construction side-effect 경계·불변성
+  계약은 전혀 변경되지 않음
+- request factory(createKmaCurrentObservationRequestFactory)의 두 번째 인자 default(직접
+  one-argument 호출 시 PR #64 schedule-only selector)는 변경되지 않음
+- PR #71/#75/#78 상위 composition은 이 composition을 그대로 재사용하므로 이 selector 선택을
+  transitively 상속 — 각 root 자체의 재구현은 없음
+- POST /weather 연결, previous-issuance retry/fallback, cache/stale-data는 여전히 이 PR 범위 밖
 ```

@@ -176,19 +176,24 @@ observable 결과입니다.
 - hourly location boundary에서 미지원 위치로 판정되면 current 그래프는 전혀 실행되지 않으므로
   provider 호출은 0회로 유지됩니다(PR #77의 hourly-baseline-first 순서 때문).
 
-## current 가용성 — 변경 없음, 새 보장 없음
+## current 가용성 — PR #80부터 상속, 새 보장 없음
 
-PR #75 composition(→ PR #71 → PR #69)을 통해 상속되는 current 분기는 여전히 PR #64
-**schedule-only** selector입니다 — current-observation availability-delay selector는 여전히
-없습니다. 이 composition은 그런 selector를 import·주입하지 않고, readiness retry를 추가하지 않으며,
-이전 current issuance로 fallback하지 않습니다. 이 PR은 선택된 current issuance가 실제로 upstream에
-게시되었다는 **어떤 보장도 하지 않습니다**.
+PR #75 composition(→ PR #71 → PR #69)을 통해 상속되는 current 분기는, **PR #80** 이후로는 PR #79
+**availability-delay** selector(`selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay`)입니다
+— PR #78 merge 시점에는 PR #64 schedule-only selector였습니다. 이 root(PR #78) 자체는 그 selector를
+import·선택하지 않으며 코드도 전혀 바뀌지 않았습니다 — PR #69가 주입하는 값이 바뀌었을 뿐이고, PR #78은
+PR #75 → PR #71 → PR #69 그래프를 그대로 재사용하므로 그 선택을 transitively 상속할 뿐입니다. 이
+composition은 readiness retry를 추가하지 않으며, 이전 current issuance로 fallback하지 않습니다. 이
+PR은 선택된 current issuance가 실제로 upstream에 게시되었다는 **어떤 보장도 하지 않습니다** — PR #79
+selector는 결정론적 프로젝트 임계값(10분)일 뿐 공식 SLA나 live-readiness 보장이 아닙니다.
 
 ## 이 PR(#78)의 범위 밖
 
 - **`POST /weather` route 연결** — 없음. production `POST /weather`는 이 PR 이후에도 계속
   hourly-only이며 `current`는 missing입니다.
-- **current-observation availability-delay selector** — 없음.
+- **current-observation availability-delay selector 자체의 구현/wiring** — 이 root의 범위가 아닙니다.
+  (PR #79가 selector를 구현했고, PR #80이 PR #69에 wiring했습니다 — 이 root는 그 결과를 상속만
+  합니다. 위 "current 가용성" 절 참고.)
 - **cache / stale-data / retry / concurrency 최적화** — 없음.
 - **`packages/contracts` / `packages/weather-core` / `packages/lifestyle-engine` 변경** — 없음.
 - **`apps/api/src/providers/**` / `apps/api/src/services/**` 변경** — 없음(PR #77 service를 그대로
@@ -212,4 +217,11 @@ v1 / PR #78 / 2026-08
 - injected clock/fetch가 hourly+current 네 역할 모두에 동일 참조로 공유됨을 보존
 - 아홉 번째 병렬(결합) callable production root(기존 여덟 root는 불변)
 - POST /weather 연결, availability-delay selector, cache/stale, 실제 인증 KMA 호출은 이 PR 범위 밖
+
+v2 / PR #80 / 2026-08 (하위 PR #69가 PR #79 availability-delay selector로 전환; 이 root 자체는 불변)
+- 이 composition의 코드·조립 순서·공개 계약·clock/fetch 공유·provider 호출 상한(hourly 최대 2 +
+  current 최대 1)은 전혀 변경되지 않음
+- PR #75 → PR #71 → PR #69를 그대로 재사용하므로, PR #69가 request factory에 주입하는 selector가
+  PR #64 schedule-only에서 PR #79 availability-delay로 바뀐 것을 transitively 상속
+- POST /weather 연결은 여전히 이 PR 범위 밖, current retry/fallback/readiness 보장 여전히 없음
 ```

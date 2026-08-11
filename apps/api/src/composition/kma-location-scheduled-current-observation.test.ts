@@ -173,9 +173,12 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — iso
     const scheduledCompositionFactory = vi.fn();
     const locationFacadeFactory = vi.fn();
     const converter = vi.fn();
-    // The PR #69 schedule-only selector this composition must never import/run directly — proves a
-    // future regression can't quietly take ownership of PR #69's selector policy at this layer.
+    // The PR #79 availability-delay selector the parent PR #69 composition injects (as of PR #80) —
+    // this composition must never import/run it directly, proving a future regression can't quietly
+    // take ownership of PR #69's selector policy at this layer. The pre-PR #80 schedule-only selector
+    // is guarded the same way.
     const selector = vi.fn();
+    const scheduleOnlySelector = vi.fn();
     // Route/startup boundaries this composition explicitly does not wire — see the
     // `loadIsolatedComposition` doc comment above.
     const createProductionWeatherRouteDependenciesSentinel = vi.fn();
@@ -230,7 +233,8 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — iso
       await loadIsolatedComposition({
         weatherCore: {
           convertKmaLatitudeLongitudeToGrid: converter,
-          selectLatestKmaCurrentObservationBaseTime: selector,
+          selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay: selector,
+          selectLatestKmaCurrentObservationBaseTime: scheduleOnlySelector,
         },
         services: { createKmaLocationScheduledCurrentObservationFacade: locationFacadeFactory },
         scheduledComposition: {
@@ -248,6 +252,7 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — iso
       expect(locationFacadeFactory).not.toHaveBeenCalled();
       expect(converter).not.toHaveBeenCalled();
       expect(selector).not.toHaveBeenCalled();
+      expect(scheduleOnlySelector).not.toHaveBeenCalled();
       expect(createProductionWeatherRouteDependenciesSentinel).not.toHaveBeenCalled();
       expect(createWeatherRouteSentinel).not.toHaveBeenCalled();
       expect(kmaServiceKeyGet).not.toHaveBeenCalled();
@@ -528,7 +533,8 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — iso
 
 /**
  * These tests assemble the **real** components — the PR #63 provider-from-env, the PR #67
- * current-observation service, the PR #66 request factory (with the PR #64 schedule-only selector),
+ * current-observation service, the PR #66 request factory (with the PR #79 availability-delay
+ * selector, injected by the parent PR #69 composition as of PR #80),
  * the PR #63 current normalizer, the PR #68 scheduled facade, the production
  * `convertKmaLatitudeLongitudeToGrid` converter, and the PR #70 location facade — through the
  * statically-imported composition function above. Nothing is mocked except the network (an injected
@@ -584,8 +590,9 @@ interface RawItem {
 }
 
 /**
- * A raw current-observation item matching the 20260718/0600 issuance (the schedule-only selector's
- * pick at 06:00:00.000 KST) at the Seoul grid `{ nx: 60, ny: 127 }`, unless overridden.
+ * A raw current-observation item matching the 20260718/0600 issuance (the PR #79 availability-delay
+ * selector's pick at 06:10:00.000 KST — the shared `CLOCK_AT_0610_KST_20260718` test clock) at the
+ * Seoul grid `{ nx: 60, ny: 127 }`, unless overridden.
  */
 function item(overrides: Partial<RawItem> = {}): RawItem {
   return {
@@ -648,13 +655,17 @@ function composeOrThrow(
   return result.facade;
 }
 
-/** `06:00:00.000 KST == 2026-07-17T21:00:00.000Z`; selects base_date 20260718 / base_time 0600. */
-const CLOCK_AT_0600_KST_20260718 = Date.UTC(2026, 6, 17, 21, 0, 0, 0);
+/**
+ * `06:10:00.000 KST == 2026-07-17T21:10:00.000Z` — a post-availability-threshold instant. Under the
+ * PR #79 availability-delay selector (inherited transitively from the PR #69 composition via PR #80)
+ * this adjusts to `06:00:00.000` and still selects base_date 20260718 / base_time 0600.
+ */
+const CLOCK_AT_0610_KST_20260718 = Date.UTC(2026, 6, 17, 21, 10, 0, 0);
 
 describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — missing/invalid config', () => {
   it('returns the provider MISSING config error for an empty environment (no throw, no I/O)', () => {
     const { fetchImpl, calls: fetchCalls } = neverCalledFetch();
-    const { clock, nowEpochMilliseconds } = fixedClock(CLOCK_AT_0600_KST_20260718);
+    const { clock, nowEpochMilliseconds } = fixedClock(CLOCK_AT_0610_KST_20260718);
 
     const result = createKmaLocationScheduledCurrentObservationCompositionFromEnv(makeEnv(), {
       fetchImpl,
@@ -679,7 +690,7 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — mis
 
   it('returns INVALID for a whitespace-padded key, without leaking the raw key or reading the clock', () => {
     const { fetchImpl, calls: fetchCalls } = neverCalledFetch();
-    const { clock, nowEpochMilliseconds } = fixedClock(CLOCK_AT_0600_KST_20260718);
+    const { clock, nowEpochMilliseconds } = fixedClock(CLOCK_AT_0610_KST_20260718);
     const rawKey = ` ${SECRET_SHAPED_KMA_KEY_MUST_NOT_LEAK_PR71} `;
 
     const result = createKmaLocationScheduledCurrentObservationCompositionFromEnv(makeEnv(rawKey), {
@@ -700,7 +711,7 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — mis
 describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — success construction is lazy', () => {
   it('builds a facade exposing only { ok, facade } and runs no converter/clock/network', () => {
     const { fetchImpl, calls: fetchCalls } = neverCalledFetch();
-    const { clock, nowEpochMilliseconds } = fixedClock(CLOCK_AT_0600_KST_20260718);
+    const { clock, nowEpochMilliseconds } = fixedClock(CLOCK_AT_0610_KST_20260718);
     const env = makeEnv(FAKE_KMA_SERVICE_KEY);
     const dependencies: KmaLocationScheduledCurrentObservationCompositionDependencies = {
       fetchImpl,
@@ -748,7 +759,7 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — suc
 
   it('works with a frozen environment and frozen dependencies', () => {
     const { fetchImpl } = neverCalledFetch();
-    const { clock } = fixedClock(CLOCK_AT_0600_KST_20260718);
+    const { clock } = fixedClock(CLOCK_AT_0610_KST_20260718);
     const env = Object.freeze(makeEnv(FAKE_KMA_SERVICE_KEY));
     const dependencies =
       Object.freeze<KmaLocationScheduledCurrentObservationCompositionDependencies>({
@@ -768,7 +779,7 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — suc
   });
 
   it('uses the default system clock lazily when none is injected', () => {
-    const dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(CLOCK_AT_0600_KST_20260718);
+    const dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(CLOCK_AT_0610_KST_20260718);
     const { fetchImpl, calls: fetchCalls } = neverCalledFetch();
 
     const result = createKmaLocationScheduledCurrentObservationCompositionFromEnv(
@@ -788,7 +799,7 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — ful
     const { fetchImpl, calls: fetchCalls } = recordingFetch(() =>
       jsonOk(successBody(fullCurrentSlotItems())),
     );
-    const { clock, nowEpochMilliseconds } = fixedClock(CLOCK_AT_0600_KST_20260718);
+    const { clock, nowEpochMilliseconds } = fixedClock(CLOCK_AT_0610_KST_20260718);
     const facade = composeOrThrow(makeEnv(FAKE_KMA_SERVICE_KEY), { fetchImpl, clock });
 
     // Construction touched neither the clock nor the network.
@@ -861,7 +872,7 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — ful
 describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — unsupported location', () => {
   it('returns a LOCATION/UNSUPPORTED_LOCATION result for Tokyo, with no clock read and no fetch', async () => {
     const { fetchImpl, calls: fetchCalls } = neverCalledFetch();
-    const { clock, nowEpochMilliseconds } = fixedClock(CLOCK_AT_0600_KST_20260718);
+    const { clock, nowEpochMilliseconds } = fixedClock(CLOCK_AT_0610_KST_20260718);
     const facade = composeOrThrow(makeEnv(FAKE_KMA_SERVICE_KEY), { fetchImpl, clock });
 
     const result = await facade.fetchScheduledCurrentWeatherForLocation({
@@ -895,7 +906,7 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — uns
 describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — invalid coordinate', () => {
   it('lets the production converter RangeError propagate synchronously, without a clock read, fetch, or LOCATION result', () => {
     const { fetchImpl, calls: fetchCalls } = neverCalledFetch();
-    const { clock, nowEpochMilliseconds } = fixedClock(CLOCK_AT_0600_KST_20260718);
+    const { clock, nowEpochMilliseconds } = fixedClock(CLOCK_AT_0610_KST_20260718);
     const consoleSpy = spyOnConsole();
     const facade = composeOrThrow(makeEnv(FAKE_KMA_SERVICE_KEY), { fetchImpl, clock });
 
@@ -928,7 +939,7 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — dow
     const { fetchImpl, calls: fetchCalls } = recordingFetch(
       () => new Response('secret upstream error page', { status: 503 }),
     );
-    const { clock, nowEpochMilliseconds } = fixedClock(CLOCK_AT_0600_KST_20260718);
+    const { clock, nowEpochMilliseconds } = fixedClock(CLOCK_AT_0610_KST_20260718);
     const facade = composeOrThrow(makeEnv(FAKE_KMA_SERVICE_KEY), { fetchImpl, clock });
 
     const result = await facade.fetchScheduledCurrentWeatherForLocation({
@@ -959,7 +970,7 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — dow
   it('surfaces a missing required T1H category as a NORMALIZATION-stage issue (not re-classified as LOCATION), runs silently under a 5-channel console guard, exposes exactly { ok, stage, issues }, and leaks no grid coordinate', async () => {
     const items = [item({ category: 'PTY', obsrValue: '0' })];
     const { fetchImpl, calls: fetchCalls } = recordingFetch(() => jsonOk(successBody(items)));
-    const { clock, nowEpochMilliseconds } = fixedClock(CLOCK_AT_0600_KST_20260718);
+    const { clock, nowEpochMilliseconds } = fixedClock(CLOCK_AT_0610_KST_20260718);
     const facade = composeOrThrow(makeEnv(FAKE_KMA_SERVICE_KEY), { fetchImpl, clock });
     // Installed before the call and asserted/restored only after every normalization assertion below,
     // so a regression such as `console.error(rawKmaPayload)` on the normalization-failure path is caught.
@@ -1013,7 +1024,7 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — rep
     const { fetchImpl, calls: fetchCalls } = recordingFetch(() =>
       jsonOk(successBody(fullCurrentSlotItems())),
     );
-    const nowValues = [CLOCK_AT_0600_KST_20260718, CLOCK_AT_0600_KST_20260718 + 60_000];
+    const nowValues = [CLOCK_AT_0610_KST_20260718, CLOCK_AT_0610_KST_20260718 + 60_000];
     let callIndex = 0;
     const nowEpochMilliseconds = vi.fn(() => {
       const value = nowValues[callIndex];
@@ -1051,11 +1062,11 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — rep
 
     const facadeA = composeOrThrow(env, {
       fetchImpl: runA.fetchImpl,
-      clock: fixedClock(CLOCK_AT_0600_KST_20260718).clock,
+      clock: fixedClock(CLOCK_AT_0610_KST_20260718).clock,
     });
     const facadeB = composeOrThrow(env, {
       fetchImpl: runB.fetchImpl,
-      clock: fixedClock(CLOCK_AT_0600_KST_20260718).clock,
+      clock: fixedClock(CLOCK_AT_0610_KST_20260718).clock,
     });
 
     expect(facadeA).not.toBe(facadeB);
@@ -1079,7 +1090,7 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — rep
     const { fetchImpl, calls: fetchCalls } = recordingFetch(() =>
       jsonOk(successBody(fullCurrentSlotItems())),
     );
-    const { clock, nowEpochMilliseconds } = fixedClock(CLOCK_AT_0600_KST_20260718);
+    const { clock, nowEpochMilliseconds } = fixedClock(CLOCK_AT_0610_KST_20260718);
     const facade = composeOrThrow(makeEnv(FAKE_KMA_SERVICE_KEY), { fetchImpl, clock });
 
     const supported = await facade.fetchScheduledCurrentWeatherForLocation({
@@ -1111,7 +1122,7 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — no 
     const success = recordingFetch(() => jsonOk(successBody(fullCurrentSlotItems())));
     const successFacade = composeOrThrow(makeEnv(SECRET_SHAPED_KMA_KEY_MUST_NOT_LEAK_PR71), {
       fetchImpl: success.fetchImpl,
-      clock: fixedClock(CLOCK_AT_0600_KST_20260718).clock,
+      clock: fixedClock(CLOCK_AT_0610_KST_20260718).clock,
     });
     const successResult = await successFacade.fetchScheduledCurrentWeatherForLocation({
       latitude: SEOUL_LATITUDE,
@@ -1123,7 +1134,7 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — no 
     // 2) Unsupported location — the raw coordinate must not leak.
     const unsupportedFacade = composeOrThrow(makeEnv(SECRET_SHAPED_KMA_KEY_MUST_NOT_LEAK_PR71), {
       fetchImpl: neverCalledFetch().fetchImpl,
-      clock: fixedClock(CLOCK_AT_0600_KST_20260718).clock,
+      clock: fixedClock(CLOCK_AT_0610_KST_20260718).clock,
     });
     const unsupportedResult = await unsupportedFacade.fetchScheduledCurrentWeatherForLocation({
       latitude: TOKYO_LATITUDE,
@@ -1137,7 +1148,7 @@ describe('createKmaLocationScheduledCurrentObservationCompositionFromEnv — no 
     const providerFail = recordingFetch(() => new Response('x', { status: 503 }));
     const providerFailFacade = composeOrThrow(makeEnv(SECRET_SHAPED_KMA_KEY_MUST_NOT_LEAK_PR71), {
       fetchImpl: providerFail.fetchImpl,
-      clock: fixedClock(CLOCK_AT_0600_KST_20260718).clock,
+      clock: fixedClock(CLOCK_AT_0610_KST_20260718).clock,
     });
     const providerFailResult = await providerFailFacade.fetchScheduledCurrentWeatherForLocation({
       latitude: SEOUL_LATITUDE,

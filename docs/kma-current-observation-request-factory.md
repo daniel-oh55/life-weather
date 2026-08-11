@@ -47,13 +47,15 @@ factory를 리팩터하거나 두 factory가 공유하는 generic factory로 만
 
 forecast factory가 PR #15에서 추가한 **주입 가능한 base-time selector seam**은 이 factory에도
 있습니다: 두 번째 인자 `baseTimeSelector`(default: PR #64 schedule-only selector)를 생략하지
-않고 주입할 수 있습니다. 초단기실황에는 아직 대응하는 availability-delay selector가
-없습니다 — [kma-current-observation-issue-time.md](./kma-current-observation-issue-time.md)가
-이를 명시적으로 범위 밖이라고 기록합니다 — 그래서 **현재 production composition은 이 seam에
-non-default selector를 주입하지 않으며**, 두 번째 인자를 생략한 호출은 계속 PR #64 selector만
-사용합니다. Seam 자체는 forecast factory와 동일한 이유로 미리 존재합니다: 이후 초단기실황
-availability-delay selector가 추가되면, 이 factory를 변경하지 않고 composition이 새 selector를
-주입할 수 있습니다.
+않고 주입할 수 있습니다. 초단기실황의 대응 availability-delay selector는 **PR #79**에서 추가됐고
+(`selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay`,
+[kma-current-observation-api-availability-time.md](./kma-current-observation-api-availability-time.md)),
+**PR #80**이 이 seam에 그 selector를 주입하는 production composition
+(`createKmaScheduledCurrentObservationCompositionFromEnv`)으로 wiring했습니다 — 이 factory 자체는
+변경되지 않았고, 두 번째 인자를 생략한 직접 호출은 여전히 PR #64 schedule-only selector를
+사용합니다. Seam 자체는 forecast factory와 동일한 이유로 미리 존재했습니다: composition이 이
+factory를 변경하지 않고 non-default selector를 주입할 수 있도록 하기 위함이며, PR #80이 정확히
+그 방식으로 이를 소비했습니다.
 
 factory의 나머지 구조(injected clock, side-effect-free 생성, 호출당 clock 1회·selector 1회, 새
 result union·error type 없음, fresh output)는 forecast factory와 동일한 원칙입니다.
@@ -108,10 +110,11 @@ export function createKmaCurrentObservationRequestFactory(
 - **PR #69** production composition
   (`createKmaScheduledCurrentObservationCompositionFromEnv`,
   [kma-current-observation-production-composition.md](./kma-current-observation-production-composition.md))이
-  이제 이 seam에 selector를 **명시적으로** 주입합니다 — 다만 주입하는 값은 여전히 PR #64
-  schedule-only selector이므로, 두 번째 인자를 생략한 호출과 **결과적으로 동일한** selector를
-  사용합니다. 이 factory의 default 자체와 공개 계약은 변경되지 않았고, 여전히 어떤 production
-  composition도 **non-default**(availability-delay) selector를 주입하지 않습니다.
+  이 seam에 selector를 **명시적으로** 주입합니다. **PR #80** 이후로는 PR #79
+  **availability-delay** selector(`selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay`)를
+  주입합니다 — PR #64 schedule-only selector는 더 이상 production에 주입되지 않으며, 이 factory의
+  두 번째 인자를 생략한 직접 호출의 default로만 남아 있습니다. 이 factory의 default 자체와 공개
+  계약은 변경되지 않았습니다.
 
 ## injected clock contract
 
@@ -200,9 +203,10 @@ close over할 뿐입니다. 같은 instance를 여러 번 사용할 수 있고, 
   [kma-scheduled-current-observation-facade.md](./kma-scheduled-current-observation-facade.md))가
   이 factory와 그 service를 순서대로 연결했습니다. 이어서 **PR #69**가 이 facade를 소비하는
   production composition root(`createKmaScheduledCurrentObservationCompositionFromEnv`)를
-  추가해, 이 factory에 (injected 또는 default) system clock과 explicit PR #64 selector를
-  주입합니다. 이 factory 자체의 책임과 공개 계약은 변경되지 않았고, route에는 여전히 연결되지
-  않았습니다.
+  추가해, 이 factory에 (injected 또는 default) system clock과 explicit selector를 주입합니다 —
+  **PR #80** 이후로는 그 explicit selector가 PR #79 availability-delay selector입니다(PR #69
+  최초 merge 시점에는 PR #64 schedule-only selector였습니다). 이 factory 자체의 책임과 공개
+  계약은 변경되지 않았고, route에는 여전히 연결되지 않았습니다.
 
 ## 실제 key·외부 네트워크 테스트 없음
 
@@ -226,9 +230,12 @@ close over할 뿐입니다. 같은 instance를 여러 번 사용할 수 있고, 
    **PR #69에서 완료**: forecast와 동일한 `createKmaSystemClock()` adapter를 재사용(default 시)
    또는 injected clock을 그대로 wiring.
 4. `WeatherOverview`의 `current` section 조립, `SourceMetadata`
-5. `POST /weather`로의 current 데이터 연결
-6. current-observation availability-delay selector 구현 자체(존재하면 이 factory는 변경 없이
-   `baseTimeSelector` seam에 주입만 받으면 됨) — 이 selector의 구현은 아직 이 PR 범위 밖
+5. `POST /weather`로의 current 데이터 연결 — 여전히 미구현
+6. ~~current-observation availability-delay selector 구현 자체(존재하면 이 factory는 변경 없이
+   `baseTimeSelector` seam에 주입만 받으면 됨)~~ — **PR #79에서 selector 구현 완료**
+   ([kma-current-observation-api-availability-time.md](./kma-current-observation-api-availability-time.md)),
+   **PR #80에서 production composition에 주입 완료**. 이 factory 자체는 변경 없이 seam으로만
+   받았습니다.
 
 ## 변경 이력
 
@@ -260,4 +267,10 @@ v3 / PR #69 / 2026-08 (production composition이 system clock + explicit selecto
 - 주입되는 selector는 여전히 default와 동일한 값이므로 factory의 결과·계약은 변경되지 않음
 - 이 factory의 default·공개 API·오류 전파는 v2와 동일하게 불변
 - availability-delay selector는 여전히 미구현, route 연결도 여전히 없음
+
+v4 / PR #80 / 2026-08 (production이 PR #79 availability-delay selector로 전환)
+- createKmaScheduledCurrentObservationCompositionFromEnv가 이 factory의 baseTimeSelector seam에
+  PR #64 schedule-only selector 대신 PR #79 availability-delay selector를 명시적으로 주입
+- 이 factory 자체(공개 API, 오류 전파, 두 번째 인자 생략 시 PR #64 default)는 변경되지 않음
+- route 연결(POST /weather)은 여전히 없음
 ```
