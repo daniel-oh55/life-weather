@@ -538,5 +538,25 @@
   정책·동시성/요청 순서 정책·`POST /weather` current wiring·availability-delay selector·cache/
   stale-data·실제 인증 KMA API 호출 중 어느 것도 구현하지 않습니다 — 이 PR 이후에도 production
   `POST /weather`의 `current`는 계속 missing입니다.
+- **PR #77**은 PR #24 location hourly overview service와 PR #74 location current overview
+  service를 처음으로 실제 호출해 PR #76 순수 assembler에 연결하는 **application
+  orchestration**(`createKmaLocationCurrentHourlyOverviewService`,
+  `apps/api/src/services/kma-location-current-hourly-overview.ts`)을 추가했습니다 — hourly service를
+  호출자의 정확한 `input`/`options` reference로 먼저 실행하고, hourly의 top-level `LOCATION` 실패는
+  그대로 반환하며(current/assembler 미호출), 모든 hourly 성공(`selection.selected === false`인
+  no-selection 성공 포함)은 hourly baseline의 `overview.location`을 담은 fresh `{ location }` 입력으로
+  current service를 호출합니다. current의 `LOCATION`/`PROVIDER`/`NORMALIZATION` 중 어떤 resolved
+  `ok: false`도 stage를 노출하지 않고 균일하게 `current: null`로 강등되어 PR #76 assembler에
+  전달되고, current 성공은 정확한 reference로 전달됩니다. hourly/current의 동기 throw나 Promise
+  rejection, assembler throw는 강등되지 않고 동일 reference로 전파됩니다. 실행은 `Promise.all` 없이
+  순차적입니다(hourly 완료 후에만 current 시작). 결과는 `{ ok: true, selection, overview }` 또는
+  hourly `LOCATION` 실패로, 기존 `KmaLocationHourlyOverviewResult`와 정확히 호환되는 형태를
+  유지합니다 — 이후 production wiring PR이 기존 hourly presenter 경계를 재사용할 수 있도록 하기
+  위함입니다. `apps/api/src/composition/**`·`routes/**`·`presenters/**`·`index.ts`·`api-app.ts`는
+  변경하지 않았습니다. 자세한 내용은
+  [kma-location-current-hourly-overview.md](./kma-location-current-hourly-overview.md) 참고. 따라서
+  PR #77 이후에도 production `POST /weather`의 `current`는 계속 missing이며, production composition
+  integration, `POST /weather` current wiring, current-observation availability-delay selector,
+  cache/stale-data, 실제 인증 KMA API 호출은 모두 여전히 미구현입니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
