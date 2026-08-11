@@ -591,7 +591,8 @@ describe('createKmaLocationCurrentOverviewCompositionFromEnv — isolated wiring
 /**
  * These tests assemble the **real** components — the PR #71 location scheduled current-observation
  * composition (provider-from-env, PR #67 current-observation service, PR #66 request factory with the
- * PR #64 schedule-only selector, PR #63 normalizer, PR #68 scheduled facade, production
+ * PR #79 availability-delay selector, injected by the parent PR #69 composition as of PR #80, PR #63
+ * normalizer, PR #68 scheduled facade, production
  * `convertKmaLatitudeLongitudeToGrid` converter, PR #70 location facade), the PR #73 live current
  * source metadata resolver, and the PR #74 location current-overview application service — through
  * the statically-imported composition function above. Nothing is mocked except the network (an
@@ -669,8 +670,9 @@ interface RawItem {
 }
 
 /**
- * A raw current-observation item matching the 20260718/0600 issuance (the schedule-only selector's
- * pick at 06:00:00.000 KST) at the Seoul grid `{ nx: 60, ny: 127 }`, unless overridden.
+ * A raw current-observation item matching the 20260718/0600 issuance (the PR #79 availability-delay
+ * selector's pick at 06:10:00.000 KST — the shared `CLOCK_AT_0610_KST_20260718` test clock) at the
+ * Seoul grid `{ nx: 60, ny: 127 }`, unless overridden.
  */
 function item(overrides: Partial<RawItem> = {}): RawItem {
   return {
@@ -780,18 +782,22 @@ function expectNoLeakage(value: unknown): void {
   }
 }
 
-/** `06:00:00.000 KST == 2026-07-17T21:00:00.000Z`; selects base_date 20260718 / base_time 0600. */
-const CLOCK_AT_0600_KST_20260718 = Date.UTC(2026, 6, 17, 21, 0, 0, 0);
+/**
+ * `06:10:00.000 KST == 2026-07-17T21:10:00.000Z` — a post-availability-threshold instant. Under the
+ * PR #79 availability-delay selector (inherited transitively via PR #71 → PR #69, wired by PR #80)
+ * this adjusts to `06:00:00.000` and still selects base_date 20260718 / base_time 0600.
+ */
+const CLOCK_AT_0610_KST_20260718 = Date.UTC(2026, 6, 17, 21, 10, 0, 0);
 
 /**
- * `06:05:22.333 KST == 2026-07-17T21:05:22.333Z` — a **distinct, later** instant used as the
+ * `06:15:22.333 KST == 2026-07-17T21:15:22.333Z` — a **distinct, later** instant used as the
  * **second** clock read (the metadata resolver's `fetchedAt` materialization). Keeping it distinct
  * from the request instant proves `fetchedAt` comes from this second reading, not the first.
  */
-const FETCHED_AT_EPOCH_MS = Date.UTC(2026, 6, 17, 21, 5, 22, 333);
+const FETCHED_AT_EPOCH_MS = Date.UTC(2026, 6, 17, 21, 15, 22, 333);
 
 /** The UTC `Z` millisecond ISO string the resolver derives from {@link FETCHED_AT_EPOCH_MS}. */
-const FETCHED_AT_ISO = '2026-07-17T21:05:22.333Z';
+const FETCHED_AT_ISO = '2026-07-17T21:15:22.333Z';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -812,7 +818,7 @@ describe('createKmaLocationCurrentOverviewCompositionFromEnv — missing/invalid
     const consoleSpy = spyOnConsole();
     const { fetchImpl, calls: fetchCalls } = neverCalledFetch();
     const { clock, nowEpochMilliseconds } = scriptedClock([
-      CLOCK_AT_0600_KST_20260718,
+      CLOCK_AT_0610_KST_20260718,
       FETCHED_AT_EPOCH_MS,
     ]);
 
@@ -843,7 +849,7 @@ describe('createKmaLocationCurrentOverviewCompositionFromEnv — missing/invalid
     const consoleSpy = spyOnConsole();
     const { fetchImpl, calls: fetchCalls } = neverCalledFetch();
     const { clock, nowEpochMilliseconds } = scriptedClock([
-      CLOCK_AT_0600_KST_20260718,
+      CLOCK_AT_0610_KST_20260718,
       FETCHED_AT_EPOCH_MS,
     ]);
     const rawKey = ` ${SECRET_SHAPED_KMA_KEY_MUST_NOT_LEAK_PR75} `;
@@ -867,7 +873,7 @@ describe('createKmaLocationCurrentOverviewCompositionFromEnv — missing/invalid
   it('works with a frozen environment and frozen dependencies on config failure', () => {
     const { fetchImpl, calls: fetchCalls } = neverCalledFetch();
     const { clock, nowEpochMilliseconds } = scriptedClock([
-      CLOCK_AT_0600_KST_20260718,
+      CLOCK_AT_0610_KST_20260718,
       FETCHED_AT_EPOCH_MS,
     ]);
     const env = Object.freeze(makeEnv());
@@ -893,7 +899,7 @@ describe('createKmaLocationCurrentOverviewCompositionFromEnv — success constru
     const consoleSpy = spyOnConsole();
     const { fetchImpl, calls: fetchCalls } = neverCalledFetch();
     const { clock, nowEpochMilliseconds } = scriptedClock([
-      CLOCK_AT_0600_KST_20260718,
+      CLOCK_AT_0610_KST_20260718,
       FETCHED_AT_EPOCH_MS,
     ]);
     const env = makeEnv(FAKE_KMA_SERVICE_KEY);
@@ -943,7 +949,7 @@ describe('createKmaLocationCurrentOverviewCompositionFromEnv — success constru
   });
 
   it('uses the default system clock lazily when none is injected (no time read at construction)', () => {
-    const dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(CLOCK_AT_0600_KST_20260718);
+    const dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(CLOCK_AT_0610_KST_20260718);
     const { fetchImpl, calls: fetchCalls } = neverCalledFetch();
 
     const result = createKmaLocationCurrentOverviewCompositionFromEnv(
@@ -964,7 +970,7 @@ describe('createKmaLocationCurrentOverviewCompositionFromEnv — full Seoul succ
       jsonOk(successBody(fullCurrentSlotItems())),
     );
     const { clock, nowEpochMilliseconds } = scriptedClock([
-      CLOCK_AT_0600_KST_20260718,
+      CLOCK_AT_0610_KST_20260718,
       FETCHED_AT_EPOCH_MS,
     ]);
     const service = composeOrThrow(makeEnv(FAKE_KMA_SERVICE_KEY), { fetchImpl, clock });
@@ -1032,7 +1038,7 @@ describe('createKmaLocationCurrentOverviewCompositionFromEnv — full Seoul succ
 
   it('assembles correctly from a deeply frozen input and does not mutate it', async () => {
     const { fetchImpl } = recordingFetch(() => jsonOk(successBody(fullCurrentSlotItems())));
-    const { clock } = scriptedClock([CLOCK_AT_0600_KST_20260718, FETCHED_AT_EPOCH_MS]);
+    const { clock } = scriptedClock([CLOCK_AT_0610_KST_20260718, FETCHED_AT_EPOCH_MS]);
     const service = composeOrThrow(makeEnv(FAKE_KMA_SERVICE_KEY), { fetchImpl, clock });
 
     const input = deepFreeze({ location: makeLocation() });
@@ -1053,7 +1059,7 @@ describe('createKmaLocationCurrentOverviewCompositionFromEnv — unsupported loc
     const consoleSpy = spyOnConsole();
     const { fetchImpl, calls: fetchCalls } = neverCalledFetch();
     const { clock, nowEpochMilliseconds } = scriptedClock([
-      CLOCK_AT_0600_KST_20260718,
+      CLOCK_AT_0610_KST_20260718,
       FETCHED_AT_EPOCH_MS,
     ]);
     const service = composeOrThrow(makeEnv(FAKE_KMA_SERVICE_KEY), { fetchImpl, clock });
@@ -1092,7 +1098,7 @@ describe('createKmaLocationCurrentOverviewCompositionFromEnv — invalid Weather
       const consoleSpy = spyOnConsole();
       const { fetchImpl, calls: fetchCalls } = neverCalledFetch();
       const { clock, nowEpochMilliseconds } = scriptedClock([
-        CLOCK_AT_0600_KST_20260718,
+        CLOCK_AT_0610_KST_20260718,
         FETCHED_AT_EPOCH_MS,
       ]);
       const service = composeOrThrow(makeEnv(FAKE_KMA_SERVICE_KEY), { fetchImpl, clock });
@@ -1123,7 +1129,7 @@ describe('createKmaLocationCurrentOverviewCompositionFromEnv — pre-aborted sup
       jsonOk(successBody(fullCurrentSlotItems())),
     );
     const { clock, nowEpochMilliseconds } = scriptedClock([
-      CLOCK_AT_0600_KST_20260718,
+      CLOCK_AT_0610_KST_20260718,
       FETCHED_AT_EPOCH_MS,
     ]);
     const service = composeOrThrow(makeEnv(FAKE_KMA_SERVICE_KEY), { fetchImpl, clock });
@@ -1154,7 +1160,7 @@ describe('createKmaLocationCurrentOverviewCompositionFromEnv — downstream fail
       () => new Response('secret upstream error page', { status: 503 }),
     );
     const { clock, nowEpochMilliseconds } = scriptedClock([
-      CLOCK_AT_0600_KST_20260718,
+      CLOCK_AT_0610_KST_20260718,
       FETCHED_AT_EPOCH_MS,
     ]);
     const service = composeOrThrow(makeEnv(FAKE_KMA_SERVICE_KEY), { fetchImpl, clock });
@@ -1178,7 +1184,7 @@ describe('createKmaLocationCurrentOverviewCompositionFromEnv — downstream fail
       jsonOk(successBody(missingRequiredCategoryItems())),
     );
     const { clock, nowEpochMilliseconds } = scriptedClock([
-      CLOCK_AT_0600_KST_20260718,
+      CLOCK_AT_0610_KST_20260718,
       FETCHED_AT_EPOCH_MS,
     ]);
     const consoleSpy = spyOnConsole();
@@ -1214,7 +1220,7 @@ describe('createKmaLocationCurrentOverviewCompositionFromEnv — metadata clock 
       jsonOk(successBody(fullCurrentSlotItems())),
     );
     const { clock, nowEpochMilliseconds } = throwingSecondClock(
-      CLOCK_AT_0600_KST_20260718,
+      CLOCK_AT_0610_KST_20260718,
       sentinel,
     );
     const service = composeOrThrow(makeEnv(FAKE_KMA_SERVICE_KEY), { fetchImpl, clock });
@@ -1247,7 +1253,7 @@ describe('createKmaLocationCurrentOverviewCompositionFromEnv — fresh independe
     const env = makeEnv(FAKE_KMA_SERVICE_KEY);
     const dependencies: KmaLocationCurrentOverviewCompositionDependencies = {
       fetchImpl,
-      clock: scriptedClock([CLOCK_AT_0600_KST_20260718, FETCHED_AT_EPOCH_MS]).clock,
+      clock: scriptedClock([CLOCK_AT_0610_KST_20260718, FETCHED_AT_EPOCH_MS]).clock,
     };
 
     const first = createKmaLocationCurrentOverviewCompositionFromEnv(env, dependencies);
@@ -1289,7 +1295,7 @@ describe('createKmaLocationCurrentOverviewCompositionFromEnv — no secret leaka
     const success = recordingFetch(() => jsonOk(successBody(fullCurrentSlotItems())));
     const successService = composeOrThrow(makeEnv(SECRET_SHAPED_KMA_KEY_MUST_NOT_LEAK_PR75), {
       fetchImpl: success.fetchImpl,
-      clock: scriptedClock([CLOCK_AT_0600_KST_20260718, FETCHED_AT_EPOCH_MS]).clock,
+      clock: scriptedClock([CLOCK_AT_0610_KST_20260718, FETCHED_AT_EPOCH_MS]).clock,
     });
     const successResult = await successService.fetchCurrentWeatherOverviewForLocation({
       location: makeLocation(),
@@ -1303,7 +1309,7 @@ describe('createKmaLocationCurrentOverviewCompositionFromEnv — no secret leaka
       makeEnv(SECRET_SHAPED_KMA_KEY_MUST_NOT_LEAK_PR75),
       {
         fetchImpl: neverCalledFetch().fetchImpl,
-        clock: scriptedClock([CLOCK_AT_0600_KST_20260718, FETCHED_AT_EPOCH_MS]).clock,
+        clock: scriptedClock([CLOCK_AT_0610_KST_20260718, FETCHED_AT_EPOCH_MS]).clock,
       },
     );
     const unsupportedResult = await unsupportedService.fetchCurrentWeatherOverviewForLocation({
@@ -1319,7 +1325,7 @@ describe('createKmaLocationCurrentOverviewCompositionFromEnv — no secret leaka
       makeEnv(SECRET_SHAPED_KMA_KEY_MUST_NOT_LEAK_PR75),
       {
         fetchImpl: providerFail.fetchImpl,
-        clock: scriptedClock([CLOCK_AT_0600_KST_20260718, FETCHED_AT_EPOCH_MS]).clock,
+        clock: scriptedClock([CLOCK_AT_0610_KST_20260718, FETCHED_AT_EPOCH_MS]).clock,
       },
     );
     const providerFailResult =

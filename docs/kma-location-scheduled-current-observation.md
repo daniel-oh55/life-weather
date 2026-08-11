@@ -298,11 +298,17 @@ createKmaLocationScheduledCurrentObservationFacade            // PR #70, 이 문
    ([kma-location-current-overview-composition.md](./kma-location-current-overview-composition.md))로
    구현했습니다. 이 문서의 PR #71 composition/PR #70 facade 공개 계약은 변경되지 않았습니다.
 6. `POST /weather`로의 current 데이터 연결.
-7. current-observation availability-delay selector.
+7. ~~current-observation availability-delay selector~~ — **PR #79**가 순수 selector
+   (`selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay`,
+   [kma-current-observation-api-availability-time.md](./kma-current-observation-api-availability-time.md))를
+   weather-core에 추가했고, **PR #80**이 PR #69 grid-based production composition에 명시적으로
+   주입했습니다. 이 문서의 PR #70 facade와 PR #71 location composition은 재구현 없이 PR #69를 그대로
+   재사용하므로, 이 selector 선택을 **transitively 상속**합니다 — 이 파일들 자체는 변경되지
+   않았습니다.
 8. 실제 인증 KMA API 호출을 통한 live 검증.
 
-이 PR들이 production current 데이터를 제공한다고 표현하지 않습니다 — `POST /weather`는 PR #75
-이후에도 계속 current를 missing으로 응답합니다.
+이 PR들이 production current 데이터를 제공한다고 표현하지 않습니다 — `POST /weather`는 PR #80
+이후에도 계속 current를 missing으로 응답합니다(route는 여전히 hourly-only).
 
 ## 변경 이력
 
@@ -323,4 +329,11 @@ v2 / PR #71 / 2026-08 (production composition 추가; 이 facade 자체는 불�
   grid production composition을 그대로 재사용하고 production converter를 선택해 이 facade에 연결
 - WeatherOverview.current·SourceMetadata·POST /weather 연결·availability-delay selector는 여전히 이
   범위 밖
+
+v3 / PR #80 / 2026-08 (PR #69가 PR #79 availability-delay selector로 전환; 이 facade·composition 자체는 불변)
+- 이 문서의 PR #70 facade와 PR #71 location composition은 코드 변경 없이 PR #69 grid-based
+  composition의 selector 선택을 그대로 재사용/상속
+- 이 facade의 공개 계약(latitude/longitude 입력, pass-through, Promise identity, 호출 순서)과 PR #71
+  composition의 조립 순서·success result 형태·config error pass-through는 전혀 변경되지 않음
+- WeatherOverview.current·SourceMetadata·POST /weather 연결은 여전히 이 범위 밖
 ```

@@ -12,7 +12,8 @@
  *   → createKmaCurrentObservationService (PR #67)           → KmaCurrentObservationService
  *
  * system clock adapter / injected clock
- *   + selectLatestKmaCurrentObservationBaseTime (PR #64)   // explicit schedule-only production choice
+ *   + selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay (PR #79)   // explicit
+ *     availability-delay production choice, wired here by PR #80
  *   → createKmaCurrentObservationRequestFactory (PR #66)   → KmaCurrentObservationRequestFactory
  *
  * request factory + current-observation service
@@ -25,24 +26,28 @@
  * keeps test and `/health` imports free of any KMA configuration dependency and defers all startup /
  * error policy to an explicit caller (a later route / startup PR).
  *
- * Production base-time choice: unlike the hourly composition, this root injects the PR #64
- * **schedule-only** selector, {@link selectLatestKmaCurrentObservationBaseTime} — no
- * current-observation availability-delay selector exists yet. This selector picks the latest on-the-
- * hour (`HH00`) issuance at or before the reference instant; it does **not** guarantee the upstream
- * API has actually published that issuance's data yet. No availability delay, safety margin, or
- * readiness claim is added here, and no threshold number is introduced by this composition.
+ * Production base-time choice: as of PR #80, this root injects the PR #79 **availability-delay**
+ * selector, {@link selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay} — the request
+ * factory's schedule-only default ({@link selectLatestKmaCurrentObservationBaseTime}, PR #64) is no
+ * longer used here (a direct one-argument caller of the request factory still gets it). The
+ * availability-delay selector picks the latest on-the-hour (`HH00`) issuance whose project-defined
+ * 10-minute threshold has already elapsed at the reference instant; the 10-minute threshold itself
+ * lives only in the PR #79 weather-core selector — this composition introduces no threshold number of
+ * its own. This still does **not** guarantee the upstream API has actually published that issuance's
+ * data, that a request at this instant succeeds, or that a previous-issuance fallback exists — see
+ * `docs/kma-current-observation-api-availability-time.md`.
  *
  * Responsibility boundary: this layer only *selects* production dependencies — including the explicit
- * PR #64 schedule-only selector it injects into the request factory — and *sequences* the existing
- * public factories. It owns no KMA data rule, no transport, no normalization, no issue-time math, no
- * request-assembly rule, and no facade-wiring rule — those stay in the components it composes. It
- * reads and validates no service key of its own (the provider factory owns that), builds no URL,
- * calls no `fetch`, reads no clock, and adds no retry / fallback / logging. It consumes only the
- * `../providers/kma`, `../services`, and `@life-weather/weather-core` (the PR #64 selector) public
+ * PR #79 availability-delay selector it injects into the request factory — and *sequences* the
+ * existing public factories. It owns no KMA data rule, no transport, no normalization, no issue-time
+ * math, no request-assembly rule, and no facade-wiring rule — those stay in the components it
+ * composes. It reads and validates no service key of its own (the provider factory owns that), builds
+ * no URL, calls no `fetch`, reads no clock, and adds no retry / fallback / logging. It consumes only
+ * the `../providers/kma`, `../services`, and `@life-weather/weather-core` (the PR #79 selector) public
  * surfaces. See `docs/kma-current-observation-production-composition.md`.
  */
 
-import { selectLatestKmaCurrentObservationBaseTime } from '@life-weather/weather-core';
+import { selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay } from '@life-weather/weather-core';
 
 import {
   createKmaCurrentObservationProviderFromEnv,
@@ -105,10 +110,10 @@ export type CreateKmaScheduledCurrentObservationCompositionResult =
  *    construction, and no `fetch`.
  * 3. Otherwise pick the clock: the injected `clock` reference when supplied, else a fresh
  *    {@link createKmaSystemClock} adapter.
- * 4. Build the request factory from that clock and the PR #64
- *    {@link selectLatestKmaCurrentObservationBaseTime} schedule-only selector (the explicit
- *    production base-time choice), the current-observation service from the provider, and the
- *    scheduled facade from the two.
+ * 4. Build the request factory from that clock and the PR #79
+ *    {@link selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay} availability-delay
+ *    selector (the explicit production base-time choice), the current-observation service from the
+ *    provider, and the scheduled facade from the two.
  * 5. Return `{ ok: true, facade }`.
  *
  * Construction is side-effect-free beyond reading provider configuration: it reads no clock, issues
@@ -147,13 +152,13 @@ export function createKmaScheduledCurrentObservationCompositionFromEnv(
   // Neither is called here; the first read is deferred to the facade's request-time factory call.
   const clock = dependencies?.clock ?? createKmaSystemClock();
 
-  // Steps 4–6: assemble the request factory — injecting the PR #64 schedule-only selector as the
-  // explicit production base-time choice (never relying on the factory's implicit default) — the
-  // current-observation service, and the scheduled facade. The selector is only referenced now; it
-  // first runs when the facade's request-time factory call reads the clock.
+  // Steps 4–6: assemble the request factory — injecting the PR #79 availability-delay selector as
+  // the explicit production base-time choice (never relying on the factory's schedule-only implicit
+  // default) — the current-observation service, and the scheduled facade. The selector is only
+  // referenced now; it first runs when the facade's request-time factory call reads the clock.
   const requestFactory = createKmaCurrentObservationRequestFactory(
     clock,
-    selectLatestKmaCurrentObservationBaseTime,
+    selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay,
   );
   const currentObservationService = createKmaCurrentObservationService(
     providerResult.provider,

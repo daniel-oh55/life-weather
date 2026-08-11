@@ -53,13 +53,16 @@
  *
  * - The **scheduled current-observation** composition (PR #69, new): the PR #63
  *   `createKmaCurrentObservationProviderFromEnv` → the PR #67 `createKmaCurrentObservationService`, a
- *   system clock adapter (shared structurally with the hourly clock port) + the PR #64 schedule-only
- *   `selectLatestKmaCurrentObservationBaseTime` selector, injected **explicitly** (not left to the
- *   factory's implicit default) → the PR #66 `createKmaCurrentObservationRequestFactory`, and the PR #68
+ *   system clock adapter (shared structurally with the hourly clock port) + the PR #79
+ *   **availability-delay** `selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay` selector
+ *   (wired here by **PR #80**; originally PR #69 injected the PR #64 schedule-only selector), injected
+ *   **explicitly** (not left to the factory's schedule-only implicit default) → the PR #66
+ *   `createKmaCurrentObservationRequestFactory`, and the PR #68
  *   `createKmaScheduledCurrentObservationFacade` over the two — yielding one live
- *   `KmaScheduledCurrentObservationFacade` keyed by `nx`/`ny`. This schedule-only selection does **not**
- *   guarantee the upstream API has actually published the picked issuance's data — there is still no
- *   current-observation availability-delay selector, so no availability/readiness claim is made. The
+ *   `KmaScheduledCurrentObservationFacade` keyed by `nx`/`ny`. This selection does **not** guarantee
+ *   the upstream API has actually published the picked issuance's data, that a request at this
+ *   instant succeeds, or that a previous-issuance fallback exists — the PR #79 selector only expresses
+ *   a deterministic 10-minute project threshold, not an official SLA or live-readiness guarantee. The
  *   five hourly roots above are **unchanged**; this is a sixth parallel root added beside them, and it
  *   is **not** connected to any location→grid adapter, `WeatherOverview.current`, current
  *   `SourceMetadata`, or the `POST /weather` route. See
@@ -137,8 +140,9 @@
  *
  * It consumes only the `../providers/kma`, `../services`, `../presenters`, `../routes`, and
  * `@life-weather/weather-core` (the PR #12 converter, the PR #14 availability-delay selector, the
- * PR #16 candidate selector, and the PR #64 current-observation schedule-only selector) public
- * surfaces. The KMA composition roots are exported only from here; the PR #31 route composition is
+ * PR #16 candidate selector, and the PR #79 current-observation availability-delay selector, wired
+ * here by PR #80) public surfaces. The KMA composition roots are exported only from here; the PR #31
+ * route composition is
  * exported here too and consumed by `apps/api/src/index.ts`. See `docs/kma-production-composition.md`,
  * `docs/kma-location-scheduled-hourly.md`, `docs/kma-hourly-fallback-composition.md`,
  * `docs/kma-location-hourly-fallback.md`, `docs/kma-location-hourly-overview-composition.md`,

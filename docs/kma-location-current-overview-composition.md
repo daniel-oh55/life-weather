@@ -168,8 +168,11 @@ construction/wiring, system-clock adapter object construction만 허용됩니다
 
 - **`POST /weather` route 연결** — 없음. production `POST /weather`의 `current`는 이 PR 이후에도
   계속 missing입니다.
-- **current-observation availability-delay selector** — 없음. PR #69의 schedule-only selector를 그대로
-  상속합니다. 이 selector가 upstream 자료의 실제 게시를 보장한다고 주장하지 않습니다.
+- **current-observation availability-delay selector** — 이 composition 자체는 구현하지 않습니다.
+  PR #71 → PR #69 그래프를 그대로 재사용하므로, PR #69가 선택한 selector를 그대로 상속합니다 — PR #75
+  merge 시점에는 PR #64 schedule-only selector였고, **PR #80** 이후로는 PR #79 availability-delay
+  selector입니다(아래 변경 이력 참고). 이 selector도 upstream 자료의 실제 게시를 보장한다고 주장하지
+  않습니다.
 - **cache / stale-data / retry / fallback / source selection** — 없음.
 - **`packages/contracts` / `packages/weather-core` / `packages/lifestyle-engine` 변경** — 없음.
 - **`apps/api/src/providers/**` / `apps/api/src/services/**` 변경** — 없음(PR #73/#74를 그대로
@@ -190,4 +193,10 @@ v1 / PR #75 / 2026-08
 - PR #74 location current-overview application service로 최종 조립
 - 여덟 번째 병렬 callable production root(기존 일곱 root는 불변)
 - POST /weather 연결, availability-delay selector, cache/stale, 실제 인증 KMA 호출은 이 PR 범위 밖
+
+v2 / PR #80 / 2026-08 (하위 PR #69가 PR #79 availability-delay selector로 전환; 이 root 자체는 불변)
+- 이 composition의 코드·조립 그래프·공개 계약·clock 소유권·success result 표면은 전혀 변경되지 않음
+- PR #71 → PR #69를 그대로 재사용하므로, PR #69가 request factory에 주입하는 selector가 PR #64
+  schedule-only에서 PR #79 availability-delay로 바뀐 것을 transitively 상속
+- POST /weather 연결은 여전히 이 PR 범위 밖
 ```

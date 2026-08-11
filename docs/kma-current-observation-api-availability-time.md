@@ -228,19 +228,21 @@ confirmed`/`publication completed`/`API success guaranteed` 같은 과장 표현
 - 실제 `KMA_SERVICE_KEY`를 사용한 live 호출은 이번 검증에 포함하지 않았습니다. 모든 테스트는
   순수 in-memory 계산입니다(네트워크·fake clock·timer·`Date.now()` mock 없음).
 
-## 연결 상태 / 후속 wiring — 이 PR은 selector만 추가, production 미연결
+## 연결 상태 / 후속 wiring
 
-PR #79는 순수 selector만 추가합니다. 다음은 명시적으로 **범위 밖**입니다:
+PR #79는 순수 selector만 추가했습니다. **PR #80**이 이 selector를 production current-observation
+composition (`createKmaScheduledCurrentObservationCompositionFromEnv`,
+[kma-current-observation-production-composition.md](./kma-current-observation-production-composition.md))에
+명시적으로 주입했습니다 — 그 composition은 더 이상 PR #64 schedule-only selector를 주입하지
+않습니다. request factory(`createKmaCurrentObservationRequestFactory`)의 직접 one-argument 호출
+default는 여전히 schedule-only selector입니다.
 
-- production current-observation composition
-  (`createKmaScheduledCurrentObservationCompositionFromEnv`,
-  [kma-current-observation-production-composition.md](./kma-current-observation-production-composition.md))에
-  이 selector를 주입하는 작업 — 그 composition은 여전히 PR #64 schedule-only selector를 명시적으로
-  주입합니다.
-- `POST /weather` route wiring
+다음은 PR #80 이후에도 여전히 **범위 밖**입니다:
+
+- `POST /weather` route wiring (production `current`는 여전히 응답에서 missing)
 - current retry/fallback, previous-issuance fallback orchestration
 - cache/stale-data
-- application service/composition/route/presenter 변경
+- application service/composition/route/presenter의 추가 변경
 - `packages/contracts`·mobile/native/deploy 변경
 - 실제 KMA API 호출, 실제 key/좌표
 
@@ -256,4 +258,11 @@ v1 / PR #79 / 2026-08
   RangeError 문서화
 - production composition에는 아직 미주입(explicit schedule-only selector 그대로), POST
   /weather 미연결, live retry/fallback 제외
+
+v1.1 / PR #80 / 2026-08
+- production current-observation composition
+  (createKmaScheduledCurrentObservationCompositionFromEnv)이 이 selector를 explicit 주입
+- 그 composition은 더 이상 PR #64 schedule-only selector를 주입하지 않음
+- request factory의 직접 one-argument 호출 default는 schedule-only selector로 유지
+- POST /weather는 여전히 미연결(hourly-only), live retry/fallback 여전히 제외
 ```

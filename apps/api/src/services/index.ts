@@ -175,12 +175,14 @@
  *    component 2, combining an injected clock, an injectable base-time selector, and
  *    caller-supplied `nx`/`ny` into a complete `KmaCurrentObservationRequest`. The selector is a
  *    `KmaCurrentObservationBaseTimeSelector`; when omitted it defaults to the PR #64 schedule-only
- *    `selectLatestKmaCurrentObservationBaseTime`. Unlike component 2 it has no `product` field,
- *    and unlike component 2 no production composition injects a non-default selector yet — no
- *    current-observation availability-delay selector exists for it yet. The factory itself fixes
- *    **no** availability policy: it calls the clock exactly once and the selector exactly once
- *    per `createScheduledRequest()` call, assembles no more than the request, and is not consumed
- *    by any service, composition, or route yet.
+ *    `selectLatestKmaCurrentObservationBaseTime`. Unlike component 2 it has no `product` field. As
+ *    of **PR #80**, the PR #69 production composition (`../composition`) injects the PR #79
+ *    availability-delay `selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay` selector
+ *    here as its explicit non-default choice — a direct one-argument caller of this factory still
+ *    gets the schedule-only default. The factory itself fixes **no** availability policy: it calls
+ *    the clock exactly once and the selector exactly once per `createScheduledRequest()` call,
+ *    assembles no more than the request, and is not consumed by any service or route directly (only
+ *    through the composition roots that wire it).
  * 14. The PR #67 KMA current-observation (초단기실황) **application service**
  *    (`createKmaCurrentObservationService`): the current-observation counterpart of component 1,
  *    running the PR #63 current-observation HTTP provider and the PR #63 `normalizeKmaCurrentObservation`

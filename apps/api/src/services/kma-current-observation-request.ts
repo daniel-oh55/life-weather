@@ -9,12 +9,15 @@
  * request factory) — a **separate**, parallel factory, not a generalization of it. It differs
  * from its forecast sibling in the one way the current-observation request already differs: there
  * is no `product` choice (초단기실황 is a single operation). It shares the same injectable
- * base-time-selector seam the forecast factory has, even though no current-observation
- * availability-delay selector exists yet —
- * [kma-current-observation-issue-time.md](../../../docs/kma-current-observation-issue-time.md)
- * documents that counterpart as explicitly out of scope for now. Choosing an availability policy
- * is a **composition** responsibility, not this factory's: it neither imports nor hard-codes one,
- * and no production composition injects a non-default selector yet.
+ * base-time-selector seam the forecast factory has. A current-observation availability-delay
+ * selector, {@link selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay}, now exists
+ * (PR #79) — see
+ * [kma-current-observation-api-availability-time.md](../../../docs/kma-current-observation-api-availability-time.md).
+ * Choosing an availability policy remains a **composition** responsibility, not this factory's: this
+ * factory itself neither imports nor hard-codes one, so a direct one-argument caller still gets this
+ * factory's schedule-only default. As of **PR #80** the PR #69 production composition
+ * (`apps/api/src/composition/kma-scheduled-current-observation.ts`) injects the PR #79 selector here
+ * as its explicit non-default choice.
  *
  * Pipeline it assembles:
  *
@@ -71,11 +74,13 @@ export interface KmaCurrentObservationRequestClock {
 /**
  * The pluggable base-time selection policy: given a `{ referenceEpochMilliseconds }` input, it
  * returns the request's `baseDate` / `baseTime`. Structurally this is exactly the call signature
- * of `weather-core`'s pure selector — {@link selectLatestKmaCurrentObservationBaseTime} (the
- * schedule-only default) — so it can be injected without an adapter, and any future
- * current-observation availability-delay selector matching this shape could be too. The factory
- * treats the selector as an opaque function: it neither re-validates, clones, spreads, nor
- * transforms the result, and never catches, wraps, or logs an error the selector throws.
+ * of `weather-core`'s pure selectors — {@link selectLatestKmaCurrentObservationBaseTime} (the
+ * schedule-only default) and the PR #79
+ * `selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay` availability-delay selector
+ * (the one the PR #69 production composition injects as of PR #80) — so either can be injected
+ * without an adapter. The factory treats the selector as an opaque function: it neither
+ * re-validates, clones, spreads, nor transforms the result, and never catches, wraps, or logs an
+ * error the selector throws.
  */
 export type KmaCurrentObservationBaseTimeSelector = (
   input: SelectLatestKmaCurrentObservationBaseTimeInput,
@@ -109,10 +114,10 @@ export interface KmaCurrentObservationRequestFactory {
  * Create a request factory bound to an injected {@link KmaCurrentObservationRequestClock} and an
  * optional {@link KmaCurrentObservationBaseTimeSelector}. When `baseTimeSelector` is omitted it
  * defaults to the PR #64 {@link selectLatestKmaCurrentObservationBaseTime} schedule-only
- * selector, so the historical one-argument call keeps its exact behaviour. No production
- * composition injects a non-default selector yet; a future availability-delay selector matching
- * {@link KmaCurrentObservationBaseTimeSelector}'s shape could be injected here without changing
- * this factory.
+ * selector, so the historical one-argument call keeps its exact behaviour. As of **PR #80**, the
+ * PR #69 production composition (`apps/api/src/composition/kma-scheduled-current-observation.ts`)
+ * injects the PR #79 availability-delay selector here as its explicit non-default choice; a direct
+ * one-argument caller of this factory is unaffected and still gets the schedule-only default.
  *
  * Pure construction: it does **not** call the clock, call the selector, read the environment,
  * perform I/O, register a listener, or start a timer — the returned object merely closes over

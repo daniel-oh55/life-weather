@@ -611,5 +611,28 @@
   /weather`는 이 PR 이후에도 계속 hourly-only이며 `current`는 missing입니다. 자세한 내용은
   [kma-current-observation-api-availability-time.md](./kma-current-observation-api-availability-time.md)
   참고.
+- **PR #80**은 KMA 초단기실황 production current-observation composition
+  (`createKmaScheduledCurrentObservationCompositionFromEnv`,
+  [kma-current-observation-production-composition.md](./kma-current-observation-production-composition.md))에
+  PR #79의 availability-delay selector
+  (`selectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelay`,
+  [kma-current-observation-api-availability-time.md](./kma-current-observation-api-availability-time.md))를
+  명시적으로 주입했습니다 — 이 composition은 더 이상 PR #64 schedule-only selector
+  (`selectLatestKmaCurrentObservationBaseTime`)를 주입하지 않습니다. 변경은 정확히 이 한 파일의
+  실행 코드(`apps/api/src/composition/kma-scheduled-current-observation.ts`)로 국한됩니다 —
+  request factory(`createKmaCurrentObservationRequestFactory`,
+  [kma-current-observation-request-factory.md](./kma-current-observation-request-factory.md))의
+  두 번째 인자 default(직접 one-argument 호출 시 schedule-only selector)는 변경되지 않았고,
+  provider/config/error 처리, clock 정책, construction의 lazy/network-free 성질, 성공 result
+  `{ ok, facade }` 표면은 모두 그대로입니다. PR #71 location composition, PR #75 current-overview
+  composition, PR #78 combined current+hourly composition은 모두 이 selector 선택을 코드 변경 없이
+  **transitively 상속**합니다(각 root는 하위 composition을 재구현하지 않고 그대로 재사용하기
+  때문입니다). `POST /weather`는 이 PR 이후에도 계속 hourly-only이며 `current`는 응답에서 여전히
+  missing입니다 — 이 PR은 combined root를 route에 연결하지 않았습니다. current provider 시도는
+  여전히 최대 1회이고, previous-issuance retry/fallback은 여전히 없으며, 이 selector는 upstream
+  자료가 실제로 게시됐다는 보장이나 특정 호출의 성공을 보장하지 않는 결정론적 프로젝트 임계값(10분)일
+  뿐입니다. 자세한 내용은
+  [kma-current-observation-production-composition.md](./kma-current-observation-production-composition.md)
+  참고.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.

@@ -80,13 +80,16 @@
  * upstream services and wires them through the PR #77 factory. Runtime hourly/current orchestration
  * and degradation remain entirely PR #77's responsibility.
  *
- * ## Current availability — unchanged, no claim added
+ * ## Current availability — inherited from PR #69, no claim added
  *
- * The current branch inherited through the PR #75 composition (→ PR #71 → PR #69) is still the PR #64
- * **schedule-only** current-observation base-time selector — there is still no current-observation
- * availability-delay selector. This composition does not import or inject one, does not add a
- * readiness retry, and does not fall back to a previous current issuance. It makes **no claim** that
- * the selected current issuance has already been published upstream by KMA.
+ * As of PR #80, the current branch inherited through the PR #75 composition (→ PR #71 → PR #69) uses
+ * the PR #79 **availability-delay** current-observation base-time selector — the PR #69 composition
+ * now injects it explicitly instead of the request factory's PR #64 schedule-only default. This root
+ * itself does not import or select that policy; it only inherits whatever PR #69 already wires. It
+ * still adds no readiness retry and does not fall back to a previous current issuance. The inherited
+ * selector makes **no claim** that the selected current issuance has already been published upstream
+ * by KMA, that a request at this instant succeeds, or that upstream replication has completed — it
+ * only expresses a deterministic project threshold, not an official SLA.
  *
  * ## Maximum runtime provider work
  *
