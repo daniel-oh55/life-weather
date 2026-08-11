@@ -571,10 +571,11 @@
   때만 적용되는 PR #77의 runtime `current: null` degradation과는 별개 층위임을 문서화했습니다. 두
   composition이 모두 성공하면 두 live service를 정확한 참조로만 PR #77
   `createKmaLocationCurrentHourlyOverviewService(hourlyService, currentService)`에 전달합니다(세
-  번째 assembler 인자 override 없음). 주입된 `dependencies.clock`/`fetchImpl`은 hourly
-  request-plan/hourly metadata resolver/current request/current metadata resolver 네 역할 모두에
-  동일 참조로 전달되고, 생략 시 이 layer는 새 clock을 만들지 않으며 두 기존 root가 각자 독립된
-  default clock을 그대로 유지합니다. Construction은 lazy·network-free이며, 지원되는 요청 한 건의
+  번째 assembler 인자 override 없음). 주입된 `dependencies.clock`은 hourly request-plan/hourly
+  metadata resolver/current request/current metadata resolver의 네 clock 역할에 동일 참조로
+  전달되고, `dependencies.fetchImpl`은 PR #27 hourly와 PR #75 current의 두 provider root에 동일
+  함수 참조로 전달됩니다. clock이 생략되면 이 layer는 새 clock을 만들지 않으며 두 기존 root가 각자
+  독립된 default clock을 그대로 유지합니다. Construction은 lazy·network-free이며, 지원되는 요청 한 건의
   합계는 여전히 최대 hourly 2회 + current 1회 = 3회 provider 호출로 유지됩니다. 이 root는 여전히
   current-observation availability-delay selector를 상속하지 않으므로(PR #64 schedule-only 그대로)
   선택된 current issuance의 실제 게시를 보장하지 않으며, `apps/api/src/composition/**` 외의

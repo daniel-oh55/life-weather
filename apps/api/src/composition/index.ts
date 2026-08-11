@@ -101,9 +101,10 @@
  *   PR #77 factory ever run. Only after hourly succeeds is the current composition built, and its own
  *   config failure is *also* a composition failure (distinct from PR #77's own runtime degradation of
  *   a resolved current `ok: false` **application result** to `current: null`, which only applies once
- *   both live services already exist). An injected `dependencies.clock`/`fetchImpl` is shared by
- *   reference across all four downstream roles (hourly request-plan, hourly metadata resolver, current
- *   request, current metadata resolver); when omitted, this layer builds no clock of its own and each
+ *   both live services already exist). An injected `dependencies.clock` is shared by reference across
+ *   the four clock consumers (hourly request-plan, hourly metadata resolver, current request, current
+ *   metadata resolver), while an injected `dependencies.fetchImpl` is forwarded by reference to both
+ *   existing provider roots. When clock is omitted, this layer builds no clock of its own and each
  *   existing root keeps its own independent default. The eight existing roots are **unchanged**; this
  *   is a ninth combining root — it is **not** connected to the `POST /weather` route, so production
  *   `current` remains missing. See `docs/kma-location-current-hourly-overview-composition.md`.
