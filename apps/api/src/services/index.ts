@@ -2,7 +2,7 @@
  * Public surface of `apps/api`'s **application services** — the orchestration layer that sequences
  * the KMA provider boundary and the domain normalizers, and assembles the requests they consume.
  *
- * Twenty application components live here so far:
+ * Twenty-one application components live here so far:
  *
  * 1. The PR #7 KMA **hourly-forecast orchestration** (`createKmaHourlyForecastService`): it calls
  *    the PR #5 HTTP provider and the PR #6 hourly normalizer in order and reports a `PROVIDER`- or
@@ -293,6 +293,33 @@
  *    fresh output every call. It re-implements **no** PR #23/#72/#73 assembler policy, and it is **not
  *    yet** wired into any production composition root, `POST /weather` route, or presenter.
  *
+ * 21. The PR #77 KMA **location current + hourly `WeatherOverview` application orchestration**
+ *    (`createKmaLocationCurrentHourlyOverviewService`): the first component that actually
+ *    **invokes** component 11 (the PR #24 hourly overview service) and component 19 (the PR #74
+ *    current overview service) and combines their results through component 20 (the PR #76
+ *    aggregate assembler), which itself calls neither. Execution is **sequential, not
+ *    concurrent**: it always calls component 11 first, with the caller's exact `input`/`options`
+ *    references; a top-level hourly `LOCATION` failure is returned **verbatim** and neither
+ *    component 19 nor component 20 runs. Every hourly `{ ok: true }` result — including a
+ *    no-selection success — then calls component 19 exactly once with a **fresh**
+ *    `{ location: hourlyResult.overview.location }` input (the hourly baseline's own parsed
+ *    location, never the caller's raw input) and the caller's exact `options` reference. This PR
+ *    owns the one explicit degradation policy at this boundary: any current result that
+ *    **resolves** with `ok: false` (`LOCATION`/`PROVIDER`/`NORMALIZATION`, inspected uniformly,
+ *    never differentiated) is **not** returned — component 20 is called with `current: null`
+ *    instead, so the aggregate expresses current unavailability as `current: null` and `CURRENT`
+ *    in `missingSections` rather than a top-level error. A current **success** reaches component
+ *    20 by exact reference. Unexpected throws/rejections are never degraded: a hourly synchronous
+ *    throw propagates synchronously, and a hourly rejection, a current synchronous throw/
+ *    rejection, or a component-20 throw reject the returned Promise with the same reference —
+ *    there is no broad `try`/`catch`. The combined result is **intentionally** kept exactly
+ *    {@link KmaLocationHourlyOverviewResult}-compatible (`{ ok: true, selection, overview }` or
+ *    the hourly `LOCATION` failure verbatim) so a later production-wiring PR can reuse the
+ *    existing hourly presenter boundary unchanged. Construction is side-effect-free — it merely
+ *    closes over the three injected references. It re-implements **no** `WeatherOverview` merging,
+ *    hourly fallback/selection policy, or current provider/normalization inspection, and it is
+ *    **not yet** wired into any production composition root, `POST /weather` route, or presenter.
+ *
  * The grid-based single-request **production composition root** (system clock adapter,
  * provider-from-env wiring, a live facade instance) is built in PR #11 and lives in `../composition`;
  * PR #12 added the latitude/longitude → grid converter in `@life-weather/weather-core`; PR #13's
@@ -321,8 +348,9 @@
  * `docs/kma-location-scheduled-current-observation.md`,
  * `docs/kma-current-weather-overview.md`,
  * `docs/kma-current-source-metadata.md`,
- * `docs/kma-location-current-overview.md`, and
- * `docs/kma-current-hourly-weather-overview.md`.
+ * `docs/kma-location-current-overview.md`,
+ * `docs/kma-current-hourly-weather-overview.md`, and
+ * `docs/kma-location-current-hourly-overview.md`.
  */
 
 export {
@@ -476,3 +504,11 @@ export {
   assembleKmaCurrentHourlyWeatherOverview,
   type KmaCurrentHourlyWeatherOverviewInput,
 } from './kma-current-hourly-weather-overview.js';
+
+export {
+  createKmaLocationCurrentHourlyOverviewService,
+  type KmaLocationCurrentHourlyOverviewInput,
+  type KmaLocationCurrentHourlyOverviewOptions,
+  type KmaLocationCurrentHourlyOverviewResult,
+  type KmaLocationCurrentHourlyOverviewService,
+} from './kma-location-current-hourly-overview.js';
