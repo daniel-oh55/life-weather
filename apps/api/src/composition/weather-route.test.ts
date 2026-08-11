@@ -64,8 +64,24 @@ const FETCHED_AT_EPOCH_MS = Date.UTC(2026, 6, 21, 20, 11, 22, 333);
 /** The UTC `Z` ms ISO string the resolver derives from {@link FETCHED_AT_EPOCH_MS}. */
 const FETCHED_AT_ISO = '2026-07-21T20:11:22.333Z';
 
+/**
+ * `2026-07-22T05:12:10.000+09:00` as absolute epoch ms — the **third** clock read (the current PR #66
+ * request factory's reference instant), used once the combined graph (PR #78, wired by PR #81) attempts
+ * current after a hourly success. It is past the PR #79 availability-delay selector's 10-minute threshold
+ * for the `0500` issuance (`05:00 + 10min = 05:10 <= 05:12:10`) and not yet past the threshold for `0600`,
+ * so the selector still picks the same `0500` issuance the hourly fixtures above use.
+ */
+const CURRENT_REQUEST_EPOCH_MS = Date.UTC(2026, 6, 21, 20, 12, 10, 0);
+
+/** The **fourth** clock read — the current PR #73 metadata resolver's `fetchedAt` materialization. */
+const CURRENT_FETCHED_AT_EPOCH_MS = Date.UTC(2026, 6, 21, 20, 13, 45, 678);
+const CURRENT_FETCHED_AT_ISO = '2026-07-21T20:13:45.678Z';
+
 /** The fixed app-internal `sourceId` for a KMA 단기예보 hourly source. */
 const SHORT_SOURCE_ID = 'kma-short-forecast-hourly';
+
+/** The fixed app-internal `sourceId` for the KMA 초단기실황 (`getUltraSrtNcst`) current source. */
+const CURRENT_SOURCE_ID = 'kma-ultra-short-current-observation';
 
 /** The injected response-`meta` clock instant (distinct from the KMA data clock) and its ISO string. */
 const META_GENERATED_AT_ISO = '2026-07-24T05:05:00.000Z';
@@ -96,6 +112,7 @@ const FORBIDDEN_LEAKAGE_STRINGS = [
   FAKE_KMA_SERVICE_KEY,
   'apis.data.go.kr',
   'fcstValue',
+  'obsrValue',
   'NORMAL_SERVICE',
   '적설없음',
   '1.0mm',
@@ -183,6 +200,38 @@ function neverCalledFetch() {
   return { fetchImpl, calls };
 }
 
+/**
+ * A fresh in-memory `fetch` that dispatches between the hourly `getVilageFcst` endpoint and the current
+ * `getUltraSrtNcst` endpoint by inspecting the request URL path, recording every call (in invocation
+ * order, across both endpoints) and returning a fresh `Response` per call from the matching handler. Each
+ * handler receives its own **per-endpoint** call index. Mirrors the pattern established in
+ * `kma-location-current-hourly-overview.test.ts`.
+ */
+function dispatchFetch(handlers: {
+  readonly vilageFcst: (callIndex: number) => Response;
+  readonly ultraSrtNcst: (callIndex: number) => Response;
+}) {
+  const calls: FetchRecord[] = [];
+  let vilageFcstCallCount = 0;
+  let ultraSrtNcstCallCount = 0;
+  const fetchImpl = ((url: unknown, init?: RequestInit) => {
+    const requestUrl = url as URL;
+    calls.push({ url: requestUrl, init });
+    if (requestUrl.pathname.endsWith('/getVilageFcst')) {
+      const index = vilageFcstCallCount;
+      vilageFcstCallCount += 1;
+      return Promise.resolve(handlers.vilageFcst(index));
+    }
+    if (requestUrl.pathname.endsWith('/getUltraSrtNcst')) {
+      const index = ultraSrtNcstCallCount;
+      ultraSrtNcstCallCount += 1;
+      return Promise.resolve(handlers.ultraSrtNcst(index));
+    }
+    throw new Error(`test setup: unexpected fetch path ${requestUrl.pathname}`);
+  }) as unknown as typeof fetch;
+  return { fetchImpl, calls };
+}
+
 interface RawItem {
   baseDate: string;
   baseTime: string;
@@ -220,7 +269,41 @@ function completeShortSlotItems(baseTime: string): RawItem[] {
   }));
 }
 
-function successBody(items: readonly RawItem[], options: { totalCount?: number } = {}): string {
+interface CurrentRawItem {
+  baseDate: string;
+  baseTime: string;
+  category: string;
+  obsrValue: string | null;
+  nx: number;
+  ny: number;
+}
+
+/** A raw current-observation item at the `20260722`/`0500` issuance, Seoul grid `{ nx: 60, ny: 127 }`. */
+function currentItem(overrides: Partial<CurrentRawItem> = {}): CurrentRawItem {
+  return {
+    baseDate: '20260722',
+    baseTime: '0500',
+    category: 'T1H',
+    obsrValue: '23.5',
+    nx: 60,
+    ny: 127,
+    ...overrides,
+  };
+}
+
+/** The full set of categories 초단기실황 provides — the same PR #78 fixture values. */
+function fullCurrentSlotItems(): CurrentRawItem[] {
+  return [
+    currentItem({ category: 'T1H', obsrValue: '23.5' }),
+    currentItem({ category: 'PTY', obsrValue: '0' }),
+    currentItem({ category: 'REH', obsrValue: '55' }),
+    currentItem({ category: 'WSD', obsrValue: '3.4' }),
+    currentItem({ category: 'VEC', obsrValue: '270' }),
+    currentItem({ category: 'RN1', obsrValue: '0' }),
+  ];
+}
+
+function successBody(items: readonly (RawItem | CurrentRawItem)[], options: { totalCount?: number } = {}): string {
   return JSON.stringify({
     response: {
       header: { resultCode: '00', resultMsg: 'NORMAL_SERVICE' },
@@ -352,11 +435,17 @@ describe('createProductionWeatherRouteDependencies — product policy', () => {
 // ---------------------------------------------------------------------------
 
 describe('createProductionWeatherRouteDependencies — service adapter', () => {
-  it('forwards the input to the KMA service unchanged and returns the internal result verbatim', async () => {
-    const { fetchImpl, calls } = recordingFetch(() =>
-      jsonOk(successBody(completeShortSlotItems('0500'))),
-    );
-    const { clock } = scriptedClock([CLOCK_AT_0510_KST_20260722, FETCHED_AT_EPOCH_MS]);
+  it('binds the PR #78 combined service, running hourly then current, and returns the internal result verbatim', async () => {
+    const { fetchImpl, calls } = dispatchFetch({
+      vilageFcst: () => jsonOk(successBody(completeShortSlotItems('0500'))),
+      ultraSrtNcst: () => jsonOk(successBody(fullCurrentSlotItems())),
+    });
+    const { clock } = scriptedClock([
+      CLOCK_AT_0510_KST_20260722,
+      FETCHED_AT_EPOCH_MS,
+      CURRENT_REQUEST_EPOCH_MS,
+      CURRENT_FETCHED_AT_EPOCH_MS,
+    ]);
     const deps = createProductionWeatherRouteDependencies({
       serviceKey: FAKE_KMA_SERVICE_KEY,
       fetchImpl,
@@ -369,29 +458,41 @@ describe('createProductionWeatherRouteDependencies — service adapter', () => {
       controller.signal,
     );
 
-    // The input reached the KMA graph unchanged: the request is dated to the availability-aware 0500
-    // issuance at the real Seoul grid.
-    expect(calls).toHaveLength(1);
-    const url = calls[0].url as URL;
-    expect(url.searchParams.get('base_time')).toBe('0500');
-    expect(url.searchParams.get('nx')).toBe('60');
-    expect(url.searchParams.get('ny')).toBe('127');
+    // Exactly two provider calls, hourly first (this is the mutation-sensitive check: reverting the
+    // adapter to the PR #27 hourly-only composition/method would leave this at one call, never reach
+    // getUltraSrtNcst, and fail here).
+    expect(calls).toHaveLength(2);
+    const hourlyUrl = calls[0].url as URL;
+    const currentUrl = calls[1].url as URL;
+    expect(hourlyUrl.pathname.endsWith('/getVilageFcst')).toBe(true);
+    expect(currentUrl.pathname.endsWith('/getUltraSrtNcst')).toBe(true);
 
-    // The adapter returns the PR #24 INTERNAL result verbatim (selection + overview), not a presenter
-    // body — proving it applies no transformation.
+    // The input reached the KMA graph unchanged: both requests are dated to the availability-aware 0500
+    // issuance at the real Seoul grid.
+    expect(hourlyUrl.searchParams.get('base_time')).toBe('0500');
+    expect(hourlyUrl.searchParams.get('nx')).toBe('60');
+    expect(hourlyUrl.searchParams.get('ny')).toBe('127');
+    expect(currentUrl.searchParams.get('base_time')).toBe('0500');
+    expect(currentUrl.searchParams.get('nx')).toBe('60');
+    expect(currentUrl.searchParams.get('ny')).toBe('127');
+
+    // The adapter returns the PR #77 INTERNAL result verbatim (selection + overview), not a presenter
+    // body — proving it applies no transformation. The result stays exactly
+    // KmaLocationHourlyOverviewResult-compatible.
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect('selection' in result).toBe(true);
       expect('overview' in result).toBe(true);
       expect(result.overview.hourly).toEqual([EXPECTED_SHORT_FORECAST_AT_0600]);
+      expect(result.overview.current).not.toBeNull();
     }
   });
 
-  it('forwards the exact caller AbortSignal to the service — a pre-aborted signal short-circuits before any fetch (no new controller)', async () => {
+  it('forwards the exact caller AbortSignal to the service — a pre-aborted signal short-circuits both hourly and current before any fetch (no new controller)', async () => {
     const { fetchImpl, calls } = neverCalledFetch();
     const { clock, nowEpochMilliseconds } = scriptedClock([
       CLOCK_AT_0510_KST_20260722,
-      FETCHED_AT_EPOCH_MS,
+      CURRENT_REQUEST_EPOCH_MS,
     ]);
     const deps = createProductionWeatherRouteDependencies({
       serviceKey: FAKE_KMA_SERVICE_KEY,
@@ -407,15 +508,20 @@ describe('createProductionWeatherRouteDependencies — service adapter', () => {
       controller.signal,
     );
 
-    // The provider saw the aborted caller signal and short-circuited before fetch → no selection. If the
-    // adapter had wrapped the signal in a new controller, the provider would have proceeded to fetch.
+    // The provider saw the aborted caller signal and short-circuited before fetch → no hourly selection,
+    // and the combined graph still attempts current (a hourly no-selection success is still a hourly
+    // success), which also sees the aborted signal and degrades to current: null. If the adapter had
+    // wrapped the signal in a new controller, the providers would have proceeded to fetch.
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.selection.selected).toBe(false);
+      expect(result.overview.current).toBeNull();
     }
     expect(calls).toHaveLength(0);
-    // The request plan read the clock once; with no selected source the resolver never ran.
-    expect(nowEpochMilliseconds).toHaveBeenCalledTimes(1);
+    // The hourly request plan reads the clock once, then the current request factory reads it once —
+    // neither the hourly nor the current metadata resolver ever runs (no selected source, no live
+    // current result).
+    expect(nowEpochMilliseconds).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -543,10 +649,16 @@ describe('createProductionWeatherRouteDependencies — service key fail-fast', (
   });
 
   it('accepts a non-empty key and keeps it off the response body (used only in transport)', async () => {
-    const { fetchImpl } = recordingFetch(() =>
-      jsonOk(successBody(completeShortSlotItems('0500'))),
-    );
-    const { clock } = scriptedClock([CLOCK_AT_0510_KST_20260722, FETCHED_AT_EPOCH_MS]);
+    const { fetchImpl } = dispatchFetch({
+      vilageFcst: () => jsonOk(successBody(completeShortSlotItems('0500'))),
+      ultraSrtNcst: () => jsonOk(successBody(fullCurrentSlotItems())),
+    });
+    const { clock } = scriptedClock([
+      CLOCK_AT_0510_KST_20260722,
+      FETCHED_AT_EPOCH_MS,
+      CURRENT_REQUEST_EPOCH_MS,
+      CURRENT_FETCHED_AT_EPOCH_MS,
+    ]);
     const app = buildApp({ serviceKey: FAKE_KMA_SERVICE_KEY, fetchImpl, clock });
 
     const res = await postWeather(app, { body: requestBody() });
@@ -591,13 +703,17 @@ describe('createProductionWeatherRouteDependencies — construction is side-effe
 // ---------------------------------------------------------------------------
 
 describe('production app integration — POST /weather', () => {
-  it('A. valid request → 200 WeatherSuccessResponseV1 with server-owned SHORT_FORECAST source and server meta', async () => {
-    const { fetchImpl, calls } = recordingFetch((index) =>
-      index === 0
-        ? jsonOk(successBody(completeShortSlotItems('0500')))
-        : new Response('unexpected second fetch', { status: 500 }),
-    );
-    const { clock } = scriptedClock([CLOCK_AT_0510_KST_20260722, FETCHED_AT_EPOCH_MS]);
+  it('A. valid request → 200 WeatherSuccessResponseV1 with server-owned SHORT_FORECAST hourly, current, and server meta', async () => {
+    const { fetchImpl, calls } = dispatchFetch({
+      vilageFcst: () => jsonOk(successBody(completeShortSlotItems('0500'))),
+      ultraSrtNcst: () => jsonOk(successBody(fullCurrentSlotItems())),
+    });
+    const { clock } = scriptedClock([
+      CLOCK_AT_0510_KST_20260722,
+      FETCHED_AT_EPOCH_MS,
+      CURRENT_REQUEST_EPOCH_MS,
+      CURRENT_FETCHED_AT_EPOCH_MS,
+    ]);
     const app = buildApp({
       serviceKey: FAKE_KMA_SERVICE_KEY,
       fetchImpl,
@@ -616,16 +732,26 @@ describe('production app integration — POST /weather', () => {
       throw new Error('expected a success response');
     }
 
-    // Exactly one upstream call, dated to the server-owned SHORT product's 0500 issuance.
-    expect(calls).toHaveLength(1);
-    const url = calls[0].url as URL;
-    expect(url.pathname.endsWith('/getVilageFcst')).toBe(true);
+    // Exactly two upstream calls, hourly first then current, both dated to the 0500 issuance.
+    expect(calls).toHaveLength(2);
+    const hourlyUrl = calls[0].url as URL;
+    const currentUrl = calls[1].url as URL;
+    expect(hourlyUrl.pathname.endsWith('/getVilageFcst')).toBe(true);
+    expect(currentUrl.pathname.endsWith('/getUltraSrtNcst')).toBe(true);
 
-    // The public overview carries the SHORT hourly source and its provenance.
+    // The public overview carries the SHORT hourly source and the current-observation source, both with
+    // their own provenance; missingSections carries neither HOURLY nor CURRENT.
     expect(body.data.hourly).toEqual([EXPECTED_SHORT_FORECAST_AT_0600]);
-    expect(body.data.sources).toHaveLength(1);
-    expect(body.data.sources[0].sourceId).toBe(SHORT_SOURCE_ID);
-    expect(body.data.sources[0].fetchedAt).toBe(FETCHED_AT_ISO);
+    expect(body.data.current).not.toBeNull();
+    expect(body.data.missingSections).not.toContain('HOURLY');
+    expect(body.data.missingSections).not.toContain('CURRENT');
+
+    // Source order: CURRENT precedes HOURLY (the PR #76 assembler's fixed ordering).
+    expect(body.data.sources).toHaveLength(2);
+    expect(body.data.sources[0].sourceId).toBe(CURRENT_SOURCE_ID);
+    expect(body.data.sources[0].fetchedAt).toBe(CURRENT_FETCHED_AT_ISO);
+    expect(body.data.sources[1].sourceId).toBe(SHORT_SOURCE_ID);
+    expect(body.data.sources[1].fetchedAt).toBe(FETCHED_AT_ISO);
 
     // Server-owned meta: contractVersion from the route, generatedAt from the meta clock, requestId
     // server-generated (distinct from the KMA data clock's fetchedAt).
@@ -639,7 +765,53 @@ describe('production app integration — POST /weather', () => {
     expect(Object.keys(body).sort()).toEqual(['data', 'meta', 'ok']);
   });
 
-  it('B. unsupported location (Null Island) → 422 UNSUPPORTED_LOCATION, no fetch', async () => {
+  it('A2. hourly success + resolved current provider failure → 200 with current:null, hourly still populated, CURRENT missing, HOURLY not', async () => {
+    const upstreamErrorMarker = 'secret upstream current error page';
+    const { fetchImpl, calls } = dispatchFetch({
+      vilageFcst: () => jsonOk(successBody(completeShortSlotItems('0500'))),
+      ultraSrtNcst: () => new Response(upstreamErrorMarker, { status: 503 }),
+    });
+    const { clock } = scriptedClock([
+      CLOCK_AT_0510_KST_20260722,
+      FETCHED_AT_EPOCH_MS,
+      CURRENT_REQUEST_EPOCH_MS,
+      CURRENT_FETCHED_AT_EPOCH_MS,
+    ]);
+    const app = buildApp({
+      serviceKey: FAKE_KMA_SERVICE_KEY,
+      fetchImpl,
+      clock,
+      now: () => new Date(META_GENERATED_AT_ISO),
+      createRequestId: () => 'req-integration-current-degraded',
+    });
+
+    const res = await postWeather(app, { body: requestBody() });
+
+    // This is not new route degradation logic — PR #77's existing runtime policy is what produces
+    // current: null here; this test only proves the route preserves it. Still 200, not 500.
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as WeatherResponseV1;
+    expect(weatherSuccessResponseV1.safeParse(body).success).toBe(true);
+    if (!body.ok) {
+      throw new Error('expected a success response');
+    }
+
+    expect(calls).toHaveLength(2);
+    expect(body.data.hourly).toEqual([EXPECTED_SHORT_FORECAST_AT_0600]);
+    expect(body.data.current).toBeNull();
+    expect(body.data.missingSections).toContain('CURRENT');
+    expect(body.data.missingSections).not.toContain('HOURLY');
+
+    // Current failed with no usable source → only the hourly source is present, never fabricated.
+    expect(body.data.sources).toHaveLength(1);
+    expect(body.data.sources[0].sourceId).toBe(SHORT_SOURCE_ID);
+
+    // No current failure stage/provider detail/raw upstream body leaks into the public response.
+    expectNoForbiddenKeys(body);
+    expectNoLeakage(body, upstreamErrorMarker, '503');
+  });
+
+  it('B. unsupported location (Null Island) → 422 UNSUPPORTED_LOCATION, no fetch (current is never attempted, since the hourly LOCATION failure short-circuits before PR #77 calls current)', async () => {
     const { fetchImpl, calls } = neverCalledFetch();
     const { clock } = scriptedClock([CLOCK_AT_0510_KST_20260722, FETCHED_AT_EPOCH_MS]);
     const app = buildApp({ serviceKey: FAKE_KMA_SERVICE_KEY, fetchImpl, clock });
@@ -714,11 +886,11 @@ describe('production app integration — POST /weather', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('F. a pre-aborted request signal reaches the provider through the adapter (no fetch, no new controller)', async () => {
+  it('F. a pre-aborted request signal reaches both the hourly and current providers through the adapter (no fetch, no new controller)', async () => {
     const { fetchImpl, calls } = neverCalledFetch();
     const { clock, nowEpochMilliseconds } = scriptedClock([
       CLOCK_AT_0510_KST_20260722,
-      FETCHED_AT_EPOCH_MS,
+      CURRENT_REQUEST_EPOCH_MS,
     ]);
     const app = buildApp({ serviceKey: FAKE_KMA_SERVICE_KEY, fetchImpl, clock });
 
@@ -730,17 +902,23 @@ describe('production app integration — POST /weather', () => {
     });
     const res = await app.request(request);
 
-    // The primary attempt saw the aborted signal and never fetched → a no-selection 200 overview.
+    // The hourly primary attempt saw the aborted signal and never fetched → a no-selection hourly
+    // success, which (per PR #77) still attempts current. The current request factory reads the same
+    // injected clock, and the current provider also sees the pre-aborted signal and makes no fetch — its
+    // resolved failure degrades to current: null. Still a 200 overview overall.
     expect(res.status).toBe(200);
     const body = (await res.json()) as WeatherResponseV1;
     if (!body.ok) {
       throw new Error('expected a success response');
     }
     expect(body.data.hourly).toEqual([]);
+    expect(body.data.current).toBeNull();
     expect(body.data.missingSections).toContain('HOURLY');
+    expect(body.data.missingSections).toContain('CURRENT');
     expect(calls).toHaveLength(0);
-    // Request plan built once; no selected source → resolver never read the clock.
-    expect(nowEpochMilliseconds).toHaveBeenCalledTimes(1);
+    // Hourly request plan built once, then the current request built once; neither source was selected,
+    // so neither metadata resolver ever read the clock.
+    expect(nowEpochMilliseconds).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -767,10 +945,16 @@ describe('production /weather — secret marker never leaks into a response', ()
   const markerKey = `${SECRET_KEY_MARKER}-live==`;
 
   it('success path: the service key does not appear in the body', async () => {
-    const { fetchImpl } = recordingFetch(() =>
-      jsonOk(successBody(completeShortSlotItems('0500'))),
-    );
-    const { clock } = scriptedClock([CLOCK_AT_0510_KST_20260722, FETCHED_AT_EPOCH_MS]);
+    const { fetchImpl } = dispatchFetch({
+      vilageFcst: () => jsonOk(successBody(completeShortSlotItems('0500'))),
+      ultraSrtNcst: () => jsonOk(successBody(fullCurrentSlotItems())),
+    });
+    const { clock } = scriptedClock([
+      CLOCK_AT_0510_KST_20260722,
+      FETCHED_AT_EPOCH_MS,
+      CURRENT_REQUEST_EPOCH_MS,
+      CURRENT_FETCHED_AT_EPOCH_MS,
+    ]);
     const app = buildApp({ serviceKey: markerKey, fetchImpl, clock });
 
     const res = await postWeather(app, { body: requestBody() });

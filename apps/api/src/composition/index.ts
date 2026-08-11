@@ -95,33 +95,39 @@
  *   the `POST /weather` route — `current` remains missing from the production response. See
  *   `docs/kma-location-current-overview-composition.md`.
  *
- * - The **location-based combined current + hourly overview** composition (PR #78, new): the PR #27
- *   location hourly-overview composition above and the PR #75 location current-overview composition
- *   above, both reused **verbatim** (each forwarded the exact same `env`/`dependencies` references),
- *   wired through the PR #77 `createKmaLocationCurrentHourlyOverviewService` combined application
- *   service — yielding one live `KmaLocationCurrentHourlyOverviewService`. Hourly is composed first,
- *   deterministically; a hourly config failure short-circuits before the current composition or the
- *   PR #77 factory ever run. Only after hourly succeeds is the current composition built, and its own
- *   config failure is *also* a composition failure (distinct from PR #77's own runtime degradation of
- *   a resolved current `ok: false` **application result** to `current: null`, which only applies once
- *   both live services already exist). An injected `dependencies.clock` is shared by reference across
- *   the four clock consumers (hourly request-plan, hourly metadata resolver, current request, current
- *   metadata resolver), while an injected `dependencies.fetchImpl` is forwarded by reference to both
- *   existing provider roots. When clock is omitted, this layer builds no clock of its own and each
- *   existing root keeps its own independent default. The eight existing roots are **unchanged**; this
- *   is a ninth combining root — it is **not** connected to the `POST /weather` route, so production
- *   `current` remains missing. See `docs/kma-location-current-hourly-overview-composition.md`.
+ * - The **location-based combined current + hourly overview** composition (PR #78, new; **now consumed
+ *   by the `POST /weather` route as of PR #81** — see below): the PR #27 location hourly-overview
+ *   composition above and the PR #75 location current-overview composition above, both reused
+ *   **verbatim** (each forwarded the exact same `env`/`dependencies` references), wired through the
+ *   PR #77 `createKmaLocationCurrentHourlyOverviewService` combined application service — yielding one
+ *   live `KmaLocationCurrentHourlyOverviewService`. Hourly is composed first, deterministically; a
+ *   hourly config failure short-circuits before the current composition or the PR #77 factory ever run.
+ *   Only after hourly succeeds is the current composition built, and its own config failure is *also* a
+ *   composition failure (distinct from PR #77's own runtime degradation of a resolved current
+ *   `ok: false` **application result** to `current: null`, which only applies once both live services
+ *   already exist). An injected `dependencies.clock` is shared by reference across the four clock
+ *   consumers (hourly request-plan, hourly metadata resolver, current request, current metadata
+ *   resolver), while an injected `dependencies.fetchImpl` is forwarded by reference to both existing
+ *   provider roots. When clock is omitted, this layer builds no clock of its own and each existing root
+ *   keeps its own independent default. The eight existing roots are **unchanged**; this is a ninth
+ *   combining root. See `docs/kma-location-current-hourly-overview-composition.md`.
  *
  * PR #31 adds the **production `/weather` route composition**
  * (`createProductionWeatherRouteDependencies`): the adapter that turns the server-only `KMA_SERVICE_KEY`
- * into the PR #30 route's `WeatherRouteDependencies`. It builds the location hourly-overview root above,
- * binds the service to the route's narrow `(input, signal)` execution port, fixes the server-owned
- * `PRODUCTION_WEATHER_PRODUCT` (`SHORT_FORECAST`), and supplies the production response `meta` provider
- * (UTC `generatedAt` + a server-generated `requestId`). `apps/api/src/index.ts` calls it, mounts
- * `createWeatherRoute(...)` at `/weather`, and default-exports the Hono app — so `POST /weather` is now a
- * live production endpoint alongside `GET /health`. It reads `KMA_SERVICE_KEY` (server-only) at startup
- * and **fail-fast** throws when it is missing/invalid, but issues **no** external `fetch` at startup — the
- * KMA graph stays lazy until a real request arrives. See `docs/weather-production-wiring.md`.
+ * into the PR #30 route's `WeatherRouteDependencies`. As of **PR #81**, it builds the PR #78 combined
+ * location current+hourly-overview root above (replacing the PR #27 hourly-only root it built through
+ * PR #80), binds the service's `fetchCurrentHourlyWeatherOverviewForLocation` method to the route's narrow
+ * `(input, signal)` execution port, fixes the server-owned `PRODUCTION_WEATHER_PRODUCT` (`SHORT_FORECAST`,
+ * which continues to select only the hourly forecast source), and supplies the production response `meta`
+ * provider (UTC `generatedAt` + a server-generated `requestId`). `apps/api/src/index.ts` calls it, mounts
+ * `createWeatherRoute(...)` at `/weather`, and default-exports the Hono app — so `POST /weather` now
+ * returns hourly **and** current-observation data (with the existing PR #77 current-failure degradation
+ * to `current: null` inherited unchanged), alongside `GET /health`. It reads `KMA_SERVICE_KEY`
+ * (server-only) at startup and **fail-fast** throws when it is missing/invalid (from either the hourly or
+ * the current composition), but issues **no** external `fetch` at startup — the KMA graph stays lazy
+ * until a real request arrives. The route factory and presenter are unchanged — the PR #77 result/input/
+ * options types are deliberate aliases of the PR #24 hourly types, so no new contract was needed. See
+ * `docs/weather-production-wiring.md`.
  *
  * Boundary properties:
  *
@@ -131,12 +137,14 @@
  * - **Construction is network-free.** Building any graph only reads provider configuration and wires
  *   collaborators; the first converter run, the first clock read, and the first `fetch` happen only
  *   when the returned facade's / service's method is called.
- * - **Routing.** The four hourly scheduled/fallback roots and all four current-related roots (PR #69,
- *   PR #71, PR #75, PR #78) remain **unrouted**. The location hourly-overview root is now consumed by
- *   the PR #31 `createProductionWeatherRouteDependencies`, which `apps/api/src/index.ts` wires into the
- *   live `POST /weather` route; startup still issues no external `fetch` (the graph is lazy). The new
- *   PR #78 combined current+hourly root is **not** consumed by the route composition — `POST /weather`
- *   still returns hourly-only production data with `current` missing after PR #78.
+ * - **Routing.** The four hourly scheduled/fallback roots and the three grid/location current-only roots
+ *   (PR #69, PR #71, PR #75) remain **unrouted** — they exist only as internal building blocks the PR #78
+ *   combined root composes. As of **PR #81**, the PR #78 combined current+hourly root is consumed by the
+ *   PR #31 `createProductionWeatherRouteDependencies`, which `apps/api/src/index.ts` wires into the live
+ *   `POST /weather` route (replacing the PR #27 hourly-only root the route composition used through
+ *   PR #80); startup still issues no external `fetch` (the graph is lazy). `POST /weather` now returns
+ *   hourly **and** current-observation data, with a resolved current failure degrading to `current: null`
+ *   (the existing PR #77 policy, inherited unchanged) rather than failing the request.
  *
  * It consumes only the `../providers/kma`, `../services`, `../presenters`, `../routes`, and
  * `@life-weather/weather-core` (the PR #12 converter, the PR #14 availability-delay selector, the

@@ -6,14 +6,17 @@
  * function detection. As of PR #31 the callable production surface is:
  *
  * - `GET /health` — the unchanged deterministic health payload.
- * - `POST /weather` — the live weather route, wired to the production KMA location hourly-overview graph.
+ * - `POST /weather` — the live weather route. As of **PR #81**, `POST /weather` now uses the combined
+ *   current+hourly production graph (the PR #78 root, replacing the PR #27 hourly-only graph used
+ *   through PR #80) — see `apps/api/src/composition/weather-route.ts` for the wiring change.
  *
  * ### Startup flow
  *
  * ```text
  * process.env.KMA_SERVICE_KEY (server-only)
  *   → createProductionWeatherRouteDependencies({ serviceKey })   // PR #31 production composition
- *        → KMA production graph + service→route adapter + server product + meta provider
+ *        → KMA production graph (PR #78 combined current+hourly, wired by PR #81) + service→route
+ *          adapter + server product + meta provider
  *   → createWeatherRoute(dependencies)                            // PR #30 mountable sub-app
  *   → createApiApp({ weatherRoute })                              // GET /health + app.route('/weather', …)
  *   → export default app

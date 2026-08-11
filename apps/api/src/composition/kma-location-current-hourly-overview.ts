@@ -103,11 +103,18 @@
  *
  * ## What this composition is not
  *
- * It does not register any HTTP route, does not wire `apps/api/src/index.ts` or
- * `apps/api/src/api-app.ts`, does not change the existing hourly/current composition roots or the
- * PR #77 service, and does not add a current availability-delay selector, cache, or stale-data policy.
- * `POST /weather` still returns hourly-only production data with `current` missing after this PR. See
- * `docs/kma-location-current-hourly-overview-composition.md`.
+ * It does not register any HTTP route itself, does not wire `apps/api/src/index.ts` or
+ * `apps/api/src/api-app.ts`, does not change the existing hourly/current composition roots or the PR #77
+ * service, and does not add a current availability-delay selector, cache, or stale-data policy.
+ *
+ * ## Current-state note (PR #81)
+ *
+ * As of **PR #81**, `apps/api/src/composition/weather-route.ts` (the PR #31 production `/weather` route
+ * composition) consumes this root — replacing the PR #27 hourly-only root it built through PR #80 — so
+ * `POST /weather` now returns hourly **and** current-observation data. This root's own code, assembly
+ * order, public contract, clock/fetch sharing, and provider-call ceiling (hourly at most 2 + current at
+ * most 1) are **unchanged** by PR #81; only the caller changed. See
+ * `docs/kma-location-current-hourly-overview-composition.md` and `docs/weather-production-wiring.md`.
  */
 
 import type { KmaProviderConfigError } from '../providers/kma/index.js';
