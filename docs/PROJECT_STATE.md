@@ -558,5 +558,31 @@
   PR #77 이후에도 production `POST /weather`의 `current`는 계속 missing이며, production composition
   integration, `POST /weather` current wiring, current-observation availability-delay selector,
   cache/stale-data, 실제 인증 KMA API 호출은 모두 여전히 미구현입니다.
+- **PR #78**은 PR #27 location hourly-overview production composition과 PR #75 location
+  current-overview production composition을 PR #77 combined application service에 연결하는
+  **아홉 번째 callable production composition root**
+  (`createKmaLocationCurrentHourlyOverviewCompositionFromEnv`,
+  `apps/api/src/composition/kma-location-current-hourly-overview.ts`)를 추가했습니다 — hourly와
+  current를 각각 재구현하지 않는 순수 조립(combining) root입니다. PR #27 hourly composition을
+  `env`/`dependencies` exact reference로 먼저 호출하고, hourly config 실패는 동일 error reference로
+  즉시 반환하며(PR #75 current composition과 PR #77 service factory 모두 미호출), hourly 성공
+  이후에만 동일한 `env`/`dependencies` reference로 PR #75 current composition을 호출합니다. current
+  config 실패도 동일 error reference로 반환되는 composition 실패이며 — 이미 두 live service가 존재할
+  때만 적용되는 PR #77의 runtime `current: null` degradation과는 별개 층위임을 문서화했습니다. 두
+  composition이 모두 성공하면 두 live service를 정확한 참조로만 PR #77
+  `createKmaLocationCurrentHourlyOverviewService(hourlyService, currentService)`에 전달합니다(세
+  번째 assembler 인자 override 없음). 주입된 `dependencies.clock`은 hourly request-plan/hourly
+  metadata resolver/current request/current metadata resolver의 네 clock 역할에 동일 참조로
+  전달되고, `dependencies.fetchImpl`은 PR #27 hourly와 PR #75 current의 두 provider root에 동일
+  함수 참조로 전달됩니다. clock이 생략되면 이 layer는 새 clock을 만들지 않으며 두 기존 root가 각자
+  독립된 default clock을 그대로 유지합니다. Construction은 lazy·network-free이며, 지원되는 요청 한 건의
+  합계는 여전히 최대 hourly 2회 + current 1회 = 3회 provider 호출로 유지됩니다. 이 root는 여전히
+  current-observation availability-delay selector를 상속하지 않으므로(PR #64 schedule-only 그대로)
+  선택된 current issuance의 실제 게시를 보장하지 않으며, `apps/api/src/composition/**` 외의
+  `routes/**`·`presenters/**`·`index.ts`·`api-app.ts`·`weather-route.ts`는 변경하지 않았습니다.
+  자세한 내용은
+  [kma-location-current-hourly-overview-composition.md](./kma-location-current-hourly-overview-composition.md)
+  참고. 따라서 PR #78 이후에도 production `POST /weather`는 계속 hourly-only이며 `current`는
+  missing입니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.

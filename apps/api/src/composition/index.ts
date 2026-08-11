@@ -2,7 +2,7 @@
  * Public surface of `apps/api`'s **server-side production composition** boundary.
  *
  * This layer is the explicit place that assembles the KMA components built by the earlier PRs into
- * live pipelines. **Eight** callable production roots are composed here:
+ * live pipelines. **Nine** callable production roots are composed here:
  *
  * - The **grid-based single-request** facade (PR #11): the PR #5 provider-from-env → the PR #7 hourly
  *   service, a system clock adapter → the PR #9 request factory, and the PR #10 scheduled facade
@@ -92,6 +92,23 @@
  *   the `POST /weather` route — `current` remains missing from the production response. See
  *   `docs/kma-location-current-overview-composition.md`.
  *
+ * - The **location-based combined current + hourly overview** composition (PR #78, new): the PR #27
+ *   location hourly-overview composition above and the PR #75 location current-overview composition
+ *   above, both reused **verbatim** (each forwarded the exact same `env`/`dependencies` references),
+ *   wired through the PR #77 `createKmaLocationCurrentHourlyOverviewService` combined application
+ *   service — yielding one live `KmaLocationCurrentHourlyOverviewService`. Hourly is composed first,
+ *   deterministically; a hourly config failure short-circuits before the current composition or the
+ *   PR #77 factory ever run. Only after hourly succeeds is the current composition built, and its own
+ *   config failure is *also* a composition failure (distinct from PR #77's own runtime degradation of
+ *   a resolved current `ok: false` **application result** to `current: null`, which only applies once
+ *   both live services already exist). An injected `dependencies.clock` is shared by reference across
+ *   the four clock consumers (hourly request-plan, hourly metadata resolver, current request, current
+ *   metadata resolver), while an injected `dependencies.fetchImpl` is forwarded by reference to both
+ *   existing provider roots. When clock is omitted, this layer builds no clock of its own and each
+ *   existing root keeps its own independent default. The eight existing roots are **unchanged**; this
+ *   is a ninth combining root — it is **not** connected to the `POST /weather` route, so production
+ *   `current` remains missing. See `docs/kma-location-current-hourly-overview-composition.md`.
+ *
  * PR #31 adds the **production `/weather` route composition**
  * (`createProductionWeatherRouteDependencies`): the adapter that turns the server-only `KMA_SERVICE_KEY`
  * into the PR #30 route's `WeatherRouteDependencies`. It builds the location hourly-overview root above,
@@ -111,10 +128,12 @@
  * - **Construction is network-free.** Building any graph only reads provider configuration and wires
  *   collaborators; the first converter run, the first clock read, and the first `fetch` happen only
  *   when the returned facade's / service's method is called.
- * - **Routing.** The four hourly scheduled/fallback roots and all three current roots (PR #69, PR #71,
- *   PR #75) remain **unrouted**. The location hourly-overview root is now consumed by the PR #31
- *   `createProductionWeatherRouteDependencies`, which `apps/api/src/index.ts` wires into the live
- *   `POST /weather` route; startup still issues no external `fetch` (the graph is lazy).
+ * - **Routing.** The four hourly scheduled/fallback roots and all four current-related roots (PR #69,
+ *   PR #71, PR #75, PR #78) remain **unrouted**. The location hourly-overview root is now consumed by
+ *   the PR #31 `createProductionWeatherRouteDependencies`, which `apps/api/src/index.ts` wires into the
+ *   live `POST /weather` route; startup still issues no external `fetch` (the graph is lazy). The new
+ *   PR #78 combined current+hourly root is **not** consumed by the route composition — `POST /weather`
+ *   still returns hourly-only production data with `current` missing after PR #78.
  *
  * It consumes only the `../providers/kma`, `../services`, `../presenters`, `../routes`, and
  * `@life-weather/weather-core` (the PR #12 converter, the PR #14 availability-delay selector, the
@@ -125,7 +144,8 @@
  * `docs/kma-location-hourly-fallback.md`, `docs/kma-location-hourly-overview-composition.md`,
  * `docs/kma-current-observation-production-composition.md`,
  * `docs/kma-location-scheduled-current-observation.md`,
- * `docs/kma-location-current-overview-composition.md`, and `docs/weather-production-wiring.md`.
+ * `docs/kma-location-current-overview-composition.md`,
+ * `docs/kma-location-current-hourly-overview-composition.md`, and `docs/weather-production-wiring.md`.
  */
 
 export { createKmaSystemClock } from './system-clock.js';
@@ -177,6 +197,12 @@ export {
   type CreateKmaLocationCurrentOverviewCompositionResult,
   type KmaLocationCurrentOverviewCompositionDependencies,
 } from './kma-location-current-overview.js';
+
+export {
+  createKmaLocationCurrentHourlyOverviewCompositionFromEnv,
+  type CreateKmaLocationCurrentHourlyOverviewCompositionResult,
+  type KmaLocationCurrentHourlyOverviewCompositionDependencies,
+} from './kma-location-current-hourly-overview.js';
 
 export {
   createProductionWeatherRouteDependencies,
