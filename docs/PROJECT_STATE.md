@@ -69,7 +69,10 @@
   선택하지 않고 PR #69 grid-based production composition에도 연결하지 않으므로, production current
   데이터는 이 PR 이후에도 여전히 missing입니다. 자세한 내용은
   [kma-location-scheduled-current-observation.md](./kma-location-scheduled-current-observation.md) 참고.
-- AirKorea air quality
+- AirKorea air quality (측정소별 실시간 측정정보 조회 provider boundary는 **PR #82**에서 구현됨 — 아래
+  PR #82 항목 참고. 위경도 → 측정소 변환, station resolver, application service/composition, `POST
+  /weather` 연결, AirKorea 예보는 여전히 미구현이므로 `AIR_QUALITY_CURRENT`는 production 응답에서
+  계속 missing입니다.)
 - alerts
 - response cache
 - mobile API client의 화면 연결 (contract-safe `POST /weather` client boundary
@@ -662,5 +665,24 @@
   [weather-production-wiring.md](./weather-production-wiring.md)의 "Current production state (PR #81)"
   절 참고. current retry/previous-issuance fallback, response cache, daily forecast, AirKorea air
   quality, alerts는 이 PR 이후에도 여전히 미구현입니다.
+- **PR #82**는 첫 AirKorea(에어코리아) provider boundary — 측정소별 실시간 측정정보 조회
+  (`getMsrstnAcctoRltmMesureDnsty`)의 request 검증·URL 생성, raw JSON runtime schema, 성공/upstream
+  error/invalid response 분류, "최신 측정값" 선택 정책(배열 위치가 아닌 공식 `dataTime` 값 비교), 공유
+  `CurrentAirQuality`로의 순수 정규화, 그리고 독립 HTTP transport(`apps/api/src/providers/airkorea`)
+  — 를 추가했습니다. KMA current-observation provider(PR #63)와 같은 3계층 구조를 따르는 별도·병렬
+  구현이며, `providers/kma/**`의 어떤 private helper도 import하지 않고 KMA 런타임 동작은 전혀
+  변경하지 않았습니다. 공식 근거는 공공데이터포털 dataset `15073861`(한국환경공단_에어코리아_대기오염정보,
+  메타데이터 수정일 2026-06-30)의 참고문서 `한국환경공단_에어코리아_대기오염정보_기술문서_v1.4.docx`이며,
+  `ver` 파라미터는 문서가 PM2.5·모든 등급·측정소명을 포함하는 것으로 명시한 가장 높은 문서화 버전
+  `1.5`를 고정 사용합니다(PM2.5는 `ver` 없이는 응답에 전혀 포함되지 않음). 공식 문서가 확인한 결측
+  sentinel(`khaiValue`의 `"-"`, grade의 self-closing 빈 문자열)만 `null`로 매핑하고, 미문서화 값은
+  절대 `0`이나 임의의 유효 등급으로 승격하지 않고 정규화 실패로 처리합니다. `dataTime`(`YYYY-MM-DD
+  HH:mm`, 시간대 표기 없음)은 KST로 명시적으로 해석해 `measuredAt`을 만듭니다. 서비스키는
+  `AIRKOREA_SERVICE_KEY`(기존 빈 `.env.example` placeholder, 변경 없음)에서만 호출 시점에 읽습니다.
+  이 PR은 위경도 → 측정소 변환, station resolver, application service/composition, `POST /weather`
+  연결, `WeatherOverview.airQuality.current` 조립, AirKorea 예보를 구현하지 않으므로,
+  `AIR_QUALITY_CURRENT`는 production 응답에서 여전히 missing입니다. 실제 인증 API 호출은 수행하지
+  않았습니다. 자세한 내용은
+  [airkorea-current-air-quality-provider.md](./airkorea-current-air-quality-provider.md) 참고.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
