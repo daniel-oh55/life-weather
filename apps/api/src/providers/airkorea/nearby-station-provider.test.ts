@@ -9,14 +9,17 @@ const SAMPLE_TM_X = 244148.546388;
 const SAMPLE_TM_Y = 412423.75772;
 const VALID_REQUEST = { tmX: SAMPLE_TM_X, tmY: SAMPLE_TM_Y };
 
-function successBody(items: readonly Record<string, unknown>[]): string {
+function successBody(
+  items: readonly Record<string, unknown>[],
+  overrides: { readonly totalCount?: number } = {},
+): string {
   return JSON.stringify({
     response: {
       header: { resultCode: '00', resultMsg: 'NORMAL_CODE' },
       body: {
         numOfRows: 10,
         pageNo: 1,
-        totalCount: items.length,
+        totalCount: overrides.totalCount ?? items.length,
         items: { item: items },
       },
     },
@@ -201,6 +204,51 @@ describe('AirKorea nearby-station provider — response classification', () => {
 
     const outcome = await result.provider.fetchNearbyStations(VALID_REQUEST);
     expect(outcome).toEqual({ ok: false, error: { kind: 'NO_DATA' } });
+  });
+
+  it('classifies totalCount exceeding a non-empty received item count as INCOMPLETE_RESULT', async () => {
+    const fetchImpl = vi.fn(
+      async () => new Response(successBody([item()], { totalCount: 2 }), { status: 200 }),
+    );
+    const result = createAirKoreaNearbyStationProvider({ serviceKey: FAKE_KEY, fetchImpl });
+    if (!result.ok) throw new Error('unexpected config error');
+
+    const outcome = await result.provider.fetchNearbyStations(VALID_REQUEST);
+    expect(outcome).toEqual({
+      ok: false,
+      error: { kind: 'INCOMPLETE_RESULT', totalCount: 2, receivedCount: 1 },
+    });
+  });
+
+  it('classifies a positive totalCount with zero returned items as INCOMPLETE_RESULT, not NO_DATA', async () => {
+    const fetchImpl = vi.fn(
+      async () => new Response(successBody([], { totalCount: 1 }), { status: 200 }),
+    );
+    const result = createAirKoreaNearbyStationProvider({ serviceKey: FAKE_KEY, fetchImpl });
+    if (!result.ok) throw new Error('unexpected config error');
+
+    const outcome = await result.provider.fetchNearbyStations(VALID_REQUEST);
+    expect(outcome).toEqual({
+      ok: false,
+      error: { kind: 'INCOMPLETE_RESULT', totalCount: 1, receivedCount: 0 },
+    });
+  });
+
+  it('classifies a complete multi-item result (totalCount === items.length) as success', async () => {
+    const first = item({ stationName: '창전동', tm: '9.7' });
+    const second = item({ stationName: '부발읍', tm: '8.2' });
+    const fetchImpl = vi.fn(async () => new Response(successBody([first, second]), { status: 200 }));
+    const result = createAirKoreaNearbyStationProvider({ serviceKey: FAKE_KEY, fetchImpl });
+    if (!result.ok) throw new Error('unexpected config error');
+
+    const outcome = await result.provider.fetchNearbyStations(VALID_REQUEST);
+    expect(outcome).toEqual({
+      ok: true,
+      stations: [
+        { stationName: '창전동', distanceKm: 9.7 },
+        { stationName: '부발읍', distanceKm: 8.2 },
+      ],
+    });
   });
 
   it('classifies a malformed distance as MALFORMED_DISTANCE (never promoted to a fabricated value)', async () => {

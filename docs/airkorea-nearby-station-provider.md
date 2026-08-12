@@ -188,8 +188,54 @@ provider는 `returnType=json` 요청에서도 `tm`을 문자열로 취급합니�
 
 closest-station 선택 정책은 후속 resolver PR의 책임입니다.
 
-빈 candidate 목록(`totalCount === 0`, `items` 빈 배열)은 값을 만들어내지 않고 명시적인 `NO_DATA`
-result로 처리합니다.
+## Incomplete result (fail-closed) 정책
+
+이 operation은 `pageNo`/`numOfRows` 요청 파라미터를 전혀 노출하지 않으므로(§ "공식 요청
+파라미터" 참고), caller는 나머지 결과를 다시 요청할 방법이 없습니다. 동시에 문서는 반환
+순서를 보장하지 않으므로(위 "가장 가까운 측정소 미선택 정책" 참고), 후속 resolver는 "이미
+반환된 후보들 중 최소 거리"가 아니라 "전체 후보들 중 최소 거리"를 계산해야 합니다. 따라서:
+
+```
+totalCount > items.length
+```
+
+인 응답(공식 `totalCount`가 실제 반환된 item 개수보다 큰 경우)은 **불완전한 candidate 집합**이며,
+완전한 성공으로 취급하면 후속 resolver가 실제로는 더 가까울 수 있는 미반환 후보를 놓친 채 "최소
+거리"를 계산하게 됩니다. 이 provider는 이 경우를 명시적인 실패로 처리합니다.
+
+```ts
+{ kind: 'INCOMPLETE_RESULT'; totalCount: number; receivedCount: number }
+```
+
+`interpretNearbyStationPage`의 판정 순서는 다음과 같습니다(이 순서가 중요합니다 — `totalCount`가
+양수이면서 반환된 item이 0개인 응답은 "결과 없음"이 아니라 "불완전한 결과"입니다):
+
+1. `totalCount > items.length` → `INCOMPLETE_RESULT { totalCount, receivedCount }`
+2. `items.length === 0` (즉 `totalCount === 0`) → `NO_DATA`
+3. 그 외 → 모든 item의 거리를 파싱해 성공 candidate 목록 반환
+
+예:
+
+| `totalCount` | `items.length` | 결과 |
+| --- | --- | --- |
+| 3 | 2 | `INCOMPLETE_RESULT { totalCount: 3, receivedCount: 2 }` |
+| 1 | 0 | `INCOMPLETE_RESULT { totalCount: 1, receivedCount: 0 }` (NO_DATA 아님) |
+| 0 | 0 | `NO_DATA` |
+| 2 | 2 | 정상 성공 |
+
+명확히 해 둘 것:
+
+* 페이지네이션 프레임워크를 추가하지 않았습니다 — 이 provider는 여전히 요청 파라미터로
+  `pageNo`/`numOfRows`를 보내지 않으며, 추가 API 호출도 수행하지 않습니다.
+* 결측 후보를 만들어내지 않습니다 — `receivedCount`만큼만 반환되었다는 사실을 그대로 보고할
+  뿐, 나머지 `totalCount - receivedCount`개를 추정/보간하지 않습니다.
+* 이 provider는 여전히 최종 station을 선택하지 않습니다.
+* raw schema(`nearby-station-raw-schema.ts`)의 `superRefine`은 여전히 `totalCount === 0`이면
+  item이 없어야 한다는 것과 `itemCount`가 `totalCount`/`numOfRows`를 초과하지 않는다는 것만
+  강제합니다 — `totalCount > itemCount`(불완전 페이지)는 구조적으로 유효한 응답이며, 이를
+  malformed로 거부하지 않습니다. "totalCount === items.length여야 한다"는 인위적인 raw-schema
+  불변식을 추가하지 않았습니다 — completeness 정책은 raw schema가 아니라 provider의
+  semantic 책임입니다.
 
 ## Provider 공개 계약
 
@@ -215,11 +261,14 @@ interface AirKoreaNearbyStationCandidate {
 실패 kind: `INVALID_REQUEST`, `TIMEOUT`, `ABORTED`, `NETWORK_ERROR`, `HTTP_ERROR`,
 `RESPONSE_TOO_LARGE`, `EMPTY_RESPONSE`, `NON_JSON_RESPONSE`, `INVALID_JSON`,
 `AIRKOREA_UPSTREAM_ERROR`(2자리 `resultCode`만), `AIRKOREA_INVALID_RESPONSE`(sanitized issues만),
-`MALFORMED_DISTANCE`, `NO_DATA`. PR #82의 `RESPONSE_MISMATCH`/`INCOMPLETE_PAGE`에 대응하는 별도
-kind는 없습니다 — 이 operation은 caller가 `pageNo`/`numOfRows`/`stationName`을 보내지 않으므로
-request/response correlation 검사 자체가 적용되지 않고, `numOfRows`/`totalCount`/item 개수 간의
-내부 self-consistency는 PR #82와 동일한 defensive `superRefine`(raw schema 단계)이 이미
-`AIRKOREA_INVALID_RESPONSE`로 처리합니다.
+`MALFORMED_DISTANCE`, `INCOMPLETE_RESULT { totalCount, receivedCount }`(위 "Incomplete result
+(fail-closed) 정책" 참고), `NO_DATA`. PR #82의 `RESPONSE_MISMATCH`에 대응하는 kind는 없습니다 —
+이 operation은 caller가 `pageNo`/`numOfRows`/`stationName`을 보내지 않으므로 request/response
+correlation 검사 자체가 적용되지 않습니다. `INCOMPLETE_RESULT`는 PR #82의 `INCOMPLETE_PAGE`와
+같은 원리(공식 `totalCount`가 반환된 item 개수보다 큰 경우 fail-closed)이지만 이 provider 고유의
+completeness 정책이며, `numOfRows`/`totalCount`/item 개수 간의 구조적 self-consistency(예:
+`itemCount`가 `totalCount`를 초과)는 PR #82와 동일한 defensive `superRefine`(raw schema 단계)이
+여전히 `AIRKOREA_INVALID_RESPONSE`로 처리합니다.
 
 `createAirKoreaNearbyStationProvider(options)` / `…FromEnv(env?, dependencies?)`는 PR #82의
 current-air-quality provider와 완전히 같은 `AirKoreaProviderOptions`/`AIRKOREA_SERVICE_KEY`/
@@ -258,6 +307,33 @@ shape 근거는 위 공식 기술문서의 텍스트·요청응답 예제에서�
 * `numOfRows`의 실제 서버 기본값이 문서 예제와 같이 10인지, 아니면 다른 상황에서 달라지는지.
 * 근접측정소 목록의 실제 정렬 순서(있다면)가 항상 일관되는지 — 이 provider는 이를 가정하지
   않으므로 검증 결과와 무관하게 동작이 바뀌지 않습니다.
+
+### Zero-result(결과 없음) JSON 직렬화 — 미검증 evidence gap
+
+**사실**: 응답 필드 표(§ c)는 `items`의 항목크기를 `0..n`으로 표기하여 0개 결과가 가능함을
+시사하지만, 기술문서는 이 operation에 대해 0개 결과(zero-result) 응답의 예제를 전혀 제공하지
+않습니다 — § d의 요청/응답 메시지 예제는 3개 결과가 반환되는 경우만 보여줍니다. 즉 zero-result
+응답이 JSON으로 실제 어떻게 직렬화되는지에 대한 공식 자료(JSON 예제 포함)는 존재하지 않습니다.
+
+**현재 프로젝트 가정 / fail-closed boundary**: 이 provider는 현재 다음 JSON 형태를 만났을 때만
+"결과 없음"(`totalCount === 0`이고 반환된 item이 0개)을 성공적인 `NO_DATA`로 인식합니다:
+
+```json
+{ "items": { "item": [] } }
+```
+
+이 정확한 zero-result JSON 직렬화 형태는 **공식적으로 검증되지 않았습니다** — 문서가 제공하는
+것은 항목크기 표기(`0..n`)뿐이며, 실제 zero-result JSON 예제가 아닙니다.
+
+**결과**: 만약 실제 인증된 API가 0개 결과를 `items` 필드 자체를 생략하거나, `null`로 채우거나,
+다른 형태로 직렬화한다면, 현재 runtime은 이를 `NO_DATA`가 아니라 `AIRKOREA_INVALID_RESPONSE`로
+분류합니다(raw schema가 `items: { item: [...] }` 형태를 필수로 요구하므로). 이 프로젝트는 근거
+없는 permissive 형태(예: `items`가 없거나 `null`인 경우까지 허용)를 추측만으로 미리 추가하지
+않습니다 — 이는 향후 인증된 integration/QA 단계에서 반드시 재확인해야 할 항목입니다(위 "실제
+인증 API 검증 상태" 목록에 포함).
+
+이 gap을 공식적으로 검증된 no-data 표현으로 오인해서는 안 됩니다 — 이는 문서의 항목크기
+표기(`0..n`)로부터 유추한 project-owned 가정일 뿐입니다.
 
 ## 범위 확인 (이 PR에서 구현하지 않은 것)
 

@@ -538,6 +538,7 @@ export type AirKoreaNearbyStationProviderError =
       readonly issues: readonly AirKoreaNearbyStationResponseIssue[];
     }
   | { readonly kind: 'MALFORMED_DISTANCE' }
+  | { readonly kind: 'INCOMPLETE_RESULT'; readonly totalCount: number; readonly receivedCount: number }
   | { readonly kind: 'NO_DATA' };
 
 export type AirKoreaNearbyStationProviderResult =
@@ -563,16 +564,33 @@ function failNearbyStation(
 }
 
 /**
- * Turn a validated success page into a provider result: report an explicit no-data outcome for an
- * empty page, otherwise convert every item's raw `tm` distance text into a finite kilometre number
- * (`parseAirKoreaNearbyStationDistanceKm`, `nearby-station-raw-schema.ts`). A single malformed
- * distance fails the *whole* page (`MALFORMED_DISTANCE`) rather than silently dropping that one
- * candidate or promoting the malformed text to a fabricated distance. Pure and deterministic; the
- * candidate order is the upstream item order — this function does not sort, and callers must not
- * treat `stations[0]` as "the closest station" (see the technical document's ordering gap,
- * `docs/airkorea-nearby-station-provider.md`).
+ * Turn a validated success page into a provider result. Decision order:
+ *
+ * 1. `totalCount > items.length` → `INCOMPLETE_RESULT`. This operation exposes no
+ *    `pageNo`/`numOfRows` request parameters and no documented ordering guarantee, so a caller
+ *    cannot request the remaining candidates and a later resolver cannot assume the closest station
+ *    is among the ones already returned — an incomplete candidate set is a fail-closed error, not a
+ *    partial success. Checked *before* the empty-page check so a positive `totalCount` with zero
+ *    returned items is reported as incomplete, not as a true no-data outcome.
+ * 2. An empty item list (`totalCount === 0`) → explicit `NO_DATA` — never fabricates a value.
+ * 3. Otherwise convert every item's raw `tm` distance text into a finite kilometre number
+ *    (`parseAirKoreaNearbyStationDistanceKm`, `nearby-station-raw-schema.ts`). A single malformed
+ *    distance fails the *whole* page (`MALFORMED_DISTANCE`) rather than silently dropping that one
+ *    candidate or promoting the malformed text to a fabricated distance.
+ *
+ * Pure and deterministic; the candidate order is the upstream item order — this function does not
+ * sort, and callers must not treat `stations[0]` as "the closest station" (see the technical
+ * document's ordering gap, `docs/airkorea-nearby-station-provider.md`).
  */
 function interpretNearbyStationPage(page: AirKoreaNearbyStationPage): AirKoreaNearbyStationProviderResult {
+  if (page.totalCount > page.items.length) {
+    return failNearbyStation({
+      kind: 'INCOMPLETE_RESULT',
+      totalCount: page.totalCount,
+      receivedCount: page.items.length,
+    });
+  }
+
   if (page.items.length === 0) {
     return failNearbyStation({ kind: 'NO_DATA' });
   }
