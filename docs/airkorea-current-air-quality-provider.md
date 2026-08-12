@@ -58,13 +58,16 @@ interface AirKoreaCurrentAirQualityRequest {
 | `numOfRows` | 옵션 | `100` | 한 페이지 결과 수 |
 | `pageNo` | 옵션 | `1` | 페이지 번호 |
 | `stationName` | **필수** | `종로구` | 측정소 이름 (항목크기 30) |
-| `dataTerm` | 옵션 | `DAILY` | 요청 데이터기간(1일: `DAILY`, 1개월: `MONTH`, 3개월: `3MONTH`) |
+| `dataTerm` | **필수** | `DAILY` | 요청 데이터기간(1일: `DAILY`, 1개월: `MONTH`, 3개월: `3MONTH`) |
 | `ver` | 옵션 | `1.0` | 오퍼레이션 버전 |
 
-`stationName`만 필수(항목구분: 1)이므로, 이 PR의 요청 타입은 그 필드 하나만 caller에게
-노출합니다. `returnType`/`numOfRows`/`pageNo`/`dataTerm`/`ver`는 이 provider가 항상 고정
-값으로 전송하는 **project-owned fixed request policy**입니다(`current-request.ts`의
-`AIRKOREA_FIXED_*` 상수).
+문서상 공식 필수(항목구분: 1) 요청 파라미터는 `serviceKey`, `stationName`, `dataTerm`
+셋입니다. 이 중 caller가 요청마다 달리 지정해야 하는 값은 `stationName`뿐이므로, 이 PR의
+요청 타입은 그 필드 하나만 caller에게 노출합니다. `dataTerm`은 공식 필수 파라미터이지만,
+이 provider 자신이 고정값 `DAILY`를 항상 전송하는 **project-owned fixed request policy**로
+소유합니다 — caller는 이 값을 설정하거나 생략할 수 없습니다. `returnType`/`numOfRows`/
+`pageNo`/`ver` 역시 같은 정책으로 이 provider가 항상 고정 값으로 전송합니다
+(`current-request.ts`의 `AIRKOREA_FIXED_*` 상수).
 
 * `returnType=json` — 문서의 "JSON 방식 호출 방법" 안내(`&returnType=json` 추가) 그대로 사용.
 * `pageNo=1`, `numOfRows=100` — `numOfRows`는 `dataTerm=DAILY`가 만드는 한 측정소의 하루치
@@ -132,13 +135,26 @@ URL은 `URL` + `URLSearchParams`로만 구성하며, 서비스키와 `stationNam
 | `*Flag` (6종) | 필수 | 측정자료 상태정보 (이 provider는 미사용) |
 
 이 provider가 실제로 소비하는 필드만 `airKoreaCurrentAirQualityItemSchema`
-(`current-raw-schema.ts`)에 선언합니다: `dataTime`, `stationName`(둘 다 필수 문자열),
-`pm10Value`/`pm25Value`/`o3Value`/`khaiValue`/`khaiGrade`/`pm10Grade`/`pm25Grade`/`o3Grade`
-(모두 **optional** 문자열 — `pm25Value`/`pm25Grade`가 문서상 옵션이므로 나머지도 대칭적으로
-optional로 모델링해, 서버가 어떤 이유로든 필드를 생략해도 raw schema 파싱이 막히지 않게
-했습니다). `mangName`/`stationCode`/`*Value24`/`*Grade1h`/`*Flag` 등 미사용 필드는 Zod의
-기본 unknown-key strip으로 제거됩니다. **AirKorea 고유 raw 타입/스키마는 공개 계약으로
-export되지 않습니다** — `CurrentAirQuality`만 export됩니다.
+(`current-raw-schema.ts`)에 선언하며, 문서의 필수/옵션 구분을 그대로 반영합니다:
+
+* **필수 문자열** (항목구분: 1 — 키 자체가 없으면 malformed 응답으로 거부): `dataTime`,
+  `stationName`, `pm10Value`, `o3Value`, `khaiValue`, `khaiGrade`, `pm10Grade`, `o3Grade`.
+* **옵션 문자열** (항목구분: 0 — 키 자체가 없어도 정상): `pm25Value`, `pm25Grade`.
+
+문서상 필수인 나머지 필드(`so2Value`/`coValue`/`no2Value`/`so2Grade`/`coGrade`/`no2Grade`
+등)는 이 provider가 전혀 소비하지 않으므로 raw schema에 선언하지 않고, Zod의 기본
+unknown-key strip으로 다른 미사용 필드(`mangName`/`stationCode`/`*Value24`/`*Grade1h`/
+`*Flag`)와 함께 제거됩니다.
+
+**필수와 옵션의 실질적 차이는 "키의 부재"를 다루는 방식에만 있습니다** — 필수 필드는 키가
+없으면 raw schema 단계에서 즉시 거부되고, 옵션 필드는 키가 없어도 통과합니다. 두 경우 모두
+**키가 존재하되 문서화된 sentinel 값을 담고 있는 경우**는 이 raw schema 수준에서는 동일하게
+유효한 문자열로 취급됩니다 — presence(키의 존재)와 value(값)는 서로 다른 개념이며, sentinel
+값을 "결측치 없음(null)"으로 해석하는 것은 `normalize-current.ts`의 몫이지 이 raw
+boundary의 몫이 아닙니다(아래 "결측치(sentinel) 표현" 참고).
+
+**AirKorea 고유 raw 타입/스키마는 공개 계약으로 export되지 않습니다** — `CurrentAirQuality`만
+export됩니다.
 
 `response.body`에는 KMA와 달리 `dataType` 필드가 **없습니다**(문서 응답 표에 해당 필드가
 없음) — KMA raw schema를 그대로 베끼지 않고 이 차이를 그대로 반영했습니다.
@@ -160,8 +176,16 @@ export되지 않습니다** — `CurrentAirQuality`만 export됩니다.
   필드군**에 대한 최소한의 확장 해석입니다. 인증된 실응답으로 재확인이 필요한 항목으로
   남겨둡니다.
 * **등급**(`khaiGrade`/`pm10Grade`/`pm25Grade`/`o3Grade`): 빈 문자열 `""` → `null`.
-* 필드 자체가 **부재**(`pm25Value`/`pm25Grade`가 문서상 옵션)한 경우도 위와 동일하게 `null`로
-  취급합니다(문서가 명시한 옵션 필드이므로 malformed가 아님).
+* 옵션 필드(`pm25Value`/`pm25Grade`)의 **부재**는 위와 동일하게 `null`로 취급합니다 —
+  문서가 명시한 옵션 필드(항목구분: 0)이므로 malformed가 아니라 정상적인 결측치 표현입니다.
+* **필수 필드**(`pm10Value`/`o3Value`/`khaiValue`/`khaiGrade`/`pm10Grade`/`o3Grade`)의
+  **부재**는 옵션 필드와 다르게 취급합니다 — 문서가 항목구분: 1로 명시하므로 키 자체가 없는
+  것은 업스트림 malformed 응답이며, raw schema 단계(`current-raw-schema.ts`)에서 즉시
+  거부되고 `normalize-current.ts`도 (raw schema를 우회한 런타임 호출에 대한 방어적 재검사로)
+  이를 정규화 실패(issue)로 처리합니다 — `null`로 조용히 흡수하지 않습니다. 반대로 **필수
+  필드가 present이면서 그 값이 sentinel**인 경우(예: `khaiValue: "-"`, `pm10Grade: ""`)는
+  키가 존재하므로 malformed가 아니라 정상적인 결측치 표현이며, 옵션 필드의 sentinel과
+  동일하게 `null`로 정규화됩니다 — presence(키의 존재)와 value(값)는 서로 다른 개념입니다.
 * 위 두 sentinel이 **아닌** 값이 파싱 규칙(측정값: `^\d+(\.\d+)?$`, 등급: `"1"`-`"4"`)을
   만족하지 못하면 **정규화 실패**(issue)로 처리하고, 절대 `0`이나 임의의 유효 등급으로
   치환하지 않습니다.
@@ -239,7 +263,9 @@ interface AirKoreaCurrentAirQualityProvider {
 
 성공 결과(`AirKoreaCurrentAirQualityProviderSuccess`)는 선택된 최신 item의 필드
 (`stationName`, `dataTime`, 4개 측정값, 4개 등급)만 노출합니다 — raw body, URL, 서비스키는
-전혀 포함되지 않습니다.
+전혀 포함되지 않습니다. 이 타입의 필수/옵션 구분은 raw 계약을 그대로 따릅니다:
+`pm10Value`/`o3Value`/`khaiValue`/`khaiGrade`/`pm10Grade`/`o3Grade`는 필수 문자열이고
+(raw schema가 이미 그 존재를 보장), `pm25Value`/`pm25Grade`만 옵션입니다.
 
 실패 kind: `INVALID_REQUEST`, `TIMEOUT`, `ABORTED`, `NETWORK_ERROR`, `HTTP_ERROR`,
 `RESPONSE_TOO_LARGE`, `EMPTY_RESPONSE`, `NON_JSON_RESPONSE`, `INVALID_JSON`,

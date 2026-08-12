@@ -21,6 +21,13 @@ const VALID_ITEM = {
   o3Grade: '2',
 };
 
+/** Return a shallow clone of `obj` with `key` deleted — works around TS's optional-only `delete`. */
+function omitKey(obj: Record<string, unknown>, key: string): Record<string, unknown> {
+  const clone: Record<string, unknown> = { ...obj };
+  delete clone[key];
+  return clone;
+}
+
 function successResponse(items: unknown[], overrides?: Record<string, unknown>) {
   return {
     response: {
@@ -140,6 +147,35 @@ describe('airKoreaCurrentAirQualityItemSchema', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  const REQUIRED_CONSUMED_FIELDS = [
+    'pm10Value',
+    'o3Value',
+    'khaiValue',
+    'khaiGrade',
+    'pm10Grade',
+    'o3Grade',
+  ] as const;
+
+  it.each(REQUIRED_CONSUMED_FIELDS)(
+    'rejects a missing %s (officially required response field)',
+    (field) => {
+      const result = airKoreaCurrentAirQualityItemSchema.safeParse(omitKey(VALID_ITEM, field));
+      expect(result.success).toBe(false);
+    },
+  );
+
+  it.each(REQUIRED_CONSUMED_FIELDS)(
+    'accepts a present %s holding its documented sentinel (presence, not value, is required)',
+    (field) => {
+      const sentinel = field.endsWith('Grade') ? '' : '-';
+      const result = airKoreaCurrentAirQualityItemSchema.safeParse({
+        ...VALID_ITEM,
+        [field]: sentinel,
+      });
+      expect(result.success).toBe(true);
+    },
+  );
 
   it('strips unknown extra raw keys', () => {
     const result = airKoreaCurrentAirQualityItemSchema.safeParse({

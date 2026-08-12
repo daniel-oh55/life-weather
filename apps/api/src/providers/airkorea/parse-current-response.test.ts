@@ -15,6 +15,22 @@ const VALID_ITEM = {
   o3Grade: '2',
 };
 
+/** Return a shallow clone of `obj` with `key` deleted — works around TS's optional-only `delete`. */
+function omitKey(obj: Record<string, unknown>, key: string): Record<string, unknown> {
+  const clone: Record<string, unknown> = { ...obj };
+  delete clone[key];
+  return clone;
+}
+
+const REQUIRED_CONSUMED_FIELDS = [
+  'pm10Value',
+  'o3Value',
+  'khaiValue',
+  'khaiGrade',
+  'pm10Grade',
+  'o3Grade',
+] as const;
+
 function successResponse(items: unknown[]) {
   return {
     response: {
@@ -124,5 +140,24 @@ describe('parseAirKoreaCurrentAirQualityResponse — invalid response', () => {
   it('is pure and does not mutate the input', () => {
     const input = Object.freeze(successResponse([VALID_ITEM]));
     expect(() => parseAirKoreaCurrentAirQualityResponse(input)).not.toThrow();
+  });
+
+  it.each(REQUIRED_CONSUMED_FIELDS)(
+    'classifies a success item missing %s as INVALID_RESPONSE (officially required field)',
+    (field) => {
+      const result = parseAirKoreaCurrentAirQualityResponse(
+        successResponse([omitKey(VALID_ITEM, field)]),
+      );
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.kind).toBe('INVALID_RESPONSE');
+      }
+    },
+  );
+
+  it('accepts a success item missing pm25Value and pm25Grade (documented optional fields)', () => {
+    const item = omitKey(omitKey(VALID_ITEM, 'pm25Value'), 'pm25Grade');
+    const result = parseAirKoreaCurrentAirQualityResponse(successResponse([item]));
+    expect(result.ok).toBe(true);
   });
 });

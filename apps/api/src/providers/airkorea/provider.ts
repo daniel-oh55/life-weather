@@ -232,19 +232,23 @@ async function performAirKoreaGetRequest(
 /**
  * A successful current-air-quality fetch: the selected (latest) validated raw item's fields. Only
  * what `normalize-current.ts` needs, plus `stationName` for internal traceability — never a raw
- * body, URL, or service key.
+ * body, URL, or service key. Required-vs-optional mirrors the raw contract
+ * (`airKoreaCurrentAirQualityItemSchema`): `pm10Value`/`o3Value`/`khaiValue`/`khaiGrade`/
+ * `pm10Grade`/`o3Grade` are officially required response fields, so the raw schema already
+ * guarantees their presence by the time a page reaches this type; only `pm25Value`/`pm25Grade` are
+ * documented optional fields and may be absent.
  */
 export interface AirKoreaCurrentAirQualityProviderSuccess {
   readonly stationName: string;
   readonly dataTime: string;
-  readonly pm10Value?: string;
+  readonly pm10Value: string;
   readonly pm25Value?: string;
-  readonly o3Value?: string;
-  readonly khaiValue?: string;
-  readonly khaiGrade?: string;
-  readonly pm10Grade?: string;
+  readonly o3Value: string;
+  readonly khaiValue: string;
+  readonly khaiGrade: string;
+  readonly pm10Grade: string;
   readonly pm25Grade?: string;
-  readonly o3Grade?: string;
+  readonly o3Grade: string;
 }
 
 /** The field a request/response correlation check found inconsistent. */

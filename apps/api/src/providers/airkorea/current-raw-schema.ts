@@ -18,12 +18,16 @@
  * one.
  *
  * Type discipline: no `z.coerce`; unknown extra keys are dropped by Zod's default object strip. The
- * technical document marks `pm25Value`/`pm25Grade` (and the 1-hour PM grades this provider does not
- * consume) as *optional* response fields (항목구분: 0) even at the highest documented `ver` — so
- * they are modeled as optional keys here, not `.nullable()` required fields. A present-but-empty
- * value ("-" for a measurement, "" for a grade — see the technical document's XML sample, which
- * shows a missing grade as a self-closing element) is a valid *string*; interpreting it as "no data"
- * is `normalize-current.ts`'s job, not this raw boundary's.
+ * technical document's own field table marks `pm10Value`, `o3Value`, `khaiValue`, `khaiGrade`,
+ * `pm10Grade`, and `o3Grade` as *required* response fields (항목구분: 1) — a response missing any of
+ * these keys is malformed and rejected here, at the raw boundary, rather than being silently
+ * normalized to `null` downstream. Only `pm25Value`/`pm25Grade` are documented *optional* (항목구분:
+ * 0) and modeled as optional keys. Presence and value are distinct concepts: a documented sentinel
+ * ("-" for a measurement, "" for a grade — see the technical document's XML sample, which shows a
+ * missing grade as a self-closing element) is a valid *string* for a **present** required key: the
+ * key is not absent, its value merely encodes "no data". Interpreting a sentinel (or an absent
+ * optional key) as "no data" is `normalize-current.ts`'s job, not this raw boundary's — this
+ * boundary's job is only to reject an **absent required key** as malformed.
  */
 
 import { z } from 'zod';
@@ -123,9 +127,9 @@ const airKoreaStationName = z.string().refine(isAirKoreaStationName, {
  * types these as strings — the documented missing sentinel is the literal `"-"` (confirmed by the
  * technical document's `<khaiValue>-</khaiValue>` sample); a valid measurement is a bare
  * non-negative decimal string (e.g. `"73"`, `"0.043"`). No numeric coercion here — semantic
- * interpretation (sentinel vs. malformed vs. valid) is `normalize-current.ts`'s job. `pm25Value` is
- * *optional* per the technical document (항목구분: 0); the other three are always present once
- * `ver=1.5` is requested (this provider's fixed policy — see `current-request.ts`).
+ * interpretation (sentinel vs. malformed vs. valid) is `normalize-current.ts`'s job. Per-field
+ * required-vs-optional key presence is enforced where this schema is used, not here (the sentinel
+ * value itself is the same shape either way).
  */
 const airKoreaMeasurementValue = z.string();
 
@@ -133,30 +137,36 @@ const airKoreaMeasurementValue = z.string();
  * A grade field (`khaiGrade`, `pm10Grade`, `pm25Grade`, `o3Grade`). Official documented values are
  * the literal digit strings `"1"`-`"4"` (좋음/보통/나쁨/매우나쁨); the technical document's XML
  * sample shows a missing grade as a self-closing element (`<so2Grade/>`), i.e. an empty string.
- * Semantic mapping happens in `normalize-current.ts`. `pm25Grade` is *optional* per the technical
- * document (항목구분: 0).
+ * Semantic mapping happens in `normalize-current.ts`. Per-field required-vs-optional key presence is
+ * enforced where this schema is used, not here.
  */
 const airKoreaGradeValue = z.string();
 
 /**
  * One 측정소별 실시간 측정정보 조회 `item`. `dataTime` and `stationName` are always present once
- * `ver=1.5` is requested; the four value fields and four grade fields are modeled per the technical
- * document's own required/optional split (see the module docblock and `docs/
- * airkorea-current-air-quality-provider.md` for the full field table). Unknown extra keys (e.g.
- * `mangName`, `stationCode`, `pm10Value24`, the `*Flag` fields, the 1-hour PM grades) are stripped
- * by Zod's default — this provider does not consume them.
+ * `ver=1.5` is requested. Of the eight consumed value/grade fields, the technical document's field
+ * table marks six as *required* (항목구분: 1) — `pm10Value`, `o3Value`, `khaiValue`, `khaiGrade`,
+ * `pm10Grade`, `o3Grade` — so an absent key for any of these is rejected here as a malformed
+ * response, not silently accepted and normalized to `null` downstream. Only `pm25Value` and
+ * `pm25Grade` are documented *optional* (항목구분: 0) and remain `.optional()` keys (see the module
+ * docblock and `docs/airkorea-current-air-quality-provider.md` for the full field table). A
+ * required key that is *present* but holds its documented sentinel string (`"-"` / `""`) still
+ * parses here — presence and value are different concepts; sentinel-vs-malformed-vs-valid
+ * interpretation is `normalize-current.ts`'s job. Unknown extra keys (e.g. `mangName`,
+ * `stationCode`, `pm10Value24`, the `*Flag` fields, the 1-hour PM grades) are stripped by Zod's
+ * default — this provider does not consume them.
  */
 export const airKoreaCurrentAirQualityItemSchema = z.object({
   dataTime: airKoreaDataTime,
   stationName: airKoreaStationName,
-  pm10Value: airKoreaMeasurementValue.optional(),
+  pm10Value: airKoreaMeasurementValue,
   pm25Value: airKoreaMeasurementValue.optional(),
-  o3Value: airKoreaMeasurementValue.optional(),
-  khaiValue: airKoreaMeasurementValue.optional(),
-  khaiGrade: airKoreaGradeValue.optional(),
-  pm10Grade: airKoreaGradeValue.optional(),
+  o3Value: airKoreaMeasurementValue,
+  khaiValue: airKoreaMeasurementValue,
+  khaiGrade: airKoreaGradeValue,
+  pm10Grade: airKoreaGradeValue,
   pm25Grade: airKoreaGradeValue.optional(),
-  o3Grade: airKoreaGradeValue.optional(),
+  o3Grade: airKoreaGradeValue,
 });
 
 export type AirKoreaCurrentAirQualityItem = z.infer<typeof airKoreaCurrentAirQualityItemSchema>;

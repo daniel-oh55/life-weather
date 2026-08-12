@@ -16,14 +16,32 @@
  *    the instant the running total exceeds `maxBytes` (a lying or absent `Content-Length` cannot
  *    get past this).
  *
+ * Both size-limit checks **latch `RESPONSE_TOO_LARGE` the instant the overflow is detected** and
+ * return immediately — cancellation is started but never awaited, so a `cancel()` that rejects, or
+ * that never settles at all, can neither delay nor displace the `RESPONSE_TOO_LARGE` result.
+ *
  * An optional `options.signal` lets the caller's shared timeout/caller-abort `AbortSignal` bound a
- * `read()` that would otherwise be left pending forever by a non-cooperative stream: the read races
- * against the signal firing, and a fired signal cancels the reader and fails with
- * `BODY_READ_ERROR` rather than hanging. Every *expected* stream failure (reader acquisition,
- * `read()`, or `cancel()`) is turned into a value, never thrown or surfaced raw: only a bare
- * `RESPONSE_TOO_LARGE` or `BODY_READ_ERROR` is ever returned. `releaseLock()` is attempted on every
- * exit path once a reader has been acquired, and any failure of the release/cancel path is
- * swallowed rather than overwriting the already-decided result.
+ * `read()` that would otherwise be left pending forever by a non-cooperative stream. Exactly **one**
+ * `abort` listener is attached to `signal` for the *entire reader lifecycle* — never one per chunk,
+ * so the abort reaction graph cannot grow in proportion to the number of chunks read. A single
+ * mutable `wakeCurrentRead` wakes whichever `read()` is currently outstanding (if any); when `signal`
+ * fires between reads (nothing outstanding to wake), the next loop iteration's `signal.aborted` check
+ * catches it instead. Either way, this function immediately starts a best-effort `reader.cancel()`
+ * (not awaited) and returns `BODY_READ_ERROR` promptly, rather than waiting on a `read()` that a
+ * non-cooperative stream may never settle on its own. The original pending `read()` promise is not
+ * abandoned — a handler is attached so that whenever it *does* eventually settle (resolve or reject,
+ * however late), the lock release is retried, since the immediate release attempted on the way out
+ * may run before that read settles and therefore may not succeed on a non-standard stream. A late
+ * rejection is handled (never an unhandled rejection). The listener is removed on every exit path.
+ * Without `options.signal`, behavior is unchanged: `read()` is simply awaited.
+ *
+ * Every *expected* stream failure (reader acquisition, `read()`, or `cancel()`) is turned into a
+ * value, never thrown or surfaced raw: only a bare `RESPONSE_TOO_LARGE` or `BODY_READ_ERROR` is ever
+ * returned. `releaseLock()` is attempted on every exit path once a reader has been acquired, and any
+ * failure of the release/cancel path is swallowed rather than overwriting the already-decided
+ * result. Calling `releaseLock()` (or `cancel()`) more than once on the same reader is safe by
+ * construction, which is what makes the immediate attempt plus a later retry on late settlement safe
+ * to combine.
  */
 
 export type ReadAirKoreaResponseTextResult =
@@ -54,7 +72,10 @@ function parseContentLength(header: string | null): number | null {
   return Number.isSafeInteger(value) ? value : null;
 }
 
-/** Cancel a reader, swallowing any failure — never surfaced as a raw transport error. */
+/**
+ * Cancel a reader, swallowing any failure — never surfaced as a raw transport error, and never
+ * allowed to overwrite an outcome already decided by the caller.
+ */
 async function cancelReaderSafely(
   reader: ReadableStreamDefaultReader<Uint8Array>,
 ): Promise<void> {
@@ -65,7 +86,10 @@ async function cancelReaderSafely(
   }
 }
 
-/** Release a reader's lock, swallowing any failure — never surfaced as a raw transport error. */
+/**
+ * Release a reader's lock, swallowing any failure. Safe to call more than once on the same reader —
+ * this is what makes an immediate attempt plus a later retry-on-late-settlement combination safe.
+ */
 function releaseReaderLockSafely(reader: ReadableStreamDefaultReader<Uint8Array>): void {
   try {
     reader.releaseLock();
@@ -92,6 +116,11 @@ async function cancelBodySafely(body: ReadableStream<Uint8Array> | null): Promis
  * pending `read()` settles. Never throws for either expected failure. A body exactly `maxBytes`
  * succeeds; one byte more fails. A bodyless response (`body === null`) or a zero-byte body yields
  * the empty string.
+ *
+ * Once a reader is acquired, `releaseLock()` is *attempted* on every exit path in `finally`. When
+ * `signal` fires while a `read()` is still outstanding, that immediate `finally` release may run
+ * before the pending `read()` actually settles (on a non-cooperative stream); a second
+ * `releaseLock()` attempt is then retried once the pending `read()` does settle, however late.
  */
 export async function readAirKoreaResponseTextWithLimit(
   response: Response,
@@ -121,43 +150,65 @@ export async function readAirKoreaResponseTextWithLimit(
   let total = 0;
   let text = '';
 
+  // Exactly one `abort` subscription for the whole reader lifecycle (not one per chunk).
+  // `wakeCurrentRead` wakes whichever `reader.read()` is currently outstanding; it is `null`
+  // between reads, so a signal that fires between chunks has nothing to wake and is instead caught
+  // by the `signal.aborted` check at the top of the next loop iteration.
+  let wakeCurrentRead: (() => void) | null = null;
+  const onAbort = (): void => {
+    wakeCurrentRead?.();
+  };
+  if (signal !== undefined) {
+    signal.addEventListener('abort', onAbort, { once: true });
+  }
+
   try {
     for (;;) {
       if (signal?.aborted === true) {
+        // The signal was already fired (or fired between reads, with no pending read to wake).
         void cancelReaderSafely(reader);
         return BODY_READ_ERROR;
       }
 
       const pendingRead = reader.read();
-      let readOutcome: { readonly done: boolean; readonly value: Uint8Array | undefined };
       if (signal !== undefined) {
-        const aborted = await Promise.race([
-          pendingRead.then(() => false),
-          new Promise<boolean>((resolve) => {
-            signal.addEventListener('abort', () => resolve(true), { once: true });
-          }),
-        ]);
+        const aborted = await new Promise<boolean>((resolve) => {
+          wakeCurrentRead = () => resolve(true);
+          pendingRead.then(
+            () => resolve(false),
+            () => resolve(false),
+          );
+        });
+        wakeCurrentRead = null;
         if (aborted) {
+          // The signal fired while this read() was still outstanding. A non-cooperative stream
+          // may never settle it on its own: start best-effort cancellation now (not awaited) and
+          // attach a handler to the original pending read so that, whenever it does eventually
+          // settle (resolve or reject, however late), the lock release is retried rather than the
+          // reader being left dangling. Attaching both handlers here also guarantees the pending
+          // read's rejection is observed, so it never becomes an unhandled rejection.
           void cancelReaderSafely(reader);
+          pendingRead.then(
+            () => releaseReaderLockSafely(reader),
+            () => releaseReaderLockSafely(reader),
+          );
           return BODY_READ_ERROR;
         }
-        readOutcome = await pendingRead;
-      } else {
-        readOutcome = await pendingRead;
       }
 
-      if (readOutcome.done) {
+      const { done, value } = await pendingRead;
+      if (done) {
         break;
       }
-      if (readOutcome.value === undefined) {
+      if (value === undefined) {
         continue;
       }
-      total += readOutcome.value.byteLength;
+      total += value.byteLength;
       if (total > maxBytes) {
         void cancelReaderSafely(reader);
         return RESPONSE_TOO_LARGE;
       }
-      text += decoder.decode(readOutcome.value, { stream: true });
+      text += decoder.decode(value, { stream: true });
     }
     text += decoder.decode();
     return { ok: true, text };
@@ -166,5 +217,8 @@ export async function readAirKoreaResponseTextWithLimit(
     return BODY_READ_ERROR;
   } finally {
     releaseReaderLockSafely(reader);
+    if (signal !== undefined) {
+      signal.removeEventListener('abort', onAbort);
+    }
   }
 }

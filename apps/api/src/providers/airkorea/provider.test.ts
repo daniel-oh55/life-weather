@@ -35,6 +35,22 @@ function item(overrides: Record<string, unknown> = {}): Record<string, unknown> 
   };
 }
 
+/** Return a shallow clone of `obj` with `key` deleted — works around TS's optional-only `delete`. */
+function omitKey(obj: Record<string, unknown>, key: string): Record<string, unknown> {
+  const clone: Record<string, unknown> = { ...obj };
+  delete clone[key];
+  return clone;
+}
+
+const REQUIRED_CONSUMED_FIELDS = [
+  'pm10Value',
+  'o3Value',
+  'khaiValue',
+  'khaiGrade',
+  'pm10Grade',
+  'o3Grade',
+] as const;
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -313,6 +329,39 @@ describe('AirKorea provider — response classification', () => {
 
     const outcome = await result.provider.fetchCurrentAirQuality({ stationName: '종로구' });
     expect(outcome).toEqual({ ok: false, error: { kind: 'RESPONSE_TOO_LARGE' } });
+  });
+});
+
+describe('AirKorea provider — required response field enforcement', () => {
+  it.each(REQUIRED_CONSUMED_FIELDS)(
+    'classifies a response missing %s as AIRKOREA_INVALID_RESPONSE (never a successful observation)',
+    async (field) => {
+      const fetchImpl = vi.fn(
+        async () => new Response(successBody([omitKey(item(), field)]), { status: 200 }),
+      );
+      const result = createAirKoreaCurrentAirQualityProvider({ serviceKey: FAKE_KEY, fetchImpl });
+      if (!result.ok) throw new Error('unexpected config error');
+
+      const outcome = await result.provider.fetchCurrentAirQuality({ stationName: '종로구' });
+      expect(outcome.ok).toBe(false);
+      if (!outcome.ok) {
+        expect(outcome.error.kind).toBe('AIRKOREA_INVALID_RESPONSE');
+      }
+    },
+  );
+
+  it('returns a successful observation when pm25Value and pm25Grade are both absent', async () => {
+    const raw = omitKey(omitKey(item(), 'pm25Value'), 'pm25Grade');
+    const fetchImpl = vi.fn(async () => new Response(successBody([raw]), { status: 200 }));
+    const result = createAirKoreaCurrentAirQualityProvider({ serviceKey: FAKE_KEY, fetchImpl });
+    if (!result.ok) throw new Error('unexpected config error');
+
+    const outcome = await result.provider.fetchCurrentAirQuality({ stationName: '종로구' });
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.observation.pm25Value).toBeUndefined();
+      expect(outcome.observation.pm25Grade).toBeUndefined();
+    }
   });
 });
 

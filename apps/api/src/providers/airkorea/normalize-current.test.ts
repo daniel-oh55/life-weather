@@ -186,6 +186,72 @@ describe('normalizeAirKoreaCurrentAirQuality — grades', () => {
   );
 });
 
+/** Return a shallow clone of `obj` with `key` deleted — works around TS's optional-only `delete`. */
+function omitKey<T extends object>(obj: T, key: string): T {
+  const clone: Record<string, unknown> = { ...(obj as Record<string, unknown>) };
+  delete clone[key];
+  return clone as T;
+}
+
+const REQUIRED_FIELD_TO_ISSUE = {
+  pm10Value: 'pm10',
+  o3Value: 'ozone',
+  khaiValue: 'comprehensiveAirQualityIndex',
+  khaiGrade: 'overallGrade',
+  pm10Grade: 'pm10Grade',
+  o3Grade: 'ozoneGrade',
+} as const;
+
+describe('normalizeAirKoreaCurrentAirQuality — required-field runtime bypass (non-vacuity)', () => {
+  it.each(Object.entries(REQUIRED_FIELD_TO_ISSUE))(
+    'fails with a %s issue when a caller bypasses the type system and omits the raw key',
+    (rawField, expectedIssueField) => {
+      // Simulate a caller bypassing TypeScript: the exported normalizer must not trust that its
+      // input actually has every required key just because the type says so.
+      const bypassed = omitKey(BASE, rawField) as AirKoreaCurrentAirQualityProviderSuccess;
+      const result = normalizeAirKoreaCurrentAirQuality(bypassed);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.issues).toEqual([{ field: expectedIssueField, reason: 'INVALID' }]);
+      }
+    },
+  );
+
+  it('never turns a missing required field into a successful null contract value', () => {
+    const bypassed = omitKey(BASE, 'khaiGrade') as AirKoreaCurrentAirQualityProviderSuccess;
+    const result = normalizeAirKoreaCurrentAirQuality(bypassed);
+    expect(result.ok).toBe(false);
+  });
+
+  it('does not expose the raw offending value in the issue', () => {
+    const bypassed = omitKey(BASE, 'pm10Value') as AirKoreaCurrentAirQualityProviderSuccess;
+    const result = normalizeAirKoreaCurrentAirQuality(bypassed);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(JSON.stringify(result.issues)).not.toContain('undefined');
+      expect(result.issues[0]).toEqual({ field: 'pm10', reason: 'INVALID' });
+    }
+  });
+});
+
+describe('normalizeAirKoreaCurrentAirQuality — required field present as sentinel', () => {
+  it('normalizes a required measurement field holding its sentinel to null, not an issue', () => {
+    const result = normalizeAirKoreaCurrentAirQuality({ ...BASE, khaiValue: '-' });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.current.comprehensiveAirQualityIndex).toBeNull();
+    }
+  });
+
+  it('normalizes a required grade field holding its sentinel to null, not an issue', () => {
+    const result = normalizeAirKoreaCurrentAirQuality({ ...BASE, pm10Grade: '' });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.current.pm10Grade).toBeNull();
+    }
+  });
+});
+
 describe('normalizeAirKoreaCurrentAirQuality — determinism, purity, secrecy', () => {
   it('does not mutate the input observation', () => {
     const observation = Object.freeze({ ...BASE });

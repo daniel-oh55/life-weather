@@ -9,18 +9,34 @@
  * 2. resolve each nullable measurement (PM10/PM2.5/O3/CAI) and grade (overall/PM10/PM2.5/O3),
  * 3. validate the assembled candidate against the contracts `currentAirQuality` schema.
  *
- * Field-presence model (official evidence: `docs/airkorea-current-air-quality-provider.md`):
+ * Field-presence model (official evidence: `docs/airkorea-current-air-quality-provider.md`). Presence
+ * and value are different concepts, and the two consumed field groups are handled differently:
  *
- * - **ABSENT** (the raw key is missing — documented for `pm25Value`/`pm25Grade` at any `ver`) → the
- *   contract field is `null`. Not a normalization issue.
+ * Required fields (`pm10Value`, `o3Value`, `khaiValue`, `khaiGrade`, `pm10Grade`, `o3Grade` — the raw
+ * schema's own required keys):
+ *
+ * - **ABSENT** (the raw key is missing) → a malformed-response **issue** for that field. The raw
+ *   schema already rejects this before a provider success reaches this module; this is a defensive
+ *   re-check so a caller that bypasses the type system at runtime cannot silently turn a missing
+ *   required field into a `null` contract value.
  * - **SENTINEL** (present but equal to the documented "no data" marker — `"-"` for a measurement,
  *   confirmed by the technical document's `<khaiValue>-</khaiValue>` sample; `""` for a grade,
  *   confirmed by its self-closing `<so2Grade/>` sample) → the contract field is `null`. Not a
+ *   normalization issue — the key is present, only its value encodes "no data".
+ * - **VALUE** (present, non-sentinel) → parsed. A value that does not match the documented shape is
+ *   an explicit normalization issue (see below).
+ *
+ * Optional fields (`pm25Value`, `pm25Grade` — the raw schema's own optional keys):
+ *
+ * - **ABSENT** (documented optional at any `ver`) → the contract field is `null`. Not a
  *   normalization issue.
- * - **VALUE** (present, non-sentinel) → parsed. A value that does not match the documented shape
- *   (a bare non-negative decimal for a measurement; the literal digits `"1"`-`"4"` for a grade) is
- *   an explicit normalization **issue** — it is never silently coerced to `null` or to zero, per
- *   the project's "malformed data must not become a documented missing value" policy.
+ * - **SENTINEL** → the contract field is `null`. Not a normalization issue.
+ * - **VALUE** (present, non-sentinel) → parsed, same as a required field.
+ *
+ * For both groups, a present value that does not match the documented shape (a bare non-negative
+ * decimal for a measurement; the literal digits `"1"`-`"4"` for a grade) is an explicit
+ * normalization **issue** — it is never silently coerced to `null` or to zero, per the project's
+ * "malformed data must not become a documented missing value" policy.
  *
  * `measuredAt` is required: a malformed `dataTime` blocks normalization entirely (the raw schema
  * already guarantees a well-formed `dataTime`; this is a defensive re-check, matching the KMA
@@ -131,8 +147,35 @@ function parseAirKoreaGrade(raw: string): { readonly ok: true; readonly grade: A
   return { ok: true, grade };
 }
 
-/** Resolve an optional measurement field: `undefined` (ABSENT) is treated exactly like the sentinel. */
-function resolveMeasurement(
+/**
+ * Resolve a *required* measurement field (`pm10Value`/`o3Value`/`khaiValue`). `undefined` (ABSENT) is
+ * a malformed-response issue — never silently treated as the sentinel — so a caller that bypasses the
+ * type system at runtime and hands this function a raw object missing the key cannot silently turn
+ * that absence into a `null` contract value. A *present* sentinel or valid value is unaffected by
+ * this check.
+ */
+function resolveRequiredMeasurement(
+  field: AirKoreaCurrentNormalizationIssue['field'],
+  raw: string | undefined,
+  issues: AirKoreaCurrentNormalizationIssue[],
+): number | null {
+  if (raw === undefined) {
+    issues.push({ field, reason: 'INVALID' });
+    return null;
+  }
+  const parsed = parseAirKoreaMeasurement(raw);
+  if (!parsed.ok) {
+    issues.push({ field, reason: 'INVALID' });
+    return null;
+  }
+  return parsed.value;
+}
+
+/**
+ * Resolve the *optional* PM2.5 measurement field (`pm25Value`). `undefined` (ABSENT) is a documented
+ * optional-field outcome and is treated exactly like the sentinel — never an issue.
+ */
+function resolveOptionalMeasurement(
   field: AirKoreaCurrentNormalizationIssue['field'],
   raw: string | undefined,
   issues: AirKoreaCurrentNormalizationIssue[],
@@ -148,8 +191,33 @@ function resolveMeasurement(
   return parsed.value;
 }
 
-/** Resolve an optional grade field: `undefined` (ABSENT) is treated exactly like the sentinel. */
-function resolveGrade(
+/**
+ * Resolve a *required* grade field (`khaiGrade`/`pm10Grade`/`o3Grade`). `undefined` (ABSENT) is a
+ * malformed-response issue — see {@link resolveRequiredMeasurement} for the same runtime-bypass
+ * rationale.
+ */
+function resolveRequiredGrade(
+  field: AirKoreaCurrentNormalizationIssue['field'],
+  raw: string | undefined,
+  issues: AirKoreaCurrentNormalizationIssue[],
+): AirQualityGrade | null {
+  if (raw === undefined) {
+    issues.push({ field, reason: 'INVALID' });
+    return null;
+  }
+  const parsed = parseAirKoreaGrade(raw);
+  if (!parsed.ok) {
+    issues.push({ field, reason: 'INVALID' });
+    return null;
+  }
+  return parsed.grade;
+}
+
+/**
+ * Resolve the *optional* PM2.5 grade field (`pm25Grade`). `undefined` (ABSENT) is a documented
+ * optional-field outcome and is treated exactly like the sentinel — never an issue.
+ */
+function resolveOptionalGrade(
   field: AirKoreaCurrentNormalizationIssue['field'],
   raw: string | undefined,
   issues: AirKoreaCurrentNormalizationIssue[],
@@ -201,11 +269,12 @@ function compareIssues(
  * Normalize an AirKorea current-air-quality provider success into a contracts `CurrentAirQuality`.
  *
  * `measuredAt` is required — a malformed `dataTime` fails normalization immediately (no other field
- * is evaluated). Every other field is independently resolved (ABSENT/SENTINEL → `null`; malformed
- * → an issue) and every issue across every field is collected before the result is decided, so a
- * caller sees every problem in one deterministic `(field, reason, path, message)`-ordered pass. The
- * candidate is validated against the shared `currentAirQuality` schema before being returned. The
- * input `observation` is never mutated.
+ * is evaluated). Every other field is independently resolved per the required/optional split
+ * described above (required: ABSENT → issue, SENTINEL → `null`, malformed → issue; optional:
+ * ABSENT/SENTINEL → `null`, malformed → issue), and every issue across every field is collected
+ * before the result is decided, so a caller sees every problem in one deterministic `(field, reason,
+ * path, message)`-ordered pass. The candidate is validated against the shared `currentAirQuality`
+ * schema before being returned. The input `observation` is never mutated.
  */
 export function normalizeAirKoreaCurrentAirQuality(
   observation: AirKoreaCurrentAirQualityProviderSuccess,
@@ -217,18 +286,18 @@ export function normalizeAirKoreaCurrentAirQuality(
 
   const issues: AirKoreaCurrentNormalizationIssue[] = [];
 
-  const pm10MicrogramsPerCubicMeter = resolveMeasurement('pm10', observation.pm10Value, issues);
-  const pm25MicrogramsPerCubicMeter = resolveMeasurement('pm25', observation.pm25Value, issues);
-  const ozonePartsPerMillion = resolveMeasurement('ozone', observation.o3Value, issues);
-  const comprehensiveAirQualityIndex = resolveMeasurement(
+  const pm10MicrogramsPerCubicMeter = resolveRequiredMeasurement('pm10', observation.pm10Value, issues);
+  const pm25MicrogramsPerCubicMeter = resolveOptionalMeasurement('pm25', observation.pm25Value, issues);
+  const ozonePartsPerMillion = resolveRequiredMeasurement('ozone', observation.o3Value, issues);
+  const comprehensiveAirQualityIndex = resolveRequiredMeasurement(
     'comprehensiveAirQualityIndex',
     observation.khaiValue,
     issues,
   );
-  const overallGrade = resolveGrade('overallGrade', observation.khaiGrade, issues);
-  const pm10Grade = resolveGrade('pm10Grade', observation.pm10Grade, issues);
-  const pm25Grade = resolveGrade('pm25Grade', observation.pm25Grade, issues);
-  const ozoneGrade = resolveGrade('ozoneGrade', observation.o3Grade, issues);
+  const overallGrade = resolveRequiredGrade('overallGrade', observation.khaiGrade, issues);
+  const pm10Grade = resolveRequiredGrade('pm10Grade', observation.pm10Grade, issues);
+  const pm25Grade = resolveOptionalGrade('pm25Grade', observation.pm25Grade, issues);
+  const ozoneGrade = resolveRequiredGrade('ozoneGrade', observation.o3Grade, issues);
 
   if (issues.length > 0) {
     return { ok: false, issues: [...issues].sort(compareIssues) };

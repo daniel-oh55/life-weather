@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { readAirKoreaResponseTextWithLimit } from './read-response.js';
+
+const encoder = new TextEncoder();
 
 function responseFromChunks(
   chunks: readonly Uint8Array[],
@@ -19,6 +21,124 @@ function responseFromChunks(
 
 function utf8(text: string): Uint8Array {
   return new TextEncoder().encode(text);
+}
+
+/**
+ * A response whose body is an *open* (never-closing) stream that yields `chunk` on every pull, so
+ * that a reader cancellation genuinely invokes the underlying `cancel()` (a pre-closed stream would
+ * already be drained, making `cancel()` a no-op).
+ */
+function openStreamResponse(
+  chunk: Uint8Array,
+): { response: Response; wasCancelled: () => boolean; pullCount: () => number } {
+  let cancelled = false;
+  let pulls = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulls += 1;
+      controller.enqueue(chunk);
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  return { response: new Response(stream), wasCancelled: () => cancelled, pullCount: () => pulls };
+}
+
+/** A response whose body stream never enqueues/closes on its own. */
+function neverEnqueuingResponse(): { response: Response; cancelCalls: () => number } {
+  let cancelCalls = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull() {
+      // Intentionally never enqueue/close/error.
+    },
+    cancel() {
+      cancelCalls += 1;
+    },
+  });
+  return { response: new Response(stream), cancelCalls: () => cancelCalls };
+}
+
+/** A small delay, letting pending microtasks/timers settle before an assertion. */
+function tick(ms = 0): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** A minimal deferred promise for controlling exact settlement timing in a test. */
+function deferred<T = void>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason: unknown) => void;
+} {
+  let resolveFn!: (value: T) => void;
+  let rejectFn!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolve, reject) => {
+    resolveFn = resolve;
+    rejectFn = reject;
+  });
+  return { promise, resolve: resolveFn, reject: rejectFn };
+}
+
+/**
+ * Run `run`, then give any late microtask/timer-driven settlement a moment to surface before
+ * asserting it never became a process-level `unhandledRejection`.
+ */
+async function assertNoUnhandledRejection(run: () => Promise<void>): Promise<void> {
+  const captured: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown): void => {
+    captured.push(reason);
+  };
+  process.on('unhandledRejection', onUnhandledRejection);
+  try {
+    await run();
+    await tick(20);
+  } finally {
+    process.off('unhandledRejection', onUnhandledRejection);
+  }
+  expect(captured).toEqual([]);
+}
+
+/**
+ * A fake `Response` backed by a hand-rolled reader (not a real `ReadableStream`) whose `read()`,
+ * `cancel()`, and `releaseLock()` are each independently controllable. A real spec-compliant stream
+ * settles a pending `read()` as soon as `cancel()` is invoked, which makes it impossible to observe a
+ * `read()` that is *still* pending some time after `cancel()` was called using a real stream. This
+ * fake exists solely to exercise that genuinely non-cooperative scenario, so the late-settlement
+ * retry-release path can be verified directly.
+ */
+function controllableReaderResponse(): {
+  response: Response;
+  resolveRead: (result: ReadableStreamReadResult<Uint8Array>) => void;
+  rejectRead: (reason: unknown) => void;
+  cancelCalls: () => number;
+  releaseLockCalls: () => number;
+} {
+  const read = deferred<ReadableStreamReadResult<Uint8Array>>();
+  let cancelCalls = 0;
+  let releaseLockCalls = 0;
+  const reader = {
+    read: () => read.promise,
+    cancel: () => {
+      cancelCalls += 1;
+      return Promise.resolve();
+    },
+    releaseLock: () => {
+      releaseLockCalls += 1;
+    },
+  };
+  const response = {
+    headers: new Headers(),
+    body: {
+      getReader: () => reader,
+    },
+  } as unknown as Response;
+  return {
+    response,
+    resolveRead: read.resolve,
+    rejectRead: read.reject,
+    cancelCalls: () => cancelCalls,
+    releaseLockCalls: () => releaseLockCalls,
+  };
 }
 
 describe('readAirKoreaResponseTextWithLimit — happy path', () => {
@@ -146,5 +266,188 @@ describe('readAirKoreaResponseTextWithLimit — abort signal', () => {
       signal: controller.signal,
     });
     expect(result).toEqual({ ok: true, text: 'ok' });
+  });
+
+  it('handles an already-aborted signal deterministically without ever reading a chunk', async () => {
+    const { response, wasCancelled, pullCount } = openStreamResponse(encoder.encode('x'));
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await readAirKoreaResponseTextWithLimit(response, 1024, {
+      signal: controller.signal,
+    });
+
+    expect(result).toEqual({ ok: false, error: { kind: 'BODY_READ_ERROR' } });
+    expect(wasCancelled()).toBe(true);
+    expect(pullCount()).toBe(0);
+  });
+});
+
+describe('readAirKoreaResponseTextWithLimit — abort listener lifecycle (P2-2)', () => {
+  it('subscribes to the signal exactly once across multiple non-empty chunks (not one per chunk)', async () => {
+    const response = responseFromChunks([utf8('aaaa'), utf8('bbbb'), utf8('cccc')]);
+    const controller = new AbortController();
+    const addSpy = vi.spyOn(controller.signal, 'addEventListener');
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+
+    const result = await readAirKoreaResponseTextWithLimit(response, 1024, {
+      signal: controller.signal,
+    });
+
+    expect(result).toEqual({ ok: true, text: 'aaaabbbbcccc' });
+    expect(addSpy).toHaveBeenCalledTimes(1);
+    expect(removeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('subscribes exactly once regardless of how many small chunks are read', async () => {
+    const chunks = Array.from({ length: 50 }, () => utf8('x'));
+    const response = responseFromChunks(chunks);
+    const controller = new AbortController();
+    const addSpy = vi.spyOn(controller.signal, 'addEventListener');
+
+    const result = await readAirKoreaResponseTextWithLimit(response, 1024, {
+      signal: controller.signal,
+    });
+
+    expect(result).toEqual({ ok: true, text: 'x'.repeat(50) });
+    expect(addSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes the listener after success', async () => {
+    const response = responseFromChunks([utf8('abc')]);
+    const controller = new AbortController();
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+
+    await readAirKoreaResponseTextWithLimit(response, 1024, { signal: controller.signal });
+
+    expect(removeSpy).toHaveBeenCalledTimes(1);
+    expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
+  });
+
+  it('removes the listener after a streaming overflow (RESPONSE_TOO_LARGE preserved)', async () => {
+    const { response } = openStreamResponse(utf8('12345'));
+    const controller = new AbortController();
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+
+    const result = await readAirKoreaResponseTextWithLimit(response, 7, {
+      signal: controller.signal,
+    });
+
+    expect(result).toEqual({ ok: false, error: { kind: 'RESPONSE_TOO_LARGE' } });
+    expect(removeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes the listener after a read error', async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new Error('boom'));
+      },
+    });
+    const response = new Response(stream);
+    const controller = new AbortController();
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+
+    const result = await readAirKoreaResponseTextWithLimit(response, 1024, {
+      signal: controller.signal,
+    });
+
+    expect(result).toEqual({ ok: false, error: { kind: 'BODY_READ_ERROR' } });
+    expect(removeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns promptly and removes the listener when a caller/timeout signal fires mid-read', async () => {
+    const { response, cancelCalls } = neverEnqueuingResponse();
+    const controller = new AbortController();
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+
+    const resultPromise = readAirKoreaResponseTextWithLimit(response, 1024, {
+      signal: controller.signal,
+    });
+    controller.abort();
+    const result = await resultPromise;
+
+    expect(result).toEqual({ ok: false, error: { kind: 'BODY_READ_ERROR' } });
+    expect(cancelCalls()).toBe(1);
+    expect(removeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not touch AbortSignal listener APIs when called without a signal (unchanged behavior)', async () => {
+    const response = responseFromChunks([utf8('abc')]);
+    const result = await readAirKoreaResponseTextWithLimit(response, 1024);
+    expect(result).toEqual({ ok: true, text: 'abc' });
+  });
+});
+
+describe('readAirKoreaResponseTextWithLimit — non-cooperative pending read (fake reader)', () => {
+  it('starts cancellation and returns without waiting for the pending read to settle', async () => {
+    const fake = controllableReaderResponse();
+    const controller = new AbortController();
+
+    const resultPromise = readAirKoreaResponseTextWithLimit(fake.response, 1024, {
+      signal: controller.signal,
+    });
+    controller.abort();
+    const result = await resultPromise;
+
+    expect(result).toEqual({ ok: false, error: { kind: 'BODY_READ_ERROR' } });
+    expect(fake.cancelCalls()).toBe(1);
+    // The immediate attempt in `finally` already ran once, even though read() is still pending.
+    expect(fake.releaseLockCalls()).toBe(1);
+
+    // Cleanup: settle the intentionally-pending read so nothing dangles past this test.
+    fake.resolveRead({ done: true, value: undefined });
+  });
+
+  it('retries the lock release once the pending read resolves late', async () => {
+    const fake = controllableReaderResponse();
+    const controller = new AbortController();
+
+    const resultPromise = readAirKoreaResponseTextWithLimit(fake.response, 1024, {
+      signal: controller.signal,
+    });
+    controller.abort();
+    await resultPromise;
+    expect(fake.releaseLockCalls()).toBe(1);
+
+    fake.resolveRead({ done: true, value: undefined });
+    await tick(20);
+    expect(fake.releaseLockCalls()).toBe(2);
+  });
+
+  it('retries the lock release once the pending read rejects late, without an unhandled rejection', async () => {
+    const marker = 'SECRET_LATE_PENDING_READ_REJECTION_MARKER';
+    const fake = controllableReaderResponse();
+    const controller = new AbortController();
+
+    const resultPromise = readAirKoreaResponseTextWithLimit(fake.response, 1024, {
+      signal: controller.signal,
+    });
+    controller.abort();
+    const result = await resultPromise;
+    expect(JSON.stringify(result)).not.toContain(marker);
+
+    await assertNoUnhandledRejection(async () => {
+      fake.rejectRead(new Error(marker));
+      await tick(20);
+    });
+    expect(fake.releaseLockCalls()).toBe(2);
+  });
+
+  it('subscribes to the signal exactly once even when the pending read never settles', async () => {
+    const fake = controllableReaderResponse();
+    const controller = new AbortController();
+    const addSpy = vi.spyOn(controller.signal, 'addEventListener');
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+
+    const resultPromise = readAirKoreaResponseTextWithLimit(fake.response, 1024, {
+      signal: controller.signal,
+    });
+    controller.abort();
+    await resultPromise;
+
+    expect(addSpy).toHaveBeenCalledTimes(1);
+    expect(removeSpy).toHaveBeenCalledTimes(1);
+
+    fake.resolveRead({ done: true, value: undefined });
   });
 });
