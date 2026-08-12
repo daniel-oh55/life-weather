@@ -707,5 +707,30 @@
   구현하지 않으므로, `AIR_QUALITY_CURRENT`는 production 응답에서 여전히 missing입니다. 실제 인증
   API 호출은 수행하지 않았습니다. 자세한 내용은
   [airkorea-nearby-station-provider.md](./airkorea-nearby-station-provider.md) 참고.
+- **PR #84**는 PR #83 앞단에서, 행정구역명(읍면동, `umdName`)을 TM(중부원점) 좌표 candidate 목록으로
+  바꾸는 세 번째 AirKorea provider boundary — **TM 기준좌표 조회**(`getTMStdrCrdnt`)의 request
+  검증·URL 생성, raw JSON runtime schema, 성공/upstream error/invalid response 분류, TM 좌표
+  파싱, validated candidate 목록 반환 — 를 추가했습니다(`apps/api/src/providers/airkorea`). PR
+  #82의 module-private HTTP transport(`performAirKoreaGetRequest`, `provider.ts`)를 그대로
+  재사용하며 새 timeout/AbortController/body reader를 만들지 않았고, PR #82/#83의 provider/테스트
+  런타임 동작은 전혀 변경되지 않았습니다(회귀 없이 그대로 통과). 공식 근거는 공공데이터포털
+  dataset `15073877`(한국환경공단_에어코리아_측정소정보, 메타데이터 수정일 2026-06-30)의 참고문서
+  `한국환경공단_에어코리아_측정소정보_기술문서_v1.2.docx`이며 — PR #83이 근거로 삼은 것과 동일한
+  파일임을 ZIP·DOCX 양쪽의 SHA-256을 재다운로드해 byte-identical하게 재확인했습니다. 이 operation의
+  요청 표에는 `ver` 파라미터가 아예 존재하지 않으므로(PR #83처럼 "보내지 않기로 결정"한 것이
+  아니라 애초에 옵션 자체가 없음) 전송하지 않고, `numOfRows`/`pageNo`는 이 operation에서는 문서상
+  옵션이지만 동명이동(같은 `umdName`이 여러 시군구에 존재할 수 있음) 대비 고정값
+  (`numOfRows=100`, `pageNo=1`)을 항상 전송하는 project-owned 정책을 채택했습니다. 성공 결과는
+  `sidoName`/`sggName`/`umdName`/`tmX`/`tmY` 5개 필드(모두 문서상 필수) candidate 배열이며, 문서가
+  정렬 순서를 보장하지 않고 하나의 `umdName`이 여러 행을 합법적으로 식별할 수 있으므로(동명이동)
+  이 provider는 candidate 하나를 선택하지 않고 upstream 순서 그대로 반환합니다 — 행정구역
+  disambiguation은 이 PR 범위가 아닙니다. malformed `tmX`/`tmY` 텍스트는 정상 좌표로 승격하지
+  않고(특히 `0`으로 조작하지 않고) `MALFORMED_COORDINATE`로 페이지 전체를 실패시키며, PR #83과
+  동일한 원리로 `totalCount > items.length`인 응답은 `INCOMPLETE_RESULT`로 fail-closed됩니다. 이
+  PR은 WGS84 위경도 ↔ TM 좌표 변환, 행정구역 disambiguation, 최종 TM 좌표 선택,
+  `getNearbyMsrstnList`(PR #83)와의 orchestration, application service/composition, `POST
+  /weather` 연결을 구현하지 않으므로, `AIR_QUALITY_CURRENT`는 production 응답에서 여전히
+  missing입니다. 실제 인증 API 호출은 수행하지 않았습니다. 자세한 내용은
+  [airkorea-tm-coordinate-provider.md](./airkorea-tm-coordinate-provider.md) 참고.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.

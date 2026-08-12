@@ -7,7 +7,7 @@
  * `parse-nearby-station-response.ts`), request/response correlation, and the "latest measurement"
  * selection (`docs/airkorea-current-air-quality-provider.md`, §14).
  *
- * This file exports **two** providers that share the module-private
+ * This file exports **three** providers that share the module-private
  * {@link performAirKoreaGetRequest} transport but are otherwise independent request/response
  * pipelines:
  *
@@ -17,6 +17,11 @@
  *   (`getNearbyMsrstnList`), see `docs/airkorea-nearby-station-provider.md`. This provider does not
  *   resolve a single "closest" station — it returns validated candidates only; station selection,
  *   WGS84→TM conversion, and `POST /weather` wiring are explicitly out of scope (see that doc).
+ * - `createAirKoreaTmCoordinateProvider(FromEnv)` — administrative-name → TM 기준좌표 조회
+ *   (`getTMStdrCrdnt`), see `docs/airkorea-tm-coordinate-provider.md`. This provider does not
+ *   disambiguate a `umdName` against app administrative-area context or select a single TM point —
+ *   it returns validated candidates only; that resolution, WGS84→TM conversion, and `POST /weather`
+ *   wiring are explicitly out of scope (see that doc).
  *
  * This is an **independent** provider — it does not import any private helper from
  * `../kma/provider.ts`, per the project's provider-namespace isolation policy. It provides the same
@@ -62,6 +67,18 @@ import {
   type AirKoreaNearbyStationPage,
   type AirKoreaNearbyStationResponseIssue,
 } from './parse-nearby-station-response.js';
+import {
+  buildAirKoreaTmCoordinateRequestUrl,
+  validateAirKoreaTmCoordinateRequest,
+  type AirKoreaTmCoordinateRequest,
+  type AirKoreaTmCoordinateRequestIssue,
+} from './tm-coordinate-request.js';
+import { parseAirKoreaTmCoordinateValue } from './tm-coordinate-raw-schema.js';
+import {
+  parseAirKoreaTmCoordinateResponse,
+  type AirKoreaTmCoordinatePage,
+  type AirKoreaTmCoordinateResponseIssue,
+} from './parse-tm-coordinate-response.js';
 import { readAirKoreaResponseTextWithLimit } from './read-response.js';
 
 // ---------------------------------------------------------------------------
@@ -706,6 +723,216 @@ export function createAirKoreaNearbyStationProviderFromEnv(
 ): CreateAirKoreaNearbyStationProviderResult {
   const source = env ?? process.env;
   return createAirKoreaNearbyStationProvider({
+    serviceKey: source.AIRKOREA_SERVICE_KEY as string,
+    fetchImpl: dependencies?.fetchImpl,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// TM-coordinate provider
+// ---------------------------------------------------------------------------
+
+/**
+ * A single validated TM-coordinate candidate: the officially documented `sidoName`/`sggName`/
+ * `umdName` and the validated `tmX`/`tmY` coordinate for one row matching the requested `umdName`.
+ * This is **not** a final resolution result — a `umdName` may officially identify more than one row
+ * (동명이동 — the same administrative name recurring across different 시군구); nothing in this
+ * provider disambiguates against app administrative-area context or selects a single TM point. That
+ * is a later resolver's responsibility, out of scope for this provider.
+ */
+export interface AirKoreaTmCoordinateCandidate {
+  readonly sidoName: string;
+  readonly sggName: string;
+  readonly umdName: string;
+  readonly tmX: number;
+  readonly tmY: number;
+}
+
+/**
+ * Every way a TM-coordinate fetch can fail, as a discriminated union. Each variant carries only the
+ * minimum needed to act on it — never a raw upstream string, URL, body, or exception.
+ */
+export type AirKoreaTmCoordinateProviderError =
+  | { readonly kind: 'INVALID_REQUEST'; readonly issues: readonly AirKoreaTmCoordinateRequestIssue[] }
+  | AirKoreaTransportError
+  | { readonly kind: 'EMPTY_RESPONSE' }
+  | { readonly kind: 'NON_JSON_RESPONSE' }
+  | { readonly kind: 'INVALID_JSON' }
+  | { readonly kind: 'AIRKOREA_UPSTREAM_ERROR'; readonly resultCode: string }
+  | {
+      readonly kind: 'AIRKOREA_INVALID_RESPONSE';
+      readonly issues: readonly AirKoreaTmCoordinateResponseIssue[];
+    }
+  | { readonly kind: 'MALFORMED_COORDINATE' }
+  | { readonly kind: 'INCOMPLETE_RESULT'; readonly totalCount: number; readonly receivedCount: number }
+  | { readonly kind: 'NO_DATA' };
+
+export type AirKoreaTmCoordinateProviderResult =
+  | { readonly ok: true; readonly candidates: readonly AirKoreaTmCoordinateCandidate[] }
+  | { readonly ok: false; readonly error: AirKoreaTmCoordinateProviderError };
+
+/** The provider's single public method. */
+export interface AirKoreaTmCoordinateProvider {
+  fetchTmCoordinates(
+    request: AirKoreaTmCoordinateRequest,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<AirKoreaTmCoordinateProviderResult>;
+}
+
+export type CreateAirKoreaTmCoordinateProviderResult =
+  | { readonly ok: true; readonly provider: AirKoreaTmCoordinateProvider }
+  | { readonly ok: false; readonly error: AirKoreaProviderConfigError };
+
+function failTmCoordinate(
+  error: AirKoreaTmCoordinateProviderError,
+): AirKoreaTmCoordinateProviderResult {
+  return { ok: false, error };
+}
+
+/**
+ * Turn a validated success page into a provider result. Decision order:
+ *
+ * 1. `totalCount > items.length` → `INCOMPLETE_RESULT`. This provider always sends a fixed
+ *    `numOfRows`/`pageNo` (`tm-coordinate-request.ts`) rather than exposing pagination to the
+ *    caller, and this operation documents no ordering guarantee, so a caller cannot request the
+ *    remaining candidates and a later resolver cannot assume the right row is among the ones already
+ *    returned — an incomplete candidate set is a fail-closed error, not a partial success. Checked
+ *    *before* the empty-page check so a positive `totalCount` with zero returned items is reported
+ *    as incomplete, not as a true no-data outcome.
+ * 2. An empty item list (`totalCount === 0`) → explicit `NO_DATA` — never fabricates a value.
+ * 3. Otherwise convert every item's raw `tmX`/`tmY` coordinate text into a finite number
+ *    (`parseAirKoreaTmCoordinateValue`, `tm-coordinate-raw-schema.ts`). A single malformed
+ *    coordinate fails the *whole* page (`MALFORMED_COORDINATE`) rather than silently dropping that
+ *    one candidate or promoting the malformed text to a fabricated coordinate.
+ *
+ * Pure and deterministic; the candidate order is the upstream item order — this function does not
+ * sort, dedupe, or select a single candidate (see `docs/airkorea-tm-coordinate-provider.md`).
+ */
+function interpretTmCoordinatePage(page: AirKoreaTmCoordinatePage): AirKoreaTmCoordinateProviderResult {
+  if (page.totalCount > page.items.length) {
+    return failTmCoordinate({
+      kind: 'INCOMPLETE_RESULT',
+      totalCount: page.totalCount,
+      receivedCount: page.items.length,
+    });
+  }
+
+  if (page.items.length === 0) {
+    return failTmCoordinate({ kind: 'NO_DATA' });
+  }
+
+  const candidates: AirKoreaTmCoordinateCandidate[] = [];
+  for (const item of page.items) {
+    const tmX = parseAirKoreaTmCoordinateValue(item.tmX);
+    const tmY = parseAirKoreaTmCoordinateValue(item.tmY);
+    if (tmX === null || tmY === null) {
+      return failTmCoordinate({ kind: 'MALFORMED_COORDINATE' });
+    }
+    candidates.push({ sidoName: item.sidoName, sggName: item.sggName, umdName: item.umdName, tmX, tmY });
+  }
+
+  return { ok: true, candidates };
+}
+
+/**
+ * Classify a 2xx response body (already read to text). Decision order: empty → non-JSON (starts
+ * with `<`, e.g. an XML/HTML gateway page) → JSON parse → response parser → page interpretation.
+ * Pure and deterministic; the raw body never leaves this function.
+ */
+function classifyTmCoordinateBody(text: string): AirKoreaTmCoordinateProviderResult {
+  const trimmed = text.trim();
+  if (trimmed === '') {
+    return failTmCoordinate({ kind: 'EMPTY_RESPONSE' });
+  }
+
+  if (trimmed.startsWith('<')) {
+    return failTmCoordinate({ kind: 'NON_JSON_RESPONSE' });
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // The raw SyntaxError message can echo body fragments, so it is never surfaced.
+    return failTmCoordinate({ kind: 'INVALID_JSON' });
+  }
+
+  const parseResult = parseAirKoreaTmCoordinateResponse(parsed);
+  if (!parseResult.ok) {
+    return parseResult.error.kind === 'UPSTREAM_ERROR'
+      ? failTmCoordinate({ kind: 'AIRKOREA_UPSTREAM_ERROR', resultCode: parseResult.error.resultCode })
+      : failTmCoordinate({ kind: 'AIRKOREA_INVALID_RESPONSE', issues: parseResult.error.issues });
+  }
+
+  return interpretTmCoordinatePage(parseResult.page);
+}
+
+/**
+ * Perform one TM-coordinate fetch. Request validation and URL building are TM-coordinate-specific;
+ * the transport is the shared {@link performAirKoreaGetRequest} (same transport instance the other
+ * two providers in this module use — see the module docblock).
+ */
+async function fetchTmCoordinates(
+  config: ResolvedAirKoreaProviderConfig,
+  request: AirKoreaTmCoordinateRequest,
+  options?: { readonly signal?: AbortSignal },
+): Promise<AirKoreaTmCoordinateProviderResult> {
+  const validation = validateAirKoreaTmCoordinateRequest(request);
+  if (!validation.ok) {
+    return failTmCoordinate({ kind: 'INVALID_REQUEST', issues: validation.issues });
+  }
+
+  const built = buildAirKoreaTmCoordinateRequestUrl(config.serviceKey, request);
+  if (!built.ok) {
+    // Unreachable in practice (the request already validated), handled for totality.
+    return failTmCoordinate({ kind: 'INVALID_REQUEST', issues: built.issues });
+  }
+
+  const transport = await performAirKoreaGetRequest(config, built.url, options);
+  if (!transport.ok) {
+    return failTmCoordinate(transport.error);
+  }
+
+  return classifyTmCoordinateBody(transport.text);
+}
+
+/** Build a provider bound to a resolved config. */
+function makeTmCoordinateProvider(config: ResolvedAirKoreaProviderConfig): AirKoreaTmCoordinateProvider {
+  return {
+    fetchTmCoordinates(request, options) {
+      return fetchTmCoordinates(config, request, options);
+    },
+  };
+}
+
+/**
+ * Create a TM-coordinate provider from explicit options. Returns a `CONFIG_ERROR` result (never
+ * throws) when the options are invalid — see {@link validateAirKoreaProviderOptions}. Shares the
+ * same {@link AirKoreaProviderOptions} shape (and `AIRKOREA_SERVICE_KEY`/`timeoutMs`/
+ * `maxResponseBytes` policy) as the other two providers in this module.
+ */
+export function createAirKoreaTmCoordinateProvider(
+  options: AirKoreaProviderOptions,
+): CreateAirKoreaTmCoordinateProviderResult {
+  const validated = validateAirKoreaProviderOptions(options);
+  if (!validated.ok) {
+    return { ok: false, error: validated.error };
+  }
+  return { ok: true, provider: makeTmCoordinateProvider(validated.config) };
+}
+
+/**
+ * Create a TM-coordinate provider from the environment, reading **only** `AIRKOREA_SERVICE_KEY`.
+ * The environment is read when this function is *called* (default `process.env`), never at module
+ * import. A missing, empty, or whitespace-only key yields a `CONFIG_ERROR`; the key value never
+ * appears in the error.
+ */
+export function createAirKoreaTmCoordinateProviderFromEnv(
+  env?: NodeJS.ProcessEnv,
+  dependencies?: { readonly fetchImpl?: typeof fetch },
+): CreateAirKoreaTmCoordinateProviderResult {
+  const source = env ?? process.env;
+  return createAirKoreaTmCoordinateProvider({
     serviceKey: source.AIRKOREA_SERVICE_KEY as string,
     fetchImpl: dependencies?.fetchImpl,
   });
