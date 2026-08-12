@@ -32,7 +32,13 @@ import { z } from 'zod';
 
 import { airKoreaResponseHeaderSchema } from './current-raw-schema.js';
 
-/** The official field-size bound for each *response* administrative-name field (문서 항목크기: 20). */
+/**
+ * The official field-size bound for each *response* administrative-name field (문서 항목크기: 20).
+ * As with the request-side `umdName` bound (`tm-coordinate-request.ts`), the technical document
+ * states this field-size value but does not define its underlying unit — this project applies the
+ * number `20` as a bound on JavaScript `string.length` (UTF-16 code units), an intentionally
+ * conservative, project-owned interpretation rather than a documented equivalence.
+ */
 const AIRKOREA_TM_COORDINATE_ADMIN_NAME_MAX_LENGTH = 20;
 
 /** Matches a C0 control character or DEL — rejected in `sidoName`/`sggName`/`umdName`. */
@@ -41,9 +47,11 @@ const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
 /**
  * Whether `value` is a well-formed response administrative-name field (`sidoName`/`sggName`/
  * `umdName`): a non-empty string, no leading/trailing whitespace, at most
- * {@link AIRKOREA_TM_COORDINATE_ADMIN_NAME_MAX_LENGTH} UTF-16 code units, and free of C0 control
- * characters/DEL — the same discipline `isAirKoreaStationName`/`isAirKoreaAdministrativeDongName`
- * apply to their own fields, at this operation's own documented response size.
+ * {@link AIRKOREA_TM_COORDINATE_ADMIN_NAME_MAX_LENGTH} as measured by JS `string.length` (UTF-16
+ * code units — see the constant's docblock for why this is a project interpretation, not a
+ * documented unit), and free of C0 control characters/DEL — the same discipline
+ * `isAirKoreaStationName`/`isAirKoreaAdministrativeDongName` apply to their own fields, at this
+ * operation's own documented response size.
  */
 function isAirKoreaTmCoordinateAdministrativeName(value: unknown): value is string {
   if (typeof value !== 'string') {

@@ -68,7 +68,13 @@ const AIRKOREA_FIXED_PAGE_NO = 1;
  */
 const AIRKOREA_FIXED_NUM_OF_ROWS = 100;
 
-/** The official field-size bound for the request `umdName` (문서 항목크기: 60). */
+/**
+ * The official field-size bound for the request `umdName` (문서 항목크기: 60). The technical
+ * document states this field-size value but does not define its underlying unit — this project
+ * applies the number `60` as a bound on JavaScript `string.length` (UTF-16 code units), which is an
+ * intentionally conservative, project-owned interpretation, not a documented equivalence. In
+ * practice this is non-restrictive for normal Korean administrative names.
+ */
 const AIRKOREA_UMD_NAME_MAX_LENGTH = 60;
 
 /** Matches a C0 control character or DEL — rejected in `umdName`. */
@@ -85,8 +91,10 @@ export type BuildAirKoreaTmCoordinateRequestUrlResult =
 /**
  * Whether `value` is a well-formed AirKorea request `umdName`: a non-empty string, no
  * leading/trailing whitespace (not silently trimmed — a padded name is rejected outright, matching
- * `isAirKoreaStationName`'s policy), at most {@link AIRKOREA_UMD_NAME_MAX_LENGTH} UTF-16 code units,
- * and free of C0 control characters/DEL. This is a request-side predicate only — the *response*
+ * `isAirKoreaStationName`'s policy), at most {@link AIRKOREA_UMD_NAME_MAX_LENGTH} as measured by JS
+ * `string.length` (UTF-16 code units — the document's field-size unit is not itself specified; see
+ * the constant's docblock), and free of C0 control characters/DEL. This is a request-side predicate
+ * only — the *response*
  * `umdName` field (and `sidoName`/`sggName`) document a different, smaller field size (20) and are
  * validated separately in `tm-coordinate-raw-schema.ts` (see that module's docblock for why the two
  * are not the same predicate).

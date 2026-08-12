@@ -96,7 +96,11 @@ interface AirKoreaTmCoordinateRequest {
 
 * 비어 있지 않은 문자열
 * 앞뒤 공백 없음(trim 후 동일해야 함 — 자동 trim 없음, `isAirKoreaStationName`과 동일한 정책)
-* 최대 60 UTF-16 code unit
+* 최대 60 — **사실**: 공식 문서는 항목크기를 `60`으로 명시할 뿐, 그 단위(byte인지 문자 수인지
+  code unit인지)를 정의하지 않습니다. **프로젝트 해석**: 이 provider는 그 수치 `60`을 JS
+  `string.length`(UTF-16 code unit) 기준 상한으로 적용합니다 — 이는 의도적으로 보수적인
+  project-owned 해석이며, "공식 문서가 UTF-16 code unit을 의미한다"는 뜻은 아닙니다. 일반적인 한글
+  행정구역명에는 실질적으로 제약이 되지 않습니다.
 * C0 제어문자·DEL(U+0000–U+001F, U+007F) 금지
 
 URL은 `URL` + `URLSearchParams`로만 구성하며, 서비스키와 `umdName`(한글 포함) 모두
@@ -129,6 +133,11 @@ URL은 `URL` + `URLSearchParams`로만 구성하며, 서비스키와 `umdName`(�
 `isAirKoreaAdministrativeDongName`(요청 측, 최대 60)과 `tm-coordinate-raw-schema.ts`의
 응답 측 administrative-name predicate(최대 20, `sidoName`/`sggName`/`umdName` 셋 모두 공유)를
 **서로 다른 predicate**로 분리했습니다 — 두 값을 하나로 합치거나 더 큰 쪽으로 완화하지 않았습니다.
+
+두 값(`60`, `20`) 모두 **사실**은 "문서가 명시한 항목크기 숫자"일 뿐이며, 문서는 그 단위를 정의하지
+않습니다. **프로젝트 해석**으로 이 두 predicate 모두 그 숫자를 JS `string.length`(UTF-16 code
+unit) 상한으로 적용합니다 — 공식 문서가 UTF-16 code unit 단위를 의도했다고 확정하는 것이 아니라,
+의도적으로 보수적이고 실질적으로 비제약적인 project-owned 해석입니다.
 
 ### 이 provider가 실제로 소비하는 필드
 
@@ -265,9 +274,24 @@ interface AirKoreaTmCoordinateCandidate {
 `AIRKOREA_UPSTREAM_ERROR`(2자리 `resultCode`만), `AIRKOREA_INVALID_RESPONSE`(sanitized issues만),
 `MALFORMED_COORDINATE`, `INCOMPLETE_RESULT { totalCount, receivedCount }`(위 "Pagination /
 completeness 정책" 참고), `NO_DATA`. PR #82의 `RESPONSE_MISMATCH`에 대응하는 kind는 없습니다 — 이
-provider는 caller가 지정한 값이 응답에 echo되는지 검사할 필요가 있는 correlation 대상 필드가
-없습니다(요청 `umdName`이 응답 각 item의 `umdName`과 일치하는지는 검사하지 않습니다 — 여러 행이
-합법적으로 같은 `umdName`을 가지므로, 이는 상관관계 오류가 아니라 정상적인 동명이동입니다).
+provider는 요청 `umdName`이 응답 각 item의 `umdName`과 일치하는지 검사하지 않고, 구조적으로 유효한
+모든 candidate를 후속 resolver를 위해 그대로 보존합니다. 이유는 두 가지로 분리됩니다.
+
+* **사실(동명이동)**: 하나의 `umdName`은 서로 다른 시도/시군구에 합법적으로 반복될 수 있으므로,
+  정확히 일치하는 `umdName`을 가진 candidate가 여러 개 존재하는 것 자체는 정상입니다. 이는 왜
+  "candidate 하나를 `umdName`만으로 고를 수 없는지"를 설명하지만, "응답 item이 요청 `umdName`과
+  다를 때 그 item을 신뢰할 수 있는지"는 별개의 질문입니다.
+* **별개의 미해결 evidence gap(매칭 방식)**: 기술문서는 이 operation이 "읍면동 이름으로 검색"한다고
+  서술할 뿐, 그 매칭이 정확히 일치(exact)인지, 앞부분 일치(prefix)인지, 부분/유사 일치(partial/
+  fuzzy)인지, 정규화(normalize) 여부를 포함하는지를 정의하지 않습니다. 따라서 반환된 item의
+  `item.umdName`이 요청 `umdName`과 다른 경우, 그 candidate가 유효한지 무효한지를 현재 공식 자료
+  만으로는 판단할 수 없습니다.
+
+이 provider는 반환된 `umdName`이 요청과 다르다는 이유로 candidate를 거부하지 않습니다 — 공식
+자료가 매칭 semantics를 충분히 강하게 정의하지 않기 때문입니다. 구조적으로 유효한 모든 candidate를
+후속 resolver를 위해 그대로 보존하며, 이 PR에서는 추측에 기반한 runtime correlation을 추가하지
+않습니다. 향후 인증된 통합/QA 테스트나 더 강한 공식 근거가 확보되면 correlation을 강화하는 근거가
+될 수 있습니다.
 
 `createAirKoreaTmCoordinateProvider(options)` / `…FromEnv(env?, dependencies?)`는 PR #82/#83과
 완전히 같은 `AirKoreaProviderOptions`/`AIRKOREA_SERVICE_KEY`/`timeoutMs`/`maxResponseBytes` 정책을
