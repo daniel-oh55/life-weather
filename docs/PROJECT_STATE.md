@@ -732,5 +732,27 @@
   /weather` 연결을 구현하지 않으므로, `AIR_QUALITY_CURRENT`는 production 응답에서 여전히
   missing입니다. 실제 인증 API 호출은 수행하지 않았습니다. 자세한 내용은
   [airkorea-tm-coordinate-provider.md](./airkorea-tm-coordinate-provider.md) 참고.
+- **PR #85**는 PR #82/#83/#84 세 AirKorea provider boundary를 순서대로 연결하는 첫 **application
+  service**(`createAirKoreaLocationCurrentAirQualityService`,
+  `apps/api/src/services/airkorea-location-current-air-quality.ts`)를 추가했습니다 — 이미 검증된
+  `WeatherLocation`을 PR #84(행정구역명 → TM 좌표) → PR #83(TM 좌표 → 근접측정소) → PR #82(측정소명 →
+  실시간 측정정보 + 기존 정규화) 순서로 호출해 `CurrentAirQuality`를 만듭니다. 지원 위치는
+  `countryCode === 'KR'`이고 `adminArea1`/`adminArea3`가 모두 `null`이 아닌 대한민국 leaf
+  행정구역뿐입니다 — `adminArea3`가 없는 시/도-구 수준 location(기존 모바일 카탈로그에 실재)은
+  `adminArea2`나 `displayName`을 대신 사용하지 않고 `UNSUPPORTED_ADMINISTRATIVE_LEVEL`로
+  fail-closed됩니다. PR #84가 선택하지 않는 TM candidate는 `sidoName`/`umdName`(그리고
+  `adminArea2`가 `null`이 아닐 때만 `sggName`)의 **정확 일치**로 이 service가 좁히며(0개는
+  `TM_COORDINATE_NOT_FOUND`, 2개 이상은 `AMBIGUOUS_TM_COORDINATE`, `candidates[0]` 사용 없음), PR
+  #83이 선택하지 않는 최근접 측정소는 `distanceKm` 최소값(동점 시 `stationName` 오름차순
+  tie-break, upstream 순서 무관)으로 이 service가 선택합니다. 실행은 순차적이며 지원 요청 한 건당
+  provider 호출은 최대 3회(TM 1 + 근접측정소 1 + 현재 대기질 1)이고, 재시도·fallback·캐시는
+  없습니다. `options`(그 안의 `AbortSignal` 포함)는 세 provider 모두에 정확히 같은 참조로
+  전달됩니다. 각 provider 실패는 그 provider의 error를 그대로 반환하며 재분류하지 않고, 정규화
+  실패는 기존 `normalizeAirKoreaCurrentAirQuality`의 issues를 그대로 사용합니다. 이 PR은 production
+  composition, `POST /weather` 연결, `WeatherOverview.airQuality.current` 조립을 구현하지 않으므로,
+  `AIR_QUALITY_CURRENT`는 production 응답에서 여전히 missing입니다. 실제 인증 API 호출은 수행하지
+  않았습니다. 자세한 내용은
+  [airkorea-location-current-air-quality-service.md](./airkorea-location-current-air-quality-service.md)
+  참고.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.

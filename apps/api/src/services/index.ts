@@ -2,7 +2,7 @@
  * Public surface of `apps/api`'s **application services** — the orchestration layer that sequences
  * the KMA provider boundary and the domain normalizers, and assembles the requests they consume.
  *
- * Twenty-one application components live here so far:
+ * Twenty-two application components live here so far:
  *
  * 1. The PR #7 KMA **hourly-forecast orchestration** (`createKmaHourlyForecastService`): it calls
  *    the PR #5 HTTP provider and the PR #6 hourly normalizer in order and reports a `PROVIDER`- or
@@ -322,6 +322,29 @@
  *    hourly fallback/selection policy, or current provider/normalization inspection, and it is
  *    **not yet** wired into any production composition root, `POST /weather` route, or presenter.
  *
+ * 22. The PR #85 AirKorea **location current air-quality application service**
+ *    (`createAirKoreaLocationCurrentAirQualityService`): the first application-layer component in the
+ *    separate AirKorea provider namespace, connecting a `WeatherLocation` to a `CurrentAirQuality` by
+ *    chaining the PR #84 administrative-name → TM-coordinate provider, the PR #83 TM-coordinate →
+ *    nearby-station provider, and the PR #82 current-air-quality provider/normalizer — three
+ *    independent boundaries none of which selects a candidate for the others. It supports only a
+ *    Korean location with a non-null `adminArea1`/`adminArea3` (province/district-level locations with
+ *    a `null` `adminArea3` fail closed as `UNSUPPORTED_ADMINISTRATIVE_LEVEL`, never guessing a child
+ *    dong), resolves the PR #84 TM candidate by an **exact** `sidoName`/`sggName`/`umdName` match
+ *    against the location's administrative fields (`sggName` skipped only when `adminArea2` is `null`;
+ *    zero or multiple exact matches are `TM_COORDINATE_NOT_FOUND`/`AMBIGUOUS_TM_COORDINATE`, never
+ *    `candidates[0]`), and selects the PR #83 station with the smallest `distanceKm` (a `stationName`
+ *    ascending tie-break for equal distances, never upstream order). Execution is strictly
+ *    sequential — TM lookup → candidate resolution → nearby-station lookup → closest-station selection
+ *    → current-air-quality lookup → normalization — with **at most three** provider calls and no
+ *    retry/fallback/cache. Every provider-stage failure carries that provider's own error **by exact
+ *    reference**; `NORMALIZATION` reuses the existing PR #82 `normalizeAirKoreaCurrentAirQuality`
+ *    verbatim. `options` (and any `AbortSignal`) is forwarded by exact reference to all three
+ *    providers; construction is side-effect-free. It is **not** wired into any production composition
+ *    root, `POST /weather` route, or the KMA `WeatherOverview` assembly — `AIR_QUALITY_CURRENT` stays
+ *    missing from production responses after this PR. See
+ *    `docs/airkorea-location-current-air-quality-service.md`.
+ *
  * The grid-based single-request **production composition root** (system clock adapter,
  * provider-from-env wiring, a live facade instance) is built in PR #11 and lives in `../composition`;
  * PR #12 added the latitude/longitude → grid converter in `@life-weather/weather-core`; PR #13's
@@ -514,3 +537,12 @@ export {
   type KmaLocationCurrentHourlyOverviewResult,
   type KmaLocationCurrentHourlyOverviewService,
 } from './kma-location-current-hourly-overview.js';
+
+export {
+  createAirKoreaLocationCurrentAirQualityService,
+  type AirKoreaLocationCurrentAirQualityInput,
+  type AirKoreaLocationCurrentAirQualityLocationError,
+  type AirKoreaLocationCurrentAirQualityOptions,
+  type AirKoreaLocationCurrentAirQualityResult,
+  type AirKoreaLocationCurrentAirQualityService,
+} from './airkorea-location-current-air-quality.js';
