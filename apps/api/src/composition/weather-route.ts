@@ -1,34 +1,35 @@
 /**
- * The **production composition** for the PR #30 `POST /weather` route — the one place that turns a
- * server-only `KMA_SERVICE_KEY` (plus optional production seams) into the concrete
- * {@link WeatherRouteDependencies} the route factory needs. It is the adapter layer between the KMA
- * production graph and the route's narrow injected ports; the route factory itself (PR #30) is **not**
- * modified here.
+ * The **production composition** for the PR #30 `POST /weather` route — the one place that turns the
+ * two server-only service keys (`KMA_SERVICE_KEY`, `AIRKOREA_SERVICE_KEY`), plus optional production
+ * seams, into the concrete {@link WeatherRouteDependencies} the route factory needs. It is the adapter
+ * layer between the combined production graph and the route's narrow injected ports; the route factory
+ * itself (PR #30) is **not** modified here.
  *
- * As of **PR #81**, the production graph is the PR #78 combined
- * `createKmaLocationCurrentHourlyOverviewCompositionFromEnv` root (hourly **and** current), replacing the
- * PR #27 hourly-only `createKmaLocationHourlyOverviewCompositionFromEnv` this composition used through
- * PR #80. The PR #77 result/input/options types the combined root exposes are deliberate aliases of the
- * PR #24 hourly types, so the route's existing execute port and presenter needed no new contract — see
- * `docs/weather-production-wiring.md`.
+ * As of **PR #86**, the production graph is the combined
+ * `createKmaAirKoreaWeatherOverviewCompositionFromEnv` root (KMA hourly + current, **and** AirKorea
+ * current air-quality), replacing the PR #78
+ * `createKmaLocationCurrentHourlyOverviewCompositionFromEnv` root this composition used through PR #81.
+ * The cross-provider service's result/input/options types are deliberate aliases of the same PR #24
+ * hourly types the PR #78 root already exposed, so the route's existing execute port and presenter
+ * needed no new contract — see `docs/weather-production-wiring.md`.
  *
  * It assembles four things and nothing else:
  *
- * 1. **The production KMA service.** It builds the PR #78 combined location current+hourly-overview
- *    production graph via {@link createKmaLocationCurrentHourlyOverviewCompositionFromEnv}, feeding the
- *    caller's `serviceKey` in as `KMA_SERVICE_KEY` and forwarding the optional `fetchImpl`/`clock` seams
- *    unchanged. This reuses the whole combined KMA graph (the PR #27 hourly production graph, the PR #75
- *    current-overview production graph, and the PR #77 orchestration/degradation policy wiring them
- *    together) — none of it is re-implemented here.
+ * 1. **The production combined service.** It builds the combined KMA+AirKorea production graph via
+ *    {@link createKmaAirKoreaWeatherOverviewCompositionFromEnv}, feeding the caller's `serviceKey` in as
+ *    `KMA_SERVICE_KEY` and `airKoreaServiceKey` in as `AIRKOREA_SERVICE_KEY`, and forwarding the optional
+ *    `fetchImpl`/`clock` seams unchanged. This reuses the whole PR #78 KMA graph and the PR #85 AirKorea
+ *    graph, wired together by the new cross-provider application service — none of it is re-implemented
+ *    here.
  * 2. **The service→route adapter.** A {@link WeatherRouteExecuteOverview} that binds the service's
  *    `fetchCurrentHourlyWeatherOverviewForLocation(input, { signal })` to the route's `(input, signal)`
  *    port — forwarding `input` unchanged and the `AbortSignal` by the **same reference** inside
  *    `{ signal }`. It creates no `AbortController`, adds no timeout, transforms no result, catches/re-wraps
- *    no error, and never puts the service key on the adapter input or the response.
+ *    no error, and never puts either service key on the adapter input or the response.
  * 3. **The server-owned product.** The fixed {@link PRODUCTION_WEATHER_PRODUCT} (`SHORT_FORECAST`). It is
  *    owned here, in one place — never read from an environment variable, the request body/query/headers,
  *    or anywhere a mobile client could set it. It continues to select the hourly forecast source only;
- *    the current-observation branch has no client-selectable product.
+ *    the current-observation and air-quality branches have no client-selectable product.
  * 4. **The production `meta` provider.** A `createMeta(request)` that stamps a fresh `generatedAt`
  *    (current UTC, `Date.prototype.toISOString()` — millisecond `Z`) and a server-generated `requestId`
  *    (`globalThis.crypto.randomUUID()`), **per request**. It never trusts an inbound `x-request-id` /
@@ -36,23 +37,26 @@
  *    `contractVersion` (always `CONTRACT_VERSION`); the `meta` provider owns only `generatedAt`/
  *    `requestId`.
  *
- * ### Provider attempts and current-failure degradation — inherited, not owned
+ * ### Provider attempts and failure degradation — inherited, not owned
  *
- * The combined graph's own PR #19 hourly fallback (at most 2 attempts) and PR #77 current-degradation
- * policy (a resolved current `LOCATION`/`PROVIDER`/`NORMALIZATION` failure becomes `current: null`, never
- * a route-level error) are inherited unchanged; this composition inspects or reimplements neither. A
- * representative supported request now makes **at most 3** provider attempts (hourly 2 + current 1),
- * up from the pre-PR-81 hourly-only maximum of 2.
+ * The combined graph's own hourly fallback (at most 2 attempts), current-degradation policy (a resolved
+ * current failure becomes `current: null`), and AirKorea-degradation policy (a resolved AirKorea failure
+ * becomes `airQuality.current: null`) are inherited unchanged; this composition inspects or reimplements
+ * none of them. A representative supported request now makes **at most 6** provider attempts (KMA hourly
+ * 2 + KMA current 1 + AirKorea TM 1 + AirKorea nearby-station 1 + AirKorea current-AQ 1), up from the
+ * pre-PR-86 KMA-only maximum of 3.
  *
  * ### Fail-fast on a missing/invalid service key
  *
- * A missing, empty, whitespace-only, or whitespace-padded `serviceKey` makes the underlying provider
- * composition fail its own validation; this function turns that value failure into a **thrown** error so
- * an incomplete `/weather` route is never silently built. The thrown message is a fixed, safe constant
- * ({@link KMA_SERVICE_KEY_REQUIRED_MESSAGE}) — the offending key value, the `process.env` contents, and
- * the provider URL/query never appear in it. Construction reads no clock, generates no `requestId`, and
- * issues **no** external `fetch` (the KMA graph is network-free until the returned adapter is invoked by
- * a real request); the clock and UUID factory are called only inside `createMeta`, per request.
+ * A missing, empty, whitespace-only, or whitespace-padded `serviceKey`/`airKoreaServiceKey` makes the
+ * underlying provider composition fail its own validation; this function turns that value failure into a
+ * **thrown** error so an incomplete `/weather` route is never silently built. Which key was at fault
+ * selects a distinct fixed, safe message ({@link KMA_SERVICE_KEY_REQUIRED_MESSAGE} or
+ * {@link AIRKOREA_SERVICE_KEY_REQUIRED_MESSAGE}) — neither offending key value, `process.env` contents,
+ * nor a provider URL/query ever appears in it. Construction reads no clock, generates no `requestId`, and
+ * issues **no** external `fetch` (the combined graph is network-free until the returned adapter is
+ * invoked by a real request); the clock and UUID factory are called only inside `createMeta`, per
+ * request.
  *
  * See `docs/weather-production-wiring.md`.
  */
@@ -69,9 +73,9 @@ import type {
   WeatherRouteExecuteOverview,
 } from '../routes/index.js';
 import {
-  createKmaLocationCurrentHourlyOverviewCompositionFromEnv,
-  type KmaLocationCurrentHourlyOverviewCompositionDependencies,
-} from './kma-location-current-hourly-overview.js';
+  createKmaAirKoreaWeatherOverviewCompositionFromEnv,
+  type KmaAirKoreaWeatherOverviewCompositionDependencies,
+} from './kma-airkorea-weather-overview.js';
 
 /**
  * The **server-owned** production KMA forecast product for `/weather`: `SHORT_FORECAST` (단기예보). It is
@@ -91,18 +95,30 @@ export const PRODUCTION_WEATHER_PRODUCT = KmaForecastProduct.SHORT_FORECAST;
 export const KMA_SERVICE_KEY_REQUIRED_MESSAGE = 'KMA_SERVICE_KEY is required.';
 
 /**
+ * The fixed, safe error message thrown when the production composition cannot be built because
+ * `AIRKOREA_SERVICE_KEY` is absent or invalid. It names only the environment variable — never the
+ * offending value, a partial key, the environment, or a provider URL/query.
+ */
+export const AIRKOREA_SERVICE_KEY_REQUIRED_MESSAGE = 'AIRKOREA_SERVICE_KEY is required.';
+
+/**
  * The options for building the production `/weather` route dependencies.
  *
  * - `serviceKey` — the server-only 기상청 서비스 키. Read from `process.env.KMA_SERVICE_KEY` by the
  *   composition root (`apps/api/src/index.ts`) and handed in here as a plain string. It is validated by
  *   the existing provider policy (empty / whitespace-only / whitespace-padded are rejected) and never
  *   trimmed, decoded, or re-encoded here.
- * - `fetchImpl` — an injectable `fetch` forwarded to the KMA provider. Omitted in production (the
- *   provider uses `globalThis.fetch`); a test injects an in-memory `fetch` so no real external request is
- *   made.
- * - `clock` — an injectable KMA request-plan clock forwarded to the KMA graph (the base-time selector and
- *   the resolver's `fetchedAt`). Omitted in production (a system clock is used); a test injects a fixed
- *   clock for a deterministic issuance. This is the KMA data clock, **distinct** from `now` below.
+ * - `airKoreaServiceKey` — the server-only 에어코리아 서비스 키. Read from
+ *   `process.env.AIRKOREA_SERVICE_KEY` by the composition root and handed in here as a plain string.
+ *   Validated by the existing AirKorea provider policy (same empty/whitespace-only/whitespace-padded
+ *   rejection rules) and never trimmed, decoded, or re-encoded here.
+ * - `fetchImpl` — an injectable `fetch` forwarded to both the KMA and AirKorea providers. Omitted in
+ *   production (each provider uses `globalThis.fetch`); a test injects an in-memory `fetch` so no real
+ *   external request is made.
+ * - `clock` — an injectable clock forwarded to the combined graph (the KMA base-time selectors, the KMA
+ *   resolvers' `fetchedAt`, and the AirKorea resolver's `fetchedAt`). Omitted in production (a system
+ *   clock is used); a test injects a fixed clock for a deterministic issuance. This is the upstream data
+ *   clock, **distinct** from `now` below.
  * - `now` — the response `meta` clock, used **only** for `generatedAt`. Defaults to `() => new Date()`.
  * - `createRequestId` — the response `meta` `requestId` factory. Defaults to
  *   `() => globalThis.crypto.randomUUID()`.
@@ -112,6 +128,7 @@ export const KMA_SERVICE_KEY_REQUIRED_MESSAGE = 'KMA_SERVICE_KEY is required.';
  */
 export type ProductionWeatherRouteOptions = {
   readonly serviceKey: string;
+  readonly airKoreaServiceKey: string;
   readonly fetchImpl?: typeof globalThis.fetch;
   readonly clock?: KmaForecastRequestClock;
   readonly now?: () => Date;
@@ -131,23 +148,28 @@ export type ProductionWeatherRouteOptions = {
 export function createProductionWeatherRouteDependencies(
   options: ProductionWeatherRouteOptions,
 ): WeatherRouteDependencies {
-  // Reuse the existing PR #78 combined production graph (hourly + current). The caller's serviceKey is
-  // fed in as KMA_SERVICE_KEY, and the fetch/clock seams are forwarded unchanged (both undefined in
-  // production, so the graph keeps its native fetch and system clock defaults).
-  const compositionDependencies: KmaLocationCurrentHourlyOverviewCompositionDependencies = {
+  // Reuse the combined production graph (KMA hourly + current, and AirKorea current air-quality). The
+  // caller's serviceKey/airKoreaServiceKey are fed in as KMA_SERVICE_KEY/AIRKOREA_SERVICE_KEY, and the
+  // fetch/clock seams are forwarded unchanged (both undefined in production, so the graph keeps its
+  // native fetch and system clock defaults).
+  const compositionDependencies: KmaAirKoreaWeatherOverviewCompositionDependencies = {
     fetchImpl: options.fetchImpl,
     clock: options.clock,
   };
-  const composition = createKmaLocationCurrentHourlyOverviewCompositionFromEnv(
-    { KMA_SERVICE_KEY: options.serviceKey },
+  const composition = createKmaAirKoreaWeatherOverviewCompositionFromEnv(
+    { KMA_SERVICE_KEY: options.serviceKey, AIRKOREA_SERVICE_KEY: options.airKoreaServiceKey },
     compositionDependencies,
   );
 
   // Fail-fast: a provider config failure (missing / empty / whitespace-only / padded key, from either the
-  // hourly or the current composition) becomes a thrown error with a fixed safe message — no partial
-  // route, no key value, no env dump, no network.
+  // KMA or the AirKorea composition) becomes a thrown error with a fixed safe message chosen by which
+  // key was at fault — no partial route, no key value, no env dump, no network.
   if (!composition.ok) {
-    throw new Error(KMA_SERVICE_KEY_REQUIRED_MESSAGE);
+    throw new Error(
+      composition.stage === 'KMA'
+        ? KMA_SERVICE_KEY_REQUIRED_MESSAGE
+        : AIRKOREA_SERVICE_KEY_REQUIRED_MESSAGE,
+    );
   }
 
   const service = composition.service;

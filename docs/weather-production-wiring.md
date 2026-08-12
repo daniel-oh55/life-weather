@@ -289,6 +289,70 @@ See `docs/kma-location-current-hourly-overview-composition.md` for the combined 
 `docs/kma-location-current-hourly-overview.md` for the PR #77 orchestration/degradation policy this route
 now serves.
 
+## Current production state (PR #86)
+
+**PR #86** wires the PR #85 AirKorea location current air-quality application service into the same
+`POST /weather` production graph this document describes, so the response now carries KMA hourly +
+current **and** AirKorea current air quality. Everything else in this document (the route factory, the
+presenter, `index.ts`/`api-app.ts` runtime, the deployment configuration sections above) is unchanged.
+
+- **New cross-provider production graph.** `apps/api/src/composition/weather-route.ts` now builds
+  `createKmaAirKoreaWeatherOverviewCompositionFromEnv`
+  (`apps/api/src/composition/kma-airkorea-weather-overview.ts`) instead of the PR #78
+  `createKmaLocationCurrentHourlyOverviewCompositionFromEnv` root it built through PR #81. That combined
+  root itself composes two existing production graphs, unchanged: the PR #78 KMA root (built first,
+  deterministically) and a new AirKorea production composition
+  (`apps/api/src/composition/airkorea-location-current-air-quality.ts`,
+  `createAirKoreaLocationCurrentAirQualityCompositionFromEnv`) that assembles the PR #82/#83/#84
+  provider-from-env factories, the PR #85 application service, and a new live AirKorea source metadata
+  resolver (`apps/api/src/services/airkorea-current-source-metadata.ts`).
+- **New overlay assembler.** `apps/api/src/services/weather-overview-air-quality-overlay.ts`
+  (`overlayAirKoreaCurrentAirQualityOnWeatherOverview`) is a pure, synchronous function that overlays an
+  optional `CurrentAirQuality` (plus its `AIR_KOREA` source provenance) onto the existing KMA
+  current+hourly overview: on a resolved AirKorea failure it returns the baseline unchanged
+  (`airQuality.current: null`, `AIR_QUALITY_CURRENT` stays in `missingSections`); on success it sets
+  `airQuality.current`, removes `AIR_QUALITY_CURRENT` from `missingSections`, and appends exactly one
+  `AIR_KOREA` `SourceMetadata` entry (`sections: ['AIR_QUALITY_CURRENT']`, `issuedAt: null`,
+  `observedAt: CurrentAirQuality.measuredAt`) built from explicit named fields — never a spread of
+  provider-native data.
+- **New cross-provider application service.** `apps/api/src/services/kma-airkorea-weather-overview.ts`
+  (`createKmaAirKoreaWeatherOverviewService`) calls the existing KMA combined service first; a KMA
+  top-level `LOCATION` failure is returned verbatim and AirKorea is never attempted. Every KMA success
+  calls the PR #85 AirKorea service with `{ location: kmaResult.overview.location }` (the KMA baseline's
+  own parsed location, never the caller's raw input). Every resolved AirKorea failure — any stage —
+  degrades uniformly to `airQuality.current: null` via the overlay; only a resolved AirKorea success
+  resolves live source metadata and overlays it. Execution stays strictly sequential (no `Promise.all`).
+  Unexpected AirKorea/KMA throws or rejections are never caught or degraded. The service's public method
+  name and result shape are the same `fetchCurrentHourlyWeatherOverviewForLocation` /
+  `{ ok: true, selection, overview }` the PR #77 KMA combined service already exposed, so the route's
+  existing execute port and the existing presenter needed **no new contract**.
+- **District/province locations still degrade gracefully.** A location with `adminArea3: null` (which
+  the mobile catalog legitimately contains) still gets KMA hourly/current; AirKorea's own
+  `UNSUPPORTED_ADMINISTRATIVE_LEVEL` LOCATION failure degrades only the air-quality section — the
+  request as a whole never fails because of it.
+- **Provider-attempt ceiling raised again.** A representative supported request now makes **at most 6**
+  provider attempts (KMA hourly at most 2 + KMA current at most 1 + AirKorea TM lookup 1 + AirKorea
+  nearby-station lookup 1 + AirKorea current-AQ lookup 1) — up from the PR #81 KMA-only maximum of 3. No
+  retry, alternative TM probing, station fallback, or cache was added.
+- **Startup fail-fast for both keys.** `apps/api/src/index.ts` now reads both `KMA_SERVICE_KEY` and
+  `AIRKOREA_SERVICE_KEY` (both server-only) and passes them to
+  `createProductionWeatherRouteDependencies({ serviceKey, airKoreaServiceKey })`. A missing/invalid
+  `AIRKOREA_SERVICE_KEY` fails app construction with the fixed message `AIRKOREA_SERVICE_KEY is
+  required.` (mirroring the existing `KMA_SERVICE_KEY is required.` fail-fast); which key is at fault is
+  reported via the combined composition's `stage: 'KMA' | 'AIRKOREA'` discriminator, and neither message
+  ever contains a key value, `process.env` contents, or a provider URL/query. Construction still issues
+  **no** external `fetch` — both provider graphs stay lazy until a real request arrives.
+- **Public response shape.** `POST /weather` now also returns `data.airQuality.current` populated (or
+  `null` on a degraded/unsupported AirKorea outcome), with a `AIR_KOREA` entry appended to `data.sources`
+  when air quality is present — after the existing current/hourly sources.
+- **Route factory and presenter unchanged.** `apps/api/src/routes/**` and `apps/api/src/presenters/**`
+  were not modified; the combined result stays exactly `KmaLocationHourlyOverviewResult`-compatible.
+
+See `apps/api/src/services/airkorea-location-current-air-quality.md` (PR #85,
+`docs/airkorea-location-current-air-quality-service.md`) for the AirKorea application-service pipeline
+this wiring consumes, and `docs/kma-location-current-hourly-overview-composition.md` /
+`docs/kma-location-current-hourly-overview.md` for the KMA graph it composes alongside.
+
 ## Current deployment status
 
 As of the current branch HEAD the deployment is green and behaviourally verified on Vercel's Node 22 runtime,
@@ -310,8 +374,9 @@ using an already-registered server-only `KMA_SERVICE_KEY` (never printed anywher
 - The **mobile API client** and screen wiring.
 - **Current-observation retry/previous-issuance fallback, cache, or stale-data policy** — still absent as
   of PR #81; a resolved current failure degrades to `current: null` rather than retrying.
-- **Daily forecast, AirKorea air quality, and alerts** — still not implemented; `POST /weather` still
-  reports them as missing in `missingSections`.
+- **Daily forecast, AirKorea forecast/alerts, and 기상특보 alerts** — still not implemented; `POST
+  /weather` still reports them as missing in `missingSections`. AirKorea **current** air quality is
+  implemented as of PR #86 (see above).
 - Product selection by environment/request, additional products, rate-limiting, auth/authorization, CORS
   changes, logging/telemetry, retry/timeout policy changes, the lifestyle engine, and OpenAPI.
 - A **production (non-Preview) deployment and a linked production domain** — the current verification is on

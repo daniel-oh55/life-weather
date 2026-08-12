@@ -754,5 +754,44 @@
   않았습니다. 자세한 내용은
   [airkorea-location-current-air-quality-service.md](./airkorea-location-current-air-quality-service.md)
   참고.
+- **PR #86**은 PR #85 AirKorea location current air-quality application service를 기존 production
+  `POST /weather` 파이프라인에 연결했습니다 — 정확한 base `main@77b37c64`. 새 pure overlay
+  assembler(`overlayAirKoreaCurrentAirQualityOnWeatherOverview`,
+  `apps/api/src/services/weather-overview-air-quality-overlay.ts`)가 기존 KMA current+hourly
+  overview에 optional `CurrentAirQuality`를 얹습니다 — AirKorea 실패는 `airQuality.current: null` +
+  `missingSections`의 `AIR_QUALITY_CURRENT` 유지로 균일하게 강등되고, 성공은 `airQuality.current`를
+  채우고 explicit field로 구성한 단일 `AIR_KOREA` `SourceMetadata`(`sections:
+  ['AIR_QUALITY_CURRENT']`, `issuedAt: null`, `observedAt: CurrentAirQuality.measuredAt`)를
+  추가합니다. 새 nullary live source metadata resolver
+  (`createAirKoreaLiveCurrentSourceMetadataResolver`,
+  `apps/api/src/services/airkorea-current-source-metadata.ts`)는 기존 KMA current resolver와 같은
+  원칙(injected clock, 유효 호출당 정확히 1회 read, invalid clock 값·throwing clock 모두 static
+  RangeError)을 따르는 별도·병렬 구현입니다. 새 cross-provider application
+  service(`createKmaAirKoreaWeatherOverviewService`,
+  `apps/api/src/services/kma-airkorea-weather-overview.ts`)는 기존 PR #77 KMA combined service를
+  먼저 호출해 top-level `LOCATION` 실패는 그대로 반환하고(AirKorea 미호출), KMA 성공마다 KMA
+  baseline의 파싱된 location으로 PR #85 AirKorea service를 호출하며, resolved AirKorea 실패는 stage
+  무관 균일하게 강등되고 unexpected throw/rejection은 강등 없이 그대로 전파됩니다. 이 service의
+  공개 method 이름·결과 형태는 기존 PR #77 service와 동일(`fetchCurrentHourlyWeatherOverviewForLocation`,
+  `{ ok, selection, overview }`)해서 route/presenter는 새 계약이 필요 없습니다. 새 AirKorea
+  production composition(`createAirKoreaLocationCurrentAirQualityCompositionFromEnv`,
+  `apps/api/src/composition/airkorea-location-current-air-quality.ts`)이 PR #82/#83/#84
+  provider-from-env 세 factory와 PR #85 service, 새 resolver를 조립하고, 새 combined production
+  composition(`createKmaAirKoreaWeatherOverviewCompositionFromEnv`,
+  `apps/api/src/composition/kma-airkorea-weather-overview.ts`)이 이를 기존 PR #78 KMA combined
+  composition과 순서대로(KMA 먼저) 연결합니다 — KMA config 실패는 AirKorea composition을 전혀
+  호출하지 않고, AirKorea config 실패는 partial graph를 반환하지 않습니다.
+  `apps/api/src/composition/weather-route.ts`가 이제 이 combined root를 빌드하며,
+  `apps/api/src/index.ts`가 `KMA_SERVICE_KEY`와 `AIRKOREA_SERVICE_KEY` 둘 다 읽어 각각 독립적인
+  fail-fast(`KMA_SERVICE_KEY is required.` / `AIRKOREA_SERVICE_KEY is required.`)를 수행합니다.
+  지원되는 요청 한 건의 provider 호출 상한은 KMA hourly 최대 2 + KMA current 최대 1 + AirKorea TM/
+  근접측정소/현재대기질 각 최대 1 = **최대 6회**로 늘었습니다(PR #81 이후 상한 3에서 증가).
+  `adminArea3`가 없는 시/도-구 수준 location은 KMA current/hourly는 그대로 받고 AirKorea만
+  `UNSUPPORTED_ADMINISTRATIVE_LEVEL`로 강등되어 요청 전체가 실패하지 않습니다. `packages/contracts`,
+  `CONTRACT_VERSION`, `packages/weather-core`, `apps/api/src/routes/**`, `apps/api/src/presenters/**`,
+  `apps/api/src/providers/**`는 변경하지 않았습니다. 실제 인증 API 호출과 실제 키 사용은 수행하지
+  않았습니다. 자세한 내용은 [weather-production-wiring.md](./weather-production-wiring.md)의
+  "Current production state (PR #86)" 절 참고. AirKorea 예보·대기질 특보, response cache는 여전히
+  미구현입니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.

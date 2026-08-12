@@ -48,6 +48,9 @@ const NULL_ISLAND_LONGITUDE = 0;
 /** An obviously fake, decoded-shaped service key. Never a real/production key. */
 const FAKE_KMA_SERVICE_KEY = 'test-only-decoded-key+slash==';
 
+/** An obviously fake, decoded-shaped AirKorea service key. Never a real/production key. */
+const FAKE_AIRKOREA_SERVICE_KEY = 'test-only-airkorea-decoded-key+slash==';
+
 /** The task's secret marker: it must never appear in any response body (success or error). */
 const SECRET_KEY_MARKER = 'test-kma-secret-marker';
 
@@ -420,6 +423,7 @@ describe('createProductionWeatherRouteDependencies — product policy', () => {
 
     const deps = createProductionWeatherRouteDependencies({
       serviceKey: FAKE_KMA_SERVICE_KEY,
+      airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY,
       fetchImpl: neverCalledFetch().fetchImpl,
     });
 
@@ -448,6 +452,7 @@ describe('createProductionWeatherRouteDependencies — service adapter', () => {
     ]);
     const deps = createProductionWeatherRouteDependencies({
       serviceKey: FAKE_KMA_SERVICE_KEY,
+      airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY,
       fetchImpl,
       clock,
     });
@@ -496,6 +501,7 @@ describe('createProductionWeatherRouteDependencies — service adapter', () => {
     ]);
     const deps = createProductionWeatherRouteDependencies({
       serviceKey: FAKE_KMA_SERVICE_KEY,
+      airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY,
       fetchImpl,
       clock,
     });
@@ -534,6 +540,7 @@ describe('createProductionWeatherRouteDependencies — meta clock', () => {
     const now = vi.fn(() => new Date(META_GENERATED_AT_ISO));
     const deps = createProductionWeatherRouteDependencies({
       serviceKey: FAKE_KMA_SERVICE_KEY,
+      airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY,
       fetchImpl: neverCalledFetch().fetchImpl,
       now,
     });
@@ -554,6 +561,7 @@ describe('createProductionWeatherRouteDependencies — meta clock', () => {
   it('defaults generatedAt to the real UTC clock (Z form) with no injected clock', () => {
     const deps = createProductionWeatherRouteDependencies({
       serviceKey: FAKE_KMA_SERVICE_KEY,
+      airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY,
       fetchImpl: neverCalledFetch().fetchImpl,
     });
 
@@ -575,6 +583,7 @@ describe('createProductionWeatherRouteDependencies — meta requestId', () => {
     const createRequestId = vi.fn(() => 'req-server-generated-777');
     const deps = createProductionWeatherRouteDependencies({
       serviceKey: FAKE_KMA_SERVICE_KEY,
+      airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY,
       fetchImpl: neverCalledFetch().fetchImpl,
       createRequestId,
     });
@@ -600,6 +609,7 @@ describe('createProductionWeatherRouteDependencies — meta requestId', () => {
   it('defaults requestId to a fresh non-empty UUID string per meta', () => {
     const deps = createProductionWeatherRouteDependencies({
       serviceKey: FAKE_KMA_SERVICE_KEY,
+      airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY,
       fetchImpl: neverCalledFetch().fetchImpl,
     });
 
@@ -626,7 +636,7 @@ describe('createProductionWeatherRouteDependencies — service key fail-fast', (
     const { fetchImpl, calls } = neverCalledFetch();
 
     expect(() =>
-      createProductionWeatherRouteDependencies({ serviceKey: key, fetchImpl }),
+      createProductionWeatherRouteDependencies({ serviceKey: key, airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY, fetchImpl }),
     ).toThrow(KMA_SERVICE_KEY_REQUIRED_MESSAGE);
     expect(calls).toHaveLength(0);
   });
@@ -637,7 +647,7 @@ describe('createProductionWeatherRouteDependencies — service key fail-fast', (
 
     let caught: unknown;
     try {
-      createProductionWeatherRouteDependencies({ serviceKey: paddedSecret, fetchImpl });
+      createProductionWeatherRouteDependencies({ serviceKey: paddedSecret, airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY, fetchImpl });
     } catch (error) {
       caught = error;
     }
@@ -659,7 +669,7 @@ describe('createProductionWeatherRouteDependencies — service key fail-fast', (
       CURRENT_REQUEST_EPOCH_MS,
       CURRENT_FETCHED_AT_EPOCH_MS,
     ]);
-    const app = buildApp({ serviceKey: FAKE_KMA_SERVICE_KEY, fetchImpl, clock });
+    const app = buildApp({ serviceKey: FAKE_KMA_SERVICE_KEY, airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY, fetchImpl, clock });
 
     const res = await postWeather(app, { body: requestBody() });
     const body = (await res.json()) as WeatherResponseV1;
@@ -684,6 +694,7 @@ describe('createProductionWeatherRouteDependencies — construction is side-effe
 
     createProductionWeatherRouteDependencies({
       serviceKey: FAKE_KMA_SERVICE_KEY,
+      airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY,
       fetchImpl,
       clock,
       now,
@@ -716,6 +727,7 @@ describe('production app integration — POST /weather', () => {
     ]);
     const app = buildApp({
       serviceKey: FAKE_KMA_SERVICE_KEY,
+      airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY,
       fetchImpl,
       clock,
       now: () => new Date(META_GENERATED_AT_ISO),
@@ -779,6 +791,7 @@ describe('production app integration — POST /weather', () => {
     ]);
     const app = buildApp({
       serviceKey: FAKE_KMA_SERVICE_KEY,
+      airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY,
       fetchImpl,
       clock,
       now: () => new Date(META_GENERATED_AT_ISO),
@@ -814,7 +827,7 @@ describe('production app integration — POST /weather', () => {
   it('B. unsupported location (Null Island) → 422 UNSUPPORTED_LOCATION, no fetch (current is never attempted, since the hourly LOCATION failure short-circuits before PR #77 calls current)', async () => {
     const { fetchImpl, calls } = neverCalledFetch();
     const { clock } = scriptedClock([CLOCK_AT_0510_KST_20260722, FETCHED_AT_EPOCH_MS]);
-    const app = buildApp({ serviceKey: FAKE_KMA_SERVICE_KEY, fetchImpl, clock });
+    const app = buildApp({ serviceKey: FAKE_KMA_SERVICE_KEY, airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY, fetchImpl, clock });
 
     const res = await postWeather(app, {
       body: requestBody({ latitude: NULL_ISLAND_LATITUDE, longitude: NULL_ISLAND_LONGITUDE }),
@@ -834,7 +847,7 @@ describe('production app integration — POST /weather', () => {
   it('C. invalid request body → 400 INVALID_REQUEST, no fetch', async () => {
     const { fetchImpl, calls } = neverCalledFetch();
     const { clock } = scriptedClock([CLOCK_AT_0510_KST_20260722, FETCHED_AT_EPOCH_MS]);
-    const app = buildApp({ serviceKey: FAKE_KMA_SERVICE_KEY, fetchImpl, clock });
+    const app = buildApp({ serviceKey: FAKE_KMA_SERVICE_KEY, airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY, fetchImpl, clock });
 
     const res = await postWeather(app, { body: JSON.stringify({}) });
 
@@ -850,7 +863,7 @@ describe('production app integration — POST /weather', () => {
   it('D. unsupported media type → 415, no fetch', async () => {
     const { fetchImpl, calls } = neverCalledFetch();
     const { clock } = scriptedClock([CLOCK_AT_0510_KST_20260722, FETCHED_AT_EPOCH_MS]);
-    const app = buildApp({ serviceKey: FAKE_KMA_SERVICE_KEY, fetchImpl, clock });
+    const app = buildApp({ serviceKey: FAKE_KMA_SERVICE_KEY, airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY, fetchImpl, clock });
 
     const res = await postWeather(app, {
       headers: { 'content-type': 'text/plain' },
@@ -869,7 +882,7 @@ describe('production app integration — POST /weather', () => {
   it('E. payload too large → 413, no fetch', async () => {
     const { fetchImpl, calls } = neverCalledFetch();
     const { clock } = scriptedClock([CLOCK_AT_0510_KST_20260722, FETCHED_AT_EPOCH_MS]);
-    const app = buildApp({ serviceKey: FAKE_KMA_SERVICE_KEY, fetchImpl, clock });
+    const app = buildApp({ serviceKey: FAKE_KMA_SERVICE_KEY, airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY, fetchImpl, clock });
 
     const base = requestBody();
     const oversized = base + ' '.repeat(16 * 1024 + 1 - byteLen(base));
@@ -892,7 +905,7 @@ describe('production app integration — POST /weather', () => {
       CLOCK_AT_0510_KST_20260722,
       CURRENT_REQUEST_EPOCH_MS,
     ]);
-    const app = buildApp({ serviceKey: FAKE_KMA_SERVICE_KEY, fetchImpl, clock });
+    const app = buildApp({ serviceKey: FAKE_KMA_SERVICE_KEY, airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY, fetchImpl, clock });
 
     const request = new Request('http://localhost/weather', {
       method: 'POST',
@@ -926,6 +939,7 @@ describe('production app integration — GET /health', () => {
   it('G. still serves the unchanged deterministic health payload', async () => {
     const app = buildApp({
       serviceKey: FAKE_KMA_SERVICE_KEY,
+      airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY,
       fetchImpl: neverCalledFetch().fetchImpl,
     });
 
@@ -955,7 +969,7 @@ describe('production /weather — secret marker never leaks into a response', ()
       CURRENT_REQUEST_EPOCH_MS,
       CURRENT_FETCHED_AT_EPOCH_MS,
     ]);
-    const app = buildApp({ serviceKey: markerKey, fetchImpl, clock });
+    const app = buildApp({ serviceKey: markerKey, airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY, fetchImpl, clock });
 
     const res = await postWeather(app, { body: requestBody() });
     const text = await res.text();
@@ -967,7 +981,7 @@ describe('production /weather — secret marker never leaks into a response', ()
   it('unsupported-location (422) path: no marker', async () => {
     const { fetchImpl } = neverCalledFetch();
     const { clock } = scriptedClock([CLOCK_AT_0510_KST_20260722, FETCHED_AT_EPOCH_MS]);
-    const app = buildApp({ serviceKey: markerKey, fetchImpl, clock });
+    const app = buildApp({ serviceKey: markerKey, airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY, fetchImpl, clock });
 
     const res = await postWeather(app, {
       body: requestBody({ latitude: NULL_ISLAND_LATITUDE, longitude: NULL_ISLAND_LONGITUDE }),
@@ -981,7 +995,7 @@ describe('production /weather — secret marker never leaks into a response', ()
   it('validation-failure (400) path: no marker', async () => {
     const { fetchImpl } = neverCalledFetch();
     const { clock } = scriptedClock([CLOCK_AT_0510_KST_20260722, FETCHED_AT_EPOCH_MS]);
-    const app = buildApp({ serviceKey: markerKey, fetchImpl, clock });
+    const app = buildApp({ serviceKey: markerKey, airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY, fetchImpl, clock });
 
     const res = await postWeather(app, { body: JSON.stringify({}) });
     const text = await res.text();
@@ -1002,7 +1016,7 @@ describe('production /weather — secret marker never leaks into a response', ()
       CLOCK_AT_0510_KST_20260722,
       new Error(internalSentinel),
     );
-    const app = buildApp({ serviceKey: markerKey, fetchImpl, clock });
+    const app = buildApp({ serviceKey: markerKey, airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY, fetchImpl, clock });
 
     const res = await postWeather(app, { body: requestBody() });
     const text = await res.text();
