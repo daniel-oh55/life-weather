@@ -69,10 +69,11 @@
   선택하지 않고 PR #69 grid-based production composition에도 연결하지 않으므로, production current
   데이터는 이 PR 이후에도 여전히 missing입니다. 자세한 내용은
   [kma-location-scheduled-current-observation.md](./kma-location-scheduled-current-observation.md) 참고.
-- AirKorea air quality (측정소별 실시간 측정정보 조회 provider boundary는 **PR #82**에서 구현됨 — 아래
-  PR #82 항목 참고. 위경도 → 측정소 변환, station resolver, application service/composition, `POST
-  /weather` 연결, AirKorea 예보는 여전히 미구현이므로 `AIR_QUALITY_CURRENT`는 production 응답에서
-  계속 missing입니다.)
+- AirKorea air quality (측정소별 실시간 측정정보 조회 provider boundary는 **PR #82**에서, TM 좌표
+  기반 근접측정소 목록 조회 provider boundary는 **PR #83**에서 구현됨 — 아래 각 PR 항목 참고. WGS84
+  위경도 → TM 좌표 변환, 행정구역 → TM 좌표 변환, 최종 closest-station 선택, station resolver,
+  application service/composition, `POST /weather` 연결, AirKorea 예보는 여전히 미구현이므로
+  `AIR_QUALITY_CURRENT`는 production 응답에서 계속 missing입니다.)
 - alerts
 - response cache
 - mobile API client의 화면 연결 (contract-safe `POST /weather` client boundary
@@ -684,5 +685,27 @@
   `AIR_QUALITY_CURRENT`는 production 응답에서 여전히 missing입니다. 실제 인증 API 호출은 수행하지
   않았습니다. 자세한 내용은
   [airkorea-current-air-quality-provider.md](./airkorea-current-air-quality-provider.md) 참고.
+- **PR #83**은 PR #82 앞단에서, 향후 station resolver가 사용할 수 있는 두 번째 AirKorea provider
+  boundary — TM(중부원점) 좌표 기반 **근접측정소 목록 조회**(`getNearbyMsrstnList`)의 request
+  검증·URL 생성, raw JSON runtime schema, 성공/upstream error/invalid response 분류, 거리(km)
+  파싱, validated station candidate 목록 반환 — 를 추가했습니다(`apps/api/src/providers/airkorea`).
+  PR #82의 module-private HTTP transport(`performAirKoreaGetRequest`, `provider.ts`)를 그대로
+  재사용하며 새 timeout/AbortController/body reader를 만들지 않았고, PR #82의 provider/테스트
+  런타임 동작은 전혀 변경되지 않았습니다(회귀 없이 그대로 통과). 공식 근거는 공공데이터포털 dataset
+  `15073877`(한국환경공단_에어코리아_측정소정보, 메타데이터 수정일 2026-06-30)의 참고문서
+  `한국환경공단_에어코리아_측정소정보_기술문서_v1.2.docx`이며, 이 provider는 문서가 "TM좌표(중부원점)
+  기반의 가까운 측정소 정보를 표출"한다고 명시한 no-version(default) 호출만 사용합니다 —
+  `ver=1.0`/`1.2`는 `tmX`/`tmY`를 도로명주소API 좌표로 재해석하고 `ver=1.1`/`1.2`가 추가하는
+  `stationCode`는 소비하지 않으므로 `ver`를 전혀 전송하지 않습니다. 이 operation은 문서상
+  `pageNo`/`numOfRows`/`dataTerm` 요청 파라미터가 없으므로 PR #82에서 근거 없이 복사하지 않았습니다.
+  성공 결과는 `stationName`과 거리(`tm`, km — `AirKoreaNearbyStationCandidate.distanceKm`)만
+  노출하며, 문서가 정렬 순서를 보장하지 않으므로 `stations[0]`을 "가장 가까운 측정소"로 간주하지
+  않고 upstream 순서 그대로 반환합니다 — closest-station 선택은 이 PR 범위가 아닙니다. malformed
+  거리 텍스트는 정상 거리로 승격하지 않고 `MALFORMED_DISTANCE`로 페이지 전체를 실패시키며, 빈
+  목록은 `NO_DATA`로 처리합니다(값 조작 없음). 이 PR은 WGS84 위경도 → TM 좌표 변환, 행정구역 → TM
+  좌표 변환, 최종 closest-station 선택, application service/composition, `POST /weather` 연결을
+  구현하지 않으므로, `AIR_QUALITY_CURRENT`는 production 응답에서 여전히 missing입니다. 실제 인증
+  API 호출은 수행하지 않았습니다. 자세한 내용은
+  [airkorea-nearby-station-provider.md](./airkorea-nearby-station-provider.md) 참고.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
