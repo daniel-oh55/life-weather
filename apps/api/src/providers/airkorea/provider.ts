@@ -1,10 +1,22 @@
 /**
  * The AirKorea (에어코리아) HTTP provider: the one place in this namespace that performs network
- * I/O. It ties the pieces together — request validation and URL building (`current-request.ts`),
- * the `fetch` call under a timeout and caller-abort that spans the full transport (response header
- * *and* body read), HTTP-status classification, size-limited body reading (`read-response.ts`),
- * the response parser (`parse-current-response.ts`), request/response correlation, and the "latest
- * measurement" selection (`docs/airkorea-current-air-quality-provider.md`, §14).
+ * I/O. It ties the pieces together — request validation and URL building (`current-request.ts`,
+ * `nearby-station-request.ts`), the `fetch` call under a timeout and caller-abort that spans the
+ * full transport (response header *and* body read), HTTP-status classification, size-limited body
+ * reading (`read-response.ts`), the response parsers (`parse-current-response.ts`,
+ * `parse-nearby-station-response.ts`), request/response correlation, and the "latest measurement"
+ * selection (`docs/airkorea-current-air-quality-provider.md`, §14).
+ *
+ * This file exports **two** providers that share the module-private
+ * {@link performAirKoreaGetRequest} transport but are otherwise independent request/response
+ * pipelines:
+ *
+ * - `createAirKoreaCurrentAirQualityProvider(FromEnv)` — 측정소별 실시간 측정정보 조회
+ *   (`getMsrstnAcctoRltmMesureDnsty`, PR #82).
+ * - `createAirKoreaNearbyStationProvider(FromEnv)` — TM-coordinate 근접측정소 목록 조회
+ *   (`getNearbyMsrstnList`), see `docs/airkorea-nearby-station-provider.md`. This provider does not
+ *   resolve a single "closest" station — it returns validated candidates only; station selection,
+ *   WGS84→TM conversion, and `POST /weather` wiring are explicitly out of scope (see that doc).
  *
  * This is an **independent** provider — it does not import any private helper from
  * `../kma/provider.ts`, per the project's provider-namespace isolation policy. It provides the same
@@ -16,8 +28,7 @@
  * Everything except the `fetch` itself is deterministic: the same request + same mocked response
  * always produce the same result. No system clock is read, no environment variable is touched at
  * import time, request objects and parsed pages are never mutated, and no global mutable state
- * exists. This provider never retries, never caches, and never resolves a station — those are
- * explicitly out of scope for this PR (see the module docblock referenced above).
+ * exists. Neither provider ever retries or caches.
  */
 
 import {
@@ -39,6 +50,18 @@ import {
   type AirKoreaCurrentAirQualityPage,
   type AirKoreaCurrentResponseIssue,
 } from './parse-current-response.js';
+import {
+  buildAirKoreaNearbyStationRequestUrl,
+  validateAirKoreaNearbyStationRequest,
+  type AirKoreaNearbyStationRequest,
+  type AirKoreaNearbyStationRequestIssue,
+} from './nearby-station-request.js';
+import { parseAirKoreaNearbyStationDistanceKm } from './nearby-station-raw-schema.js';
+import {
+  parseAirKoreaNearbyStationResponse,
+  type AirKoreaNearbyStationPage,
+  type AirKoreaNearbyStationResponseIssue,
+} from './parse-nearby-station-response.js';
 import { readAirKoreaResponseTextWithLimit } from './read-response.js';
 
 // ---------------------------------------------------------------------------
@@ -477,6 +500,194 @@ export function createAirKoreaCurrentAirQualityProviderFromEnv(
 ): CreateAirKoreaCurrentAirQualityProviderResult {
   const source = env ?? process.env;
   return createAirKoreaCurrentAirQualityProvider({
+    serviceKey: source.AIRKOREA_SERVICE_KEY as string,
+    fetchImpl: dependencies?.fetchImpl,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Nearby-station provider
+// ---------------------------------------------------------------------------
+
+/**
+ * A single validated nearby-station candidate: the officially documented `stationName` and the
+ * distance (km) from the requested TM coordinate to that station. This is **not** a final
+ * station-resolution result — it is one candidate among (possibly) several; nothing in this
+ * provider selects "the closest" station or assumes any ordering (the technical document does not
+ * document one — see `docs/airkorea-nearby-station-provider.md`). Choosing a single station is a
+ * later resolver's responsibility, out of scope for this provider.
+ */
+export interface AirKoreaNearbyStationCandidate {
+  readonly stationName: string;
+  readonly distanceKm: number;
+}
+
+/**
+ * Every way a nearby-station fetch can fail, as a discriminated union. Each variant carries only
+ * the minimum needed to act on it — never a raw upstream string, URL, body, or exception.
+ */
+export type AirKoreaNearbyStationProviderError =
+  | { readonly kind: 'INVALID_REQUEST'; readonly issues: readonly AirKoreaNearbyStationRequestIssue[] }
+  | AirKoreaTransportError
+  | { readonly kind: 'EMPTY_RESPONSE' }
+  | { readonly kind: 'NON_JSON_RESPONSE' }
+  | { readonly kind: 'INVALID_JSON' }
+  | { readonly kind: 'AIRKOREA_UPSTREAM_ERROR'; readonly resultCode: string }
+  | {
+      readonly kind: 'AIRKOREA_INVALID_RESPONSE';
+      readonly issues: readonly AirKoreaNearbyStationResponseIssue[];
+    }
+  | { readonly kind: 'MALFORMED_DISTANCE' }
+  | { readonly kind: 'NO_DATA' };
+
+export type AirKoreaNearbyStationProviderResult =
+  | { readonly ok: true; readonly stations: readonly AirKoreaNearbyStationCandidate[] }
+  | { readonly ok: false; readonly error: AirKoreaNearbyStationProviderError };
+
+/** The provider's single public method. */
+export interface AirKoreaNearbyStationProvider {
+  fetchNearbyStations(
+    request: AirKoreaNearbyStationRequest,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<AirKoreaNearbyStationProviderResult>;
+}
+
+export type CreateAirKoreaNearbyStationProviderResult =
+  | { readonly ok: true; readonly provider: AirKoreaNearbyStationProvider }
+  | { readonly ok: false; readonly error: AirKoreaProviderConfigError };
+
+function failNearbyStation(
+  error: AirKoreaNearbyStationProviderError,
+): AirKoreaNearbyStationProviderResult {
+  return { ok: false, error };
+}
+
+/**
+ * Turn a validated success page into a provider result: report an explicit no-data outcome for an
+ * empty page, otherwise convert every item's raw `tm` distance text into a finite kilometre number
+ * (`parseAirKoreaNearbyStationDistanceKm`, `nearby-station-raw-schema.ts`). A single malformed
+ * distance fails the *whole* page (`MALFORMED_DISTANCE`) rather than silently dropping that one
+ * candidate or promoting the malformed text to a fabricated distance. Pure and deterministic; the
+ * candidate order is the upstream item order — this function does not sort, and callers must not
+ * treat `stations[0]` as "the closest station" (see the technical document's ordering gap,
+ * `docs/airkorea-nearby-station-provider.md`).
+ */
+function interpretNearbyStationPage(page: AirKoreaNearbyStationPage): AirKoreaNearbyStationProviderResult {
+  if (page.items.length === 0) {
+    return failNearbyStation({ kind: 'NO_DATA' });
+  }
+
+  const stations: AirKoreaNearbyStationCandidate[] = [];
+  for (const item of page.items) {
+    const distanceKm = parseAirKoreaNearbyStationDistanceKm(item.tm);
+    if (distanceKm === null) {
+      return failNearbyStation({ kind: 'MALFORMED_DISTANCE' });
+    }
+    stations.push({ stationName: item.stationName, distanceKm });
+  }
+
+  return { ok: true, stations };
+}
+
+/**
+ * Classify a 2xx response body (already read to text). Decision order: empty → non-JSON (starts
+ * with `<`, e.g. an XML/HTML gateway page) → JSON parse → response parser → page interpretation.
+ * Pure and deterministic; the raw body never leaves this function.
+ */
+function classifyNearbyStationBody(text: string): AirKoreaNearbyStationProviderResult {
+  const trimmed = text.trim();
+  if (trimmed === '') {
+    return failNearbyStation({ kind: 'EMPTY_RESPONSE' });
+  }
+
+  if (trimmed.startsWith('<')) {
+    return failNearbyStation({ kind: 'NON_JSON_RESPONSE' });
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // The raw SyntaxError message can echo body fragments, so it is never surfaced.
+    return failNearbyStation({ kind: 'INVALID_JSON' });
+  }
+
+  const parseResult = parseAirKoreaNearbyStationResponse(parsed);
+  if (!parseResult.ok) {
+    return parseResult.error.kind === 'UPSTREAM_ERROR'
+      ? failNearbyStation({ kind: 'AIRKOREA_UPSTREAM_ERROR', resultCode: parseResult.error.resultCode })
+      : failNearbyStation({ kind: 'AIRKOREA_INVALID_RESPONSE', issues: parseResult.error.issues });
+  }
+
+  return interpretNearbyStationPage(parseResult.page);
+}
+
+/**
+ * Perform one nearby-station fetch. Request validation and URL building are nearby-station-specific;
+ * the transport is the shared {@link performAirKoreaGetRequest} (same transport instance the
+ * current-air-quality provider above uses — see the module docblock).
+ */
+async function fetchNearbyStations(
+  config: ResolvedAirKoreaProviderConfig,
+  request: AirKoreaNearbyStationRequest,
+  options?: { readonly signal?: AbortSignal },
+): Promise<AirKoreaNearbyStationProviderResult> {
+  const validation = validateAirKoreaNearbyStationRequest(request);
+  if (!validation.ok) {
+    return failNearbyStation({ kind: 'INVALID_REQUEST', issues: validation.issues });
+  }
+
+  const built = buildAirKoreaNearbyStationRequestUrl(config.serviceKey, request);
+  if (!built.ok) {
+    // Unreachable in practice (the request already validated), handled for totality.
+    return failNearbyStation({ kind: 'INVALID_REQUEST', issues: built.issues });
+  }
+
+  const transport = await performAirKoreaGetRequest(config, built.url, options);
+  if (!transport.ok) {
+    return failNearbyStation(transport.error);
+  }
+
+  return classifyNearbyStationBody(transport.text);
+}
+
+/** Build a provider bound to a resolved config. */
+function makeNearbyStationProvider(config: ResolvedAirKoreaProviderConfig): AirKoreaNearbyStationProvider {
+  return {
+    fetchNearbyStations(request, options) {
+      return fetchNearbyStations(config, request, options);
+    },
+  };
+}
+
+/**
+ * Create a nearby-station provider from explicit options. Returns a `CONFIG_ERROR` result (never
+ * throws) when the options are invalid — see {@link validateAirKoreaProviderOptions}. Shares the
+ * same {@link AirKoreaProviderOptions} shape (and `AIRKOREA_SERVICE_KEY`/`timeoutMs`/
+ * `maxResponseBytes` policy) as the current-air-quality provider above.
+ */
+export function createAirKoreaNearbyStationProvider(
+  options: AirKoreaProviderOptions,
+): CreateAirKoreaNearbyStationProviderResult {
+  const validated = validateAirKoreaProviderOptions(options);
+  if (!validated.ok) {
+    return { ok: false, error: validated.error };
+  }
+  return { ok: true, provider: makeNearbyStationProvider(validated.config) };
+}
+
+/**
+ * Create a nearby-station provider from the environment, reading **only** `AIRKOREA_SERVICE_KEY`.
+ * The environment is read when this function is *called* (default `process.env`), never at module
+ * import. A missing, empty, or whitespace-only key yields a `CONFIG_ERROR`; the key value never
+ * appears in the error.
+ */
+export function createAirKoreaNearbyStationProviderFromEnv(
+  env?: NodeJS.ProcessEnv,
+  dependencies?: { readonly fetchImpl?: typeof fetch },
+): CreateAirKoreaNearbyStationProviderResult {
+  const source = env ?? process.env;
+  return createAirKoreaNearbyStationProvider({
     serviceKey: source.AIRKOREA_SERVICE_KEY as string,
     fetchImpl: dependencies?.fetchImpl,
   });
