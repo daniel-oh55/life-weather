@@ -136,7 +136,7 @@ export function parseAirKoreaCurrentAirQualityResponse(
       numOfRows: body.numOfRows,
       pageNo: body.pageNo,
       totalCount: body.totalCount,
-      items: body.items.item,
+      items: body.items,
     },
   };
 }

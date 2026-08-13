@@ -754,5 +754,33 @@
   않았습니다. 자세한 내용은
   [airkorea-location-current-air-quality-service.md](./airkorea-location-current-air-quality-service.md)
   참고.
+- **PR #87**은 2026-08-13 Owner-executed authenticated Public Data Portal preview 호출 3건(각각
+  `getTMStdrCrdnt`/`getNearbyMsrstnList`/`getMsrstnAcctoRltmMesureDnsty`의 성공 응답 1건씩)에서
+  실측된 live JSON 형태에 PR #82/#83/#84 provider boundary를 맞추는 **compatibility
+  remediation**입니다 — 새 기능이나 provider가 아니라 기존 세 provider의 raw schema/parser 수정만
+  포함합니다. 세 provider 모두 `response.body.items`가 (이전에 문서에 근거 없이 가정했던 `{ item:
+  [...] }` wrapper가 아니라) **direct array**임이 확인되어 raw schema를 수정했습니다. 근접측정소
+  목록 조회(`getNearbyMsrstnList`)의 `tm`(거리, km)은 이전에 문자열로 가정했으나 실제로는 JSON
+  **number**임이 확인되어(실측값 `1.5`/`1.7`/`1.9`) `z.coerce` 없이 정확히 number 타입만 허용하도록
+  수정했고, TM 기준좌표 조회의 `tmX`/`tmY`는 기존 문자열 가정이 그대로 유지되었습니다. 측정소별
+  실시간 측정정보 조회(`getMsrstnAcctoRltmMesureDnsty`)의 `dataTime`에 자정을 `24:00`으로 표기하는
+  실제 사례(`"2026-08-12 24:00"`)가 확인되어, `parseAirKoreaDataTime`(`current-raw-schema.ts`)이
+  정확히 `24:00`(다른 `24:xx`는 계속 거부)만 순수 달력 연산(월말·연말·윤년 처리 포함, `Date`나
+  시스템 시계 없음)으로 다음 날 `00:00`으로 canonicalize하고, `normalizeAirKoreaCurrentAirQuality`가
+  이를 그대로 다음 날 KST `measuredAt`으로 반영하도록 확장했습니다. "최신 측정값" 선택
+  (`provider.ts`의 `selectLatestItem`)도 raw 문자열이 아닌 이 canonical(24:00-rollover 적용 후)
+  시각을 비교하도록 바뀌어, `24:00` 행과 다음 날 `00:00` 행처럼 서로 다른 표기가 같은 순간을
+  의미하는 경우에도 가짜 시간차를 만들지 않고 결정적으로 처리합니다. 이 세 사실은 각 provider의
+  positive(성공) 응답에서만 확인되었으며, zero-result 응답의 실제 JSON 직렬화 형태는 여전히
+  live-verified가 아닙니다(구조적으로 자연스럽게 도출되는 빈 direct array 가정만 유지). 이 PR은
+  `apps/api/src/providers/airkorea/**`(및 그 문서) 밖의 어떤 파일도 변경하지 않습니다 —
+  `packages/contracts`, `packages/weather-core`, KMA provider, PR #85 application
+  orchestration/policy, PR #86 production 연결(아직 main에 병합되지 않음), `apps/api/src/routes/**`,
+  `apps/api/src/presenters/**`는 모두 무변경입니다. 실제 인증 API 호출은 이 PR 자체에서는 수행하지
+  않았습니다(위 실측은 Owner가 별도로 수행한 선행 사실입니다). 자세한 내용은
+  [airkorea-current-air-quality-provider.md](./airkorea-current-air-quality-provider.md),
+  [airkorea-nearby-station-provider.md](./airkorea-nearby-station-provider.md),
+  [airkorea-tm-coordinate-provider.md](./airkorea-tm-coordinate-provider.md)의 각 "Owner-observed
+  live JSON evidence" 절 참고.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.

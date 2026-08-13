@@ -26,6 +26,14 @@
  * per the technical document's own 버전(ver) notes, only present when `ver=1.1`/`1.2` is requested —
  * this provider never sends `ver` (see `nearby-station-request.ts`), and the document's own
  * no-version request/response example does not include it, so it is never expected here regardless.
+ *
+ * `body.items` is a **direct array** (not a `{ item: [...] }` wrapper) and `tm` is a JSON
+ * **number** (not a string) — both confirmed by an Owner-executed authenticated Public Data Portal
+ * preview call on 2026-08-13 that observed numeric `tm` values including `1.5`/`1.7`/`1.9` (see
+ * `docs/airkorea-nearby-station-provider.md`, "Owner-observed live JSON evidence"). The technical
+ * document's own request/response example only showed XML text, so the project previously treated
+ * `tm` as a string by analogy with the current-air-quality operation; that assumption is now
+ * corrected by live evidence, not by speculative coercion.
  */
 
 import { z } from 'zod';
@@ -38,32 +46,26 @@ const airKoreaNearbyStationName = z.string().refine(isAirKoreaStationName, {
 });
 
 /**
- * `tm` (거리, km) as documented: a required string field (항목구분: 1) — the technical document's
- * request/response example shows plain non-negative decimal text (`8.2`, `9.3`, `9.7`), with no
- * documented "missing distance" sentinel (unlike `khaiValue`'s `"-"` in the current-air-quality
- * operation — a computed distance to a returned station is always calculable). This schema only
- * checks that the key is present and holds a string; shape-vs-value parsing is
- * {@link parseAirKoreaNearbyStationDistanceKm}'s job, matching the project's raw-boundary-vs-
- * semantic-parsing split (see `current-raw-schema.ts`'s `pm10Value` etc.).
+ * `tm` (거리, km) as live-observed: a required JSON **number** field (항목구분: 1) — the technical
+ * document's own request/response example only showed XML text with no documented "missing
+ * distance" sentinel (a computed distance to a returned station is always calculable), but an
+ * Owner-executed authenticated Public Data Portal preview call on 2026-08-13 confirmed the JSON
+ * serialization is a bare number (observed values included `1.5`/`1.7`/`1.9`), not a string. No
+ * `z.coerce` — a string `tm` (even a numeric-looking one) is rejected, not silently accepted for
+ * backward compatibility with the project's earlier (pre-live-evidence) string assumption. This
+ * schema only checks that the key is present and holds a JSON number; finite/non-negative
+ * range-checking is {@link parseAirKoreaNearbyStationDistanceKm}'s job, matching the project's
+ * raw-boundary-vs-semantic-parsing split (see `current-raw-schema.ts`'s `pm10Value` etc.).
  */
-const airKoreaNearbyStationDistance = z.string();
-
-/** Matches a non-negative plain-decimal distance string (no sign, no exponent). */
-const AIRKOREA_DISTANCE_PATTERN = /^\d+(\.\d+)?$/;
+const airKoreaNearbyStationDistance = z.number();
 
 /**
- * Parse a raw `tm` string into a finite, non-negative kilometre distance, or `null` if it is not a
- * well-formed non-negative decimal (rejects a sign, exponent notation, empty string, and any text
- * that is not exactly digits with an optional decimal fraction) or if the parsed value is not
- * finite (an implausibly long digit string can overflow to `Infinity`). Never promotes malformed
- * text to a fabricated distance. Pure — no `Date`, no system clock, no I/O.
+ * Validate a raw `tm` number into a finite, non-negative kilometre distance, or `null` if it is not
+ * finite (`NaN`/`Infinity`/`-Infinity`) or negative. Never promotes a malformed value to a
+ * fabricated distance. Pure — no `Date`, no system clock, no I/O.
  */
-export function parseAirKoreaNearbyStationDistanceKm(value: string): number | null {
-  if (!AIRKOREA_DISTANCE_PATTERN.test(value)) {
-    return null;
-  }
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+export function parseAirKoreaNearbyStationDistanceKm(value: number): number | null {
+  return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 /**
@@ -79,10 +81,11 @@ export const airKoreaNearbyStationItemSchema = z.object({
 
 export type AirKoreaNearbyStationItem = z.infer<typeof airKoreaNearbyStationItemSchema>;
 
-/** `response.body.items`. The list is nested under `items.item`, which must be an **array**. */
-export const airKoreaNearbyStationItemsSchema = z.object({
-  item: z.array(airKoreaNearbyStationItemSchema),
-});
+/**
+ * `response.body.items` — a **direct array** of items (Owner-observed live JSON evidence,
+ * 2026-08-13; see the module docblock). Not a `{ item: [...] }` wrapper.
+ */
+export const airKoreaNearbyStationItemsSchema = z.array(airKoreaNearbyStationItemSchema);
 
 /** A 1-based page index (`pageNo`). */
 const airKoreaPageNumber = z.number().int().min(1);
@@ -110,12 +113,12 @@ export const airKoreaNearbyStationBodySchema = z
     items: airKoreaNearbyStationItemsSchema,
   })
   .superRefine((body, ctx) => {
-    const itemCount = body.items.item.length;
+    const itemCount = body.items.length;
 
     if (itemCount > body.numOfRows) {
       ctx.addIssue({
         code: 'custom',
-        path: ['items', 'item'],
+        path: ['items'],
         message: 'item count must not exceed numOfRows',
       });
     }
@@ -124,14 +127,14 @@ export const airKoreaNearbyStationBodySchema = z
       if (itemCount > 0) {
         ctx.addIssue({
           code: 'custom',
-          path: ['items', 'item'],
+          path: ['items'],
           message: 'items must be empty when totalCount is zero',
         });
       }
     } else if (itemCount > body.totalCount) {
       ctx.addIssue({
         code: 'custom',
-        path: ['items', 'item'],
+        path: ['items'],
         message: 'item count must not exceed totalCount',
       });
     }

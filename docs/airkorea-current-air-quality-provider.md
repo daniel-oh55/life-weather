@@ -11,6 +11,28 @@ runtime schema, 성공/upstream error/invalid response 분류, "최신 측정값
 application service/composition, `POST /weather` 연결, AirKorea 예보(forecast)는 이 PR
 범위가 아닙니다.
 
+## Owner-observed live JSON evidence (2026-08-13, PR #87)
+
+PR #82 시점에는 공식 기술문서(XML 예제만 제공)만 근거였고, JSON 직렬화의 세부 사항은 여러 항목이
+미검증 gap으로 남아 있었습니다(§ "실제 인증 API 검증 상태" 참고). 2026-08-13, Owner가 인증된
+Public Data Portal preview 호출 3건을 직접 실행했고, 그중 하나가 이 operation
+(`getMsrstnAcctoRltmMesureDnsty`)의 성공 응답이었습니다. 이 호출에서 다음 두 가지가 실측
+확인되었습니다 — PR #82/#83/#84 당시에는 알려지지 않았던 사실이며, 아래에서 이 문서의 나머지
+내용과 명확히 구분합니다.
+
+* **`response.body.items`는 `{ item: [...] }` wrapper가 아니라 direct array입니다.** 이전
+  구현은 문서에 명시되지 않은 상태에서 KMA provider의 관행을 따라 wrapper 형태를 가정했으나,
+  실측 결과 direct array임이 확인되어 PR #87에서 raw schema를 수정했습니다.
+* **`dataTime`에 자정을 `24:00`으로 표기하는 행이 실제로 존재합니다** (실측 예: `dataTime:
+  "2026-08-12 24:00"`). 이전 문서(§ "측정 시각(dataTime) 정규화")는 이 표기가 확인되지 않은
+  gap이라고 기록했으나, 이제 확인되었으므로 PR #87에서 `24:00`을 다음 날 `00:00`으로 정규화하는
+  rollover를 구현했습니다. `24:01`/`24:59`/`25:00` 등 다른 값은 여전히 malformed로 거부됩니다.
+
+이 두 사실은 **positive(성공) 응답에서만** 확인되었습니다 — 0건 결과(zero-result)의 실제 JSON
+직렬화 형태는 이 preview 호출로 검증되지 않았습니다(§ "Zero-result" 참고). PM2.5/등급 sentinel의
+JSON 직렬화 등 그 외 미검증 gap은 이 preview로 해소되지 않았으므로 § "실제 인증 API 검증 상태"에
+계속 미검증으로 남습니다.
+
 ## 공식 자료
 
 | 항목 | 값 |
@@ -116,7 +138,9 @@ URL은 `URL` + `URLSearchParams`로만 구성하며, 서비스키와 `stationNam
 
 ## Raw response 계약
 
-문서의 응답 필드 표(측정소별 실시간 측정정보 조회) 전체를 옮기면 다음과 같습니다.
+`response.body.items`는 **direct array**입니다(`{ item: [...] }` wrapper 아님) — 2026-08-13
+Owner-observed live JSON evidence로 확인됨(§ "Owner-observed live JSON evidence" 참고). 문서의
+응답 필드 표(측정소별 실시간 측정정보 조회) 전체를 옮기면 다음과 같습니다.
 
 | 필드 | 항목구분 | 설명 |
 | --- | --- | --- |
@@ -225,10 +249,17 @@ export됩니다.
 `parseAirKoreaDataTime`이 담당). 결과는 `YYYY-MM-DDTHH:mm:00+09:00` 형태의 ISO-8601
 절대 시각이며, `CurrentAirQuality.measuredAt`(contracts `isoDateTime`)을 만족합니다.
 
-시각 `HH`는 `00`-`23`, `MM`은 `00`-`59`만 허용합니다. 일부 공공데이터포털 서비스에서 통용되는
-자정을 `24:00`으로 표기하는 관행이 **이 오퍼레이션의 `dataTime`에 대해 이 문서에서 확인되지
-않았으므로**, `24:00` 값은 (실제로 나타난다면) malformed로 거부되어 정규화 실패가 됩니다.
-이는 알려진 gap으로 남겨두며, 인증된 실응답으로 재확인이 필요합니다.
+시각 `HH`는 `00`-`23`, `MM`은 `00`-`59`를 허용합니다. 추가로 일부 공공데이터포털 서비스에서
+통용되는 자정을 `24:00`으로 표기하는 관행이 **이 오퍼레이션의 `dataTime`에서 2026-08-13
+Owner-observed live JSON evidence로 실제 확인**되었습니다(실측 예: `dataTime: "2026-08-12
+24:00"`) — PR #82 당시에는 미확인 gap이었으나, PR #87에서 이를 반영해 정확히 `24:00`(분은 반드시
+`00`)만 유효한 end-of-day 표기로 허용하고, 순수 달력 연산(`Date`나 시스템 시계 사용 없음)으로 다음
+날 `00:00`으로 canonicalize합니다 — 월말, 12월 31일 → 1월 1일, 윤년 2월 경계를 모두 올바르게
+처리합니다. `24:01`/`24:59`/`25:00` 등 그 외 `24`시 초과 또는 `24:00`이 아닌 값은 여전히
+malformed로 거부됩니다. 예:
+
+* `2026-08-12 24:00` → `2026-08-13T00:00:00+09:00`
+* `2026-12-31 24:00` → `2027-01-01T00:00:00+09:00`
 
 ## "최신 측정값" 선택 정책
 
@@ -237,13 +268,19 @@ export됩니다.
 어디에도 없습니다. 따라서 이 provider는 **`items[0]`을 암묵적으로 사용하지 않습니다.**
 
 대신 `provider.ts`의 `selectLatestItem`이 각 item의 공식 `dataTime` **값**을 비교해 가장
-늦은 시각의 item을 선택합니다 — `dataTime`이 raw schema에서 이미 `YYYY-MM-DD HH:mm`
-고정폭·zero-padded 형식으로 검증되므로, 문자열 사전식 비교가 곧 시간 순서 비교와 동일합니다.
-이는 배열의 **위치**가 아니라 문서가 보장하는 **필드 값**만으로 최신 행을 결정하는 정책이며,
-정렬 순서에 대한 어떤 가정도 하지 않습니다. 동일한 `dataTime`을 가진 행이 둘 이상 있는(정상
-운영에서는 발생하지 않아야 할) 이상 상황에서는 배열에서 먼저 나온 행을 결정적으로 선택합니다
-— 이는 "정렬 정책"이 아니라 단순한 동점 처리이며, 여러 번 호출해도 같은 입력에는 항상 같은
-출력을 냅니다.
+늦은 시각의 item을 선택합니다. PR #87 이전에는 `dataTime` raw 문자열을 직접 사전식 비교했으나 —
+`24:00` 표기 지원 이후에는 이 방식만으로는 부족합니다(§ "측정 시각(dataTime) 정규화" 참고): `24:00`
+행과 다음 날 `00:00` 행은 서로 다른 raw 문자열이지만 **정확히 같은 순간**을 의미합니다. 따라서
+PR #87부터는 각 item의 `dataTime`을 `parseAirKoreaDataTime`으로 파싱한(이미 `24:00` rollover가
+적용된) **canonical parts**를 `formatAirKoreaDataTimeCanonical`로 다시 zero-padded
+`YYYY-MM-DD HH:mm` 문자열로 만든 뒤 이 canonical 문자열을 비교합니다 — canonical 형식은 항상
+`hour <= 23`이므로 문자열 사전식 비교가 시간 순서 비교와 동일하며, `24:00` 행과 다음 날 `00:00`
+행은 같은 canonical 값으로 정확히 동점 처리됩니다(가짜 시간차를 만들지 않음). 이는 배열의
+**위치**가 아니라 문서가 보장하는 **필드 값의 semantic 시각**만으로 최신 행을 결정하는 정책이며,
+정렬 순서에 대한 어떤 가정도 하지 않습니다. 동일한 canonical 시각을 가진 행이 둘 이상 있는(리터럴
+중복이든 `24:00`/다음날 `00:00`처럼 서로 다른 표기든) 경우 배열에서 먼저 나온 행을 결정적으로
+선택합니다 — 이는 "정렬 정책"이 아니라 단순한 동점 처리이며, 여러 번 호출해도 같은 입력에는 항상
+같은 출력을 냅니다.
 
 응답이 유효하지만 `item` 목록이 비어 있으면(`totalCount === 0`) `NO_DATA`를 반환하고
 `CurrentAirQuality`를 **조작(fabricate)하지 않습니다.** `totalCount`가 실제로 수신한 행 수를
@@ -297,16 +334,26 @@ provider의 런타임 동작은 이 PR에서 전혀 변경되지 않았습니다
 
 ## 실제 인증 API 검증 상태
 
-**실제 인증 서비스키를 사용한 AirKorea API 호출은 수행하지 않았습니다.** 모든
-request/response shape 근거는 위 공식 기술문서의 텍스트·요청응답 예제에서만 가져왔습니다.
-아래는 문서만으로는 100% 확정할 수 없어 향후 인증된 실응답으로 재확인이 필요한 항목입니다.
+PR #82 시점에는 실제 인증 서비스키를 사용한 AirKorea API 호출을 전혀 수행하지 않았습니다. PR #87
+(2026-08-13)에서 Owner가 인증된 Public Data Portal preview 호출을 직접 실행해 아래 두 항목을
+확인했습니다 — 자세한 내용은 § "Owner-observed live JSON evidence" 참고.
+
+* ~~JSON 직렬화에서 `body.items`가 direct array인지 `{ item: [...] }` wrapper인지~~ —
+  **2026-08-13 확인됨: direct array.**
+* ~~`dataTime`에 자정을 `24:00`으로 표기하는 사례가 실제로 존재하는지~~ — **2026-08-13 확인됨:
+  존재함(`"2026-08-12 24:00"`).**
+
+이 preview 호출은 이 operation의 **positive(성공) 응답 하나만** 대상이었으므로, 아래 항목은
+여전히 문서만으로는 100% 확정할 수 없어 향후 추가 인증된 실응답으로 재확인이 필요합니다.
 
 * JSON 직렬화에서 결측 등급이 실제로 빈 문자열(`""`)로 나타나는지(문서 예제는 XML만 제공).
 * `pm25Value`/`pm25Grade`가 `ver=1.5`에서 실제로 항상 키 자체는 존재하되 값만 sentinel인지,
   아니면 키 자체가 완전히 생략되는지.
-* `dataTime`에 자정을 `24:00`으로 표기하는 사례가 실제로 존재하는지.
 * PM10/PM2.5/O3/CAI 각각에 `"-"` sentinel이 실제로 동일하게 적용되는지(문서에는 `khaiValue`
   예시만 있음).
+* 0건 결과(zero-result)의 실제 JSON 직렬화 형태(§ "Zero-result" 관련 — 이 provider는 아직
+  positive 응답만 확인했으므로, zero-result가 여전히 빈 direct array(`items: []`)로 직렬화되는지는
+  구조적으로 자연스럽게 도출되는 가정일 뿐, 별도로 실측되지 않았습니다).
 
 ## 범위 확인 (이 PR에서 구현하지 않은 것)
 

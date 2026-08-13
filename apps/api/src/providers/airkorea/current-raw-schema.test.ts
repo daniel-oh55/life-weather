@@ -5,6 +5,7 @@ import {
   airKoreaCurrentAirQualityItemSchema,
   airKoreaCurrentAirQualitySuccessResponseSchema,
   airKoreaResponseEnvelopeSchema,
+  formatAirKoreaDataTimeCanonical,
   parseAirKoreaDataTime,
 } from './current-raw-schema.js';
 
@@ -36,7 +37,7 @@ function successResponse(items: unknown[], overrides?: Record<string, unknown>) 
         numOfRows: 100,
         pageNo: 1,
         totalCount: items.length,
-        items: { item: items },
+        items,
         ...overrides,
       },
     },
@@ -70,10 +71,6 @@ describe('parseAirKoreaDataTime', () => {
     expect(parseAirKoreaDataTime('2025-04-31 00:00')).toBeNull();
   });
 
-  it('rejects hour 24 (no confirmed 24:00 convention for this operation)', () => {
-    expect(parseAirKoreaDataTime('2025-01-01 24:00')).toBeNull();
-  });
-
   it('rejects minute 60', () => {
     expect(parseAirKoreaDataTime('2025-01-01 10:60')).toBeNull();
   });
@@ -82,6 +79,112 @@ describe('parseAirKoreaDataTime', () => {
     expect(parseAirKoreaDataTime('2025/01/01 10:00')).toBeNull();
     expect(parseAirKoreaDataTime('not-a-date')).toBeNull();
     expect(parseAirKoreaDataTime('')).toBeNull();
+  });
+
+  describe('24:00 end-of-day rollover (2026-08-13 Owner-observed live JSON evidence)', () => {
+    it('accepts 24:00 and rolls over to the next calendar day at 00:00', () => {
+      expect(parseAirKoreaDataTime('2026-08-12 24:00')).toEqual({
+        year: 2026,
+        month: 8,
+        day: 13,
+        hour: 0,
+        minute: 0,
+      });
+    });
+
+    it('rolls December 31 24:00 over to January 1 of the next year', () => {
+      expect(parseAirKoreaDataTime('2026-12-31 24:00')).toEqual({
+        year: 2027,
+        month: 1,
+        day: 1,
+        hour: 0,
+        minute: 0,
+      });
+    });
+
+    it('rolls an ordinary month-end 24:00 over to the first of the next month', () => {
+      expect(parseAirKoreaDataTime('2026-09-30 24:00')).toEqual({
+        year: 2026,
+        month: 10,
+        day: 1,
+        hour: 0,
+        minute: 0,
+      });
+    });
+
+    it('rolls leap-year Feb 29 24:00 over to March 1', () => {
+      expect(parseAirKoreaDataTime('2024-02-29 24:00')).toEqual({
+        year: 2024,
+        month: 3,
+        day: 1,
+        hour: 0,
+        minute: 0,
+      });
+    });
+
+    it('rolls leap-year Feb 28 24:00 within February (still a leap year, day 29 exists)', () => {
+      expect(parseAirKoreaDataTime('2024-02-28 24:00')).toEqual({
+        year: 2024,
+        month: 2,
+        day: 29,
+        hour: 0,
+        minute: 0,
+      });
+    });
+
+    it('rolls a non-leap-year Feb 28 24:00 over to March 1', () => {
+      expect(parseAirKoreaDataTime('2025-02-28 24:00')).toEqual({
+        year: 2025,
+        month: 3,
+        day: 1,
+        hour: 0,
+        minute: 0,
+      });
+    });
+
+    it('rejects 24:01 (only exact 24:00 is a legal end-of-day notation)', () => {
+      expect(parseAirKoreaDataTime('2026-08-12 24:01')).toBeNull();
+    });
+
+    it('rejects 24:59', () => {
+      expect(parseAirKoreaDataTime('2026-08-12 24:59')).toBeNull();
+    });
+
+    it('rejects 25:00 (not a legal end-of-day notation)', () => {
+      expect(parseAirKoreaDataTime('2026-08-12 25:00')).toBeNull();
+    });
+
+    it('still rejects an invalid calendar date even at 24:00 (Feb 30 does not exist)', () => {
+      expect(parseAirKoreaDataTime('2026-02-30 24:00')).toBeNull();
+    });
+
+    it('ordinary 00-23 hour parsing is unaffected', () => {
+      expect(parseAirKoreaDataTime('2026-08-12 23:59')).toEqual({
+        year: 2026,
+        month: 8,
+        day: 12,
+        hour: 23,
+        minute: 59,
+      });
+      expect(parseAirKoreaDataTime('2026-08-12 00:00')).toEqual({
+        year: 2026,
+        month: 8,
+        day: 12,
+        hour: 0,
+        minute: 0,
+      });
+    });
+  });
+});
+
+describe('formatAirKoreaDataTimeCanonical', () => {
+  it('formats a 24:00 row and the rolled-over next-day 00:00 row to the same canonical key', () => {
+    const rolledOver = parseAirKoreaDataTime('2026-08-12 24:00')!;
+    const nextDayMidnight = parseAirKoreaDataTime('2026-08-13 00:00')!;
+    expect(formatAirKoreaDataTimeCanonical(rolledOver)).toBe(
+      formatAirKoreaDataTimeCanonical(nextDayMidnight),
+    );
+    expect(formatAirKoreaDataTimeCanonical(rolledOver)).toBe('2026-08-13 00:00');
   });
 });
 
@@ -201,7 +304,7 @@ describe('airKoreaCurrentAirQualityBodySchema — pagination self-contradiction'
       numOfRows: 100,
       pageNo: 1,
       totalCount: 1,
-      items: { item: [VALID_ITEM] },
+      items: [VALID_ITEM],
     });
     expect(result.success).toBe(true);
   });
@@ -211,7 +314,7 @@ describe('airKoreaCurrentAirQualityBodySchema — pagination self-contradiction'
       numOfRows: 100,
       pageNo: 1,
       totalCount: 0,
-      items: { item: [] },
+      items: [],
     });
     expect(result.success).toBe(true);
   });
@@ -221,7 +324,7 @@ describe('airKoreaCurrentAirQualityBodySchema — pagination self-contradiction'
       numOfRows: 100,
       pageNo: 1,
       totalCount: 0,
-      items: { item: [VALID_ITEM] },
+      items: [VALID_ITEM],
     });
     expect(result.success).toBe(false);
   });
@@ -231,7 +334,7 @@ describe('airKoreaCurrentAirQualityBodySchema — pagination self-contradiction'
       numOfRows: 1,
       pageNo: 1,
       totalCount: 2,
-      items: { item: [VALID_ITEM, VALID_ITEM] },
+      items: [VALID_ITEM, VALID_ITEM],
     });
     expect(result.success).toBe(false);
   });
@@ -241,17 +344,17 @@ describe('airKoreaCurrentAirQualityBodySchema — pagination self-contradiction'
       numOfRows: 100,
       pageNo: 1,
       totalCount: 1,
-      items: { item: [VALID_ITEM, VALID_ITEM] },
+      items: [VALID_ITEM, VALID_ITEM],
     });
     expect(result.success).toBe(false);
   });
 
-  it('rejects a single object instead of an array under items.item', () => {
+  it('rejects a single object instead of a direct array under items (old { item: [...] } wrapper)', () => {
     const result = airKoreaCurrentAirQualityBodySchema.safeParse({
       numOfRows: 100,
       pageNo: 1,
       totalCount: 1,
-      items: { item: VALID_ITEM },
+      items: { item: [VALID_ITEM] },
     });
     expect(result.success).toBe(false);
   });

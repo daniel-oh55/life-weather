@@ -13,7 +13,7 @@ function successBody(items: readonly Record<string, unknown>[]): string {
         numOfRows: 100,
         pageNo: 1,
         totalCount: items.length,
-        items: { item: items },
+        items,
       },
     },
   });
@@ -125,6 +125,108 @@ describe('AirKorea provider — successful in-memory JSON', () => {
     if (outcome.ok) {
       expect(outcome.observation.dataTime).toBe('2020-11-25 13:00');
     }
+  });
+
+  it('accepts a direct-array body.items live JSON shape (2026-08-13 Owner-observed evidence)', async () => {
+    const fetchImpl = vi.fn(async () => new Response(successBody([item()]), { status: 200 }));
+    const result = createAirKoreaCurrentAirQualityProvider({ serviceKey: FAKE_KEY, fetchImpl });
+    if (!result.ok) throw new Error('unexpected config error');
+
+    const outcome = await result.provider.fetchCurrentAirQuality({ stationName: '종로구' });
+    expect(outcome.ok).toBe(true);
+  });
+
+  it('rejects the old { item: [...] } wrapper shape as AIRKOREA_INVALID_RESPONSE', async () => {
+    const body = JSON.stringify({
+      response: {
+        header: { resultCode: '00', resultMsg: 'NORMAL_CODE' },
+        body: { numOfRows: 100, pageNo: 1, totalCount: 1, items: { item: [item()] } },
+      },
+    });
+    const fetchImpl = vi.fn(async () => new Response(body, { status: 200 }));
+    const result = createAirKoreaCurrentAirQualityProvider({ serviceKey: FAKE_KEY, fetchImpl });
+    if (!result.ok) throw new Error('unexpected config error');
+
+    const outcome = await result.provider.fetchCurrentAirQuality({ stationName: '종로구' });
+    expect(outcome).toEqual({
+      ok: false,
+      error: { kind: 'AIRKOREA_INVALID_RESPONSE', issues: expect.any(Array) },
+    });
+  });
+
+  describe('latest-row selection across the 24:00 midnight boundary', () => {
+    it('selects a next-calendar-day 00:xx row over an earlier same-day 23:xx row', async () => {
+      const earlier = item({ dataTime: '2026-08-12 23:00', pm10Value: '10' });
+      const nextDay = item({ dataTime: '2026-08-13 00:00', pm10Value: '99' });
+      const fetchImpl = vi.fn(
+        async () => new Response(successBody([earlier, nextDay]), { status: 200 }),
+      );
+      const result = createAirKoreaCurrentAirQualityProvider({ serviceKey: FAKE_KEY, fetchImpl });
+      if (!result.ok) throw new Error('unexpected config error');
+
+      const outcome = await result.provider.fetchCurrentAirQuality({ stationName: '종로구' });
+      expect(outcome.ok).toBe(true);
+      if (outcome.ok) {
+        expect(outcome.observation.dataTime).toBe('2026-08-13 00:00');
+        expect(outcome.observation.pm10Value).toBe('99');
+      }
+    });
+
+    it('treats a 24:00 row and the next day 00:00 row as the exact same instant deterministically (first-encountered wins, reversed order)', async () => {
+      const asEndOfDay = item({ dataTime: '2026-08-12 24:00', pm10Value: 'end-of-day' });
+      const asNextDayMidnight = item({ dataTime: '2026-08-13 00:00', pm10Value: 'next-day' });
+
+      const fetchImplForward = vi.fn(
+        async () => new Response(successBody([asEndOfDay, asNextDayMidnight]), { status: 200 }),
+      );
+      const forwardResult = createAirKoreaCurrentAirQualityProvider({
+        serviceKey: FAKE_KEY,
+        fetchImpl: fetchImplForward,
+      });
+      if (!forwardResult.ok) throw new Error('unexpected config error');
+      const forwardOutcome = await forwardResult.provider.fetchCurrentAirQuality({
+        stationName: '종로구',
+      });
+      expect(forwardOutcome.ok).toBe(true);
+      if (forwardOutcome.ok) {
+        expect(forwardOutcome.observation.pm10Value).toBe('end-of-day');
+      }
+
+      const fetchImplReversed = vi.fn(
+        async () => new Response(successBody([asNextDayMidnight, asEndOfDay]), { status: 200 }),
+      );
+      const reversedResult = createAirKoreaCurrentAirQualityProvider({
+        serviceKey: FAKE_KEY,
+        fetchImpl: fetchImplReversed,
+      });
+      if (!reversedResult.ok) throw new Error('unexpected config error');
+      const reversedOutcome = await reversedResult.provider.fetchCurrentAirQuality({
+        stationName: '종로구',
+      });
+      expect(reversedOutcome.ok).toBe(true);
+      if (reversedOutcome.ok) {
+        expect(reversedOutcome.observation.pm10Value).toBe('next-day');
+      }
+    });
+
+    it('selects the true latest row among a 23:xx row, a 24:00 row, and a later next-day row, regardless of array order', async () => {
+      const lateEvening = item({ dataTime: '2026-08-12 23:30', pm10Value: 'late-evening' });
+      const endOfDay = item({ dataTime: '2026-08-12 24:00', pm10Value: 'end-of-day' });
+      const laterNextDay = item({ dataTime: '2026-08-13 01:00', pm10Value: 'later-next-day' });
+
+      const fetchImpl = vi.fn(
+        async () =>
+          new Response(successBody([endOfDay, laterNextDay, lateEvening]), { status: 200 }),
+      );
+      const result = createAirKoreaCurrentAirQualityProvider({ serviceKey: FAKE_KEY, fetchImpl });
+      if (!result.ok) throw new Error('unexpected config error');
+
+      const outcome = await result.provider.fetchCurrentAirQuality({ stationName: '종로구' });
+      expect(outcome.ok).toBe(true);
+      if (outcome.ok) {
+        expect(outcome.observation.pm10Value).toBe('later-next-day');
+      }
+    });
   });
 });
 
@@ -297,7 +399,7 @@ describe('AirKorea provider — response classification', () => {
           numOfRows: 100,
           pageNo: 1,
           totalCount: 5,
-          items: { item: [item()] },
+          items: [item()],
         },
       },
     });
