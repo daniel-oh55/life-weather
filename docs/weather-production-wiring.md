@@ -348,7 +348,7 @@ presenter, `index.ts`/`api-app.ts` runtime, the deployment configuration section
 - **Route factory and presenter unchanged.** `apps/api/src/routes/**` and `apps/api/src/presenters/**`
   were not modified; the combined result stays exactly `KmaLocationHourlyOverviewResult`-compatible.
 
-See `apps/api/src/services/airkorea-location-current-air-quality.md` (PR #85,
+See `apps/api/src/services/airkorea-location-current-air-quality.ts` (PR #85,
 `docs/airkorea-location-current-air-quality-service.md`) for the AirKorea application-service pipeline
 this wiring consumes, and `docs/kma-location-current-hourly-overview-composition.md` /
 `docs/kma-location-current-hourly-overview.md` for the KMA graph it composes alongside.

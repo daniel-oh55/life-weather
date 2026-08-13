@@ -80,11 +80,22 @@ const CURRENT_REQUEST_EPOCH_MS = Date.UTC(2026, 6, 21, 20, 12, 10, 0);
 const CURRENT_FETCHED_AT_EPOCH_MS = Date.UTC(2026, 6, 21, 20, 13, 45, 678);
 const CURRENT_FETCHED_AT_ISO = '2026-07-21T20:13:45.678Z';
 
+/**
+ * The **fifth** clock read — the PR #86 AirKorea current source metadata resolver's `fetchedAt`
+ * materialization, read only after all three AirKorea provider calls (TM coordinate, nearby station,
+ * current air quality) resolve successfully.
+ */
+const AIRKOREA_FETCHED_AT_EPOCH_MS = Date.UTC(2026, 6, 21, 20, 15, 30, 0);
+const AIRKOREA_FETCHED_AT_ISO = '2026-07-21T20:15:30.000Z';
+
 /** The fixed app-internal `sourceId` for a KMA 단기예보 hourly source. */
 const SHORT_SOURCE_ID = 'kma-short-forecast-hourly';
 
 /** The fixed app-internal `sourceId` for the KMA 초단기실황 (`getUltraSrtNcst`) current source. */
 const CURRENT_SOURCE_ID = 'kma-ultra-short-current-observation';
+
+/** The fixed app-internal `sourceId` for the AirKorea 측정소별 실시간 측정정보 current air-quality source. */
+const AIRKOREA_SOURCE_ID = 'airkorea-current-air-quality';
 
 /** The injected response-`meta` clock instant (distinct from the KMA data clock) and its ISO string. */
 const META_GENERATED_AT_ISO = '2026-07-24T05:05:00.000Z';
@@ -145,6 +156,33 @@ function makeLocation(overrides: Partial<WeatherLocation> = {}): WeatherLocation
 
 function requestBody(overrides: Partial<WeatherLocation> = {}): string {
   return JSON.stringify({ location: makeLocation(overrides) });
+}
+
+/**
+ * A synthetic, contract-valid Korean **leaf** location (non-null `adminArea1`/`adminArea2`/
+ * `adminArea3`) — the administrative granularity the PR #85 AirKorea location service requires to
+ * resolve a TM coordinate. Distinct from {@link makeLocation} (whose `adminArea3` is `null`, exercising
+ * the AirKorea degradation path). `adminArea1`/`adminArea2`/`adminArea3` match the synthetic AirKorea
+ * TM-coordinate/nearby-station fixtures below exactly; latitude/longitude stay at the real Seoul grid
+ * `60/127` (the KMA pipeline never reads administrative names).
+ */
+function makeLeafLocation(overrides: Partial<WeatherLocation> = {}): WeatherLocation {
+  return {
+    id: 'loc_seoul_hyehwa',
+    displayName: '서울특별시 종로구 혜화동',
+    countryCode: 'KR',
+    adminArea1: '서울특별시',
+    adminArea2: '종로구',
+    adminArea3: '혜화동',
+    latitude: SEOUL_LATITUDE,
+    longitude: SEOUL_LONGITUDE,
+    timezone: 'Asia/Seoul',
+    ...overrides,
+  };
+}
+
+function leafRequestBody(overrides: Partial<WeatherLocation> = {}): string {
+  return JSON.stringify({ location: makeLeafLocation(overrides) });
 }
 
 /** A fixed fake KMA request-plan clock with a `vi.fn` so its read count is directly assertable. */
@@ -229,6 +267,113 @@ function dispatchFetch(handlers: {
       const index = ultraSrtNcstCallCount;
       ultraSrtNcstCallCount += 1;
       return Promise.resolve(handlers.ultraSrtNcst(index));
+    }
+    throw new Error(`test setup: unexpected fetch path ${requestUrl.pathname}`);
+  }) as unknown as typeof fetch;
+  return { fetchImpl, calls };
+}
+
+// ---------------------------------------------------------------------------
+// AirKorea raw fixtures (mirrors kma-airkorea-weather-overview.test.ts's already-verified fixtures).
+// ---------------------------------------------------------------------------
+
+function tmCoordinateSuccessBody(items: readonly Record<string, unknown>[]): string {
+  return JSON.stringify({
+    response: {
+      header: { resultCode: '00', resultMsg: 'NORMAL_CODE' },
+      body: { numOfRows: 100, pageNo: 1, totalCount: items.length, items: { item: items } },
+    },
+  });
+}
+
+/** A TM-coordinate candidate matching {@link makeLeafLocation}'s adminArea1/2/3 exactly. */
+function tmCoordinateItem(overrides: Record<string, unknown> = {}) {
+  return {
+    sidoName: '서울특별시',
+    sggName: '종로구',
+    umdName: '혜화동',
+    tmX: '200089.126044',
+    tmY: '453946.42329',
+    ...overrides,
+  };
+}
+
+function nearbyStationSuccessBody(items: readonly Record<string, unknown>[]): string {
+  return JSON.stringify({
+    response: {
+      header: { resultCode: '00', resultMsg: 'NORMAL_CODE' },
+      body: { numOfRows: 10, pageNo: 1, totalCount: items.length, items: { item: items } },
+    },
+  });
+}
+
+function nearbyStationItem(overrides: Record<string, unknown> = {}) {
+  return { tm: '1.2', stationName: '종로구', addr: '서울특별시 종로구', ...overrides };
+}
+
+function currentAirQualitySuccessBody(items: readonly Record<string, unknown>[]): string {
+  return JSON.stringify({
+    response: {
+      header: { resultCode: '00', resultMsg: 'NORMAL_SERVICE' },
+      body: { numOfRows: 100, pageNo: 1, totalCount: items.length, items: { item: items } },
+    },
+  });
+}
+
+/** A complete current-air-quality item; every normalized field below is derived from these values. */
+function currentAirQualityItem(overrides: Record<string, unknown> = {}) {
+  return {
+    dataTime: '2026-08-11 14:00',
+    stationName: '종로구',
+    pm10Value: '73',
+    pm25Value: '44',
+    o3Value: '0.043',
+    khaiValue: '75',
+    khaiGrade: '2',
+    pm10Grade: '2',
+    pm25Grade: '3',
+    o3Grade: '1',
+    ...overrides,
+  };
+}
+
+/**
+ * Dispatch across all five upstream endpoints (KMA `getVilageFcst`/`getUltraSrtNcst`, AirKorea
+ * `getTMStdrCrdnt`/`getNearbyMsrstnList`/`getMsrstnAcctoRltmMesureDnsty`) by URL path — the PR #86
+ * combined-graph counterpart of {@link dispatchFetch} above, used only by the leaf-location AirKorea
+ * success test so the existing two-endpoint KMA-only tests stay untouched.
+ */
+function dispatchFetchWithAirKorea(handlers: {
+  readonly vilageFcst: (callIndex: number) => Response;
+  readonly ultraSrtNcst: (callIndex: number) => Response;
+  readonly tmCoordinate: () => Response;
+  readonly nearbyStation: () => Response;
+  readonly currentAirQuality: () => Response;
+}) {
+  const calls: FetchRecord[] = [];
+  let vilageFcstCallCount = 0;
+  let ultraSrtNcstCallCount = 0;
+  const fetchImpl = ((url: unknown, init?: RequestInit) => {
+    const requestUrl = url as URL;
+    calls.push({ url: requestUrl, init });
+    if (requestUrl.pathname.endsWith('/getVilageFcst')) {
+      const index = vilageFcstCallCount;
+      vilageFcstCallCount += 1;
+      return Promise.resolve(handlers.vilageFcst(index));
+    }
+    if (requestUrl.pathname.endsWith('/getUltraSrtNcst')) {
+      const index = ultraSrtNcstCallCount;
+      ultraSrtNcstCallCount += 1;
+      return Promise.resolve(handlers.ultraSrtNcst(index));
+    }
+    if (requestUrl.pathname.endsWith('/getTMStdrCrdnt')) {
+      return Promise.resolve(handlers.tmCoordinate());
+    }
+    if (requestUrl.pathname.endsWith('/getNearbyMsrstnList')) {
+      return Promise.resolve(handlers.nearbyStation());
+    }
+    if (requestUrl.pathname.endsWith('/getMsrstnAcctoRltmMesureDnsty')) {
+      return Promise.resolve(handlers.currentAirQuality());
     }
     throw new Error(`test setup: unexpected fetch path ${requestUrl.pathname}`);
   }) as unknown as typeof fetch;
@@ -822,6 +967,91 @@ describe('production app integration — POST /weather', () => {
     // No current failure stage/provider detail/raw upstream body leaks into the public response.
     expectNoForbiddenKeys(body);
     expectNoLeakage(body, upstreamErrorMarker, '503');
+  });
+
+  it('A3. leaf location (non-null adminArea1/2/3) → 200 with AirKorea AQ success overlaid on the KMA baseline, real production combined graph end to end', async () => {
+    const { fetchImpl, calls } = dispatchFetchWithAirKorea({
+      vilageFcst: () => jsonOk(successBody(completeShortSlotItems('0500'))),
+      ultraSrtNcst: () => jsonOk(successBody(fullCurrentSlotItems())),
+      tmCoordinate: () => jsonOk(tmCoordinateSuccessBody([tmCoordinateItem()])),
+      nearbyStation: () => jsonOk(nearbyStationSuccessBody([nearbyStationItem()])),
+      currentAirQuality: () => jsonOk(currentAirQualitySuccessBody([currentAirQualityItem()])),
+    });
+    const { clock } = scriptedClock([
+      CLOCK_AT_0510_KST_20260722,
+      FETCHED_AT_EPOCH_MS,
+      CURRENT_REQUEST_EPOCH_MS,
+      CURRENT_FETCHED_AT_EPOCH_MS,
+      AIRKOREA_FETCHED_AT_EPOCH_MS,
+    ]);
+    const app = buildApp({
+      serviceKey: FAKE_KMA_SERVICE_KEY,
+      airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY,
+      fetchImpl,
+      clock,
+      now: () => new Date(META_GENERATED_AT_ISO),
+      createRequestId: () => 'req-integration-airkorea-success',
+    });
+
+    const res = await postWeather(app, { body: leafRequestBody() });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as WeatherResponseV1;
+    expect(weatherSuccessResponseV1.safeParse(body).success).toBe(true);
+    if (!body.ok) {
+      throw new Error('expected a success response');
+    }
+
+    // Exactly five upstream calls: hourly, current, then the three AirKorea operations.
+    expect(calls).toHaveLength(5);
+    const tmUrl = calls[2].url as URL;
+    const nearbyUrl = calls[3].url as URL;
+    const currentAqUrl = calls[4].url as URL;
+    expect(tmUrl.pathname.endsWith('/getTMStdrCrdnt')).toBe(true);
+    expect(nearbyUrl.pathname.endsWith('/getNearbyMsrstnList')).toBe(true);
+    expect(currentAqUrl.pathname.endsWith('/getMsrstnAcctoRltmMesureDnsty')).toBe(true);
+
+    // The KMA baseline is unchanged by the AirKorea overlay — the AQ overlay did not replace it.
+    expect(body.data.hourly).toEqual([EXPECTED_SHORT_FORECAST_AT_0600]);
+    expect(body.data.current).not.toBeNull();
+    expect(body.data.missingSections).not.toContain('HOURLY');
+    expect(body.data.missingSections).not.toContain('CURRENT');
+
+    // The real production AirKorea pipeline produced a non-null current air-quality observation.
+    expect(body.data.airQuality.current).not.toBeNull();
+    expect(body.data.missingSections).not.toContain('AIR_QUALITY_CURRENT');
+    const airQuality = body.data.airQuality.current!;
+
+    // Representative normalized values, proving real synthetic AirKorea data reached the presenter —
+    // not merely a non-null placeholder. Derived directly from currentAirQualityItem()'s raw fields.
+    expect(airQuality.measuredAt).toBe('2026-08-11T14:00:00+09:00');
+    expect(airQuality.pm10MicrogramsPerCubicMeter).toBe(73);
+    expect(airQuality.pm25MicrogramsPerCubicMeter).toBe(44);
+    expect(airQuality.ozonePartsPerMillion).toBe(0.043);
+    expect(airQuality.comprehensiveAirQualityIndex).toBe(75);
+    expect(airQuality.overallGrade).toBe('MODERATE');
+    expect(airQuality.pm10Grade).toBe('MODERATE');
+    expect(airQuality.pm25Grade).toBe('BAD');
+    expect(airQuality.ozoneGrade).toBe('GOOD');
+
+    // Exactly one AIR_KOREA source, alongside the two pre-existing KMA sources.
+    const airKoreaSources = body.data.sources.filter((source) => source.provider === 'AIR_KOREA');
+    expect(airKoreaSources).toHaveLength(1);
+    const airKoreaSource = airKoreaSources[0]!;
+    expect(airKoreaSource.sourceId).toBe(AIRKOREA_SOURCE_ID);
+    expect(airKoreaSource.sections).toEqual(['AIR_QUALITY_CURRENT']);
+    expect(airKoreaSource.observedAt).toBe(airQuality.measuredAt);
+    expect(airKoreaSource.retrievalMode).toBe('LIVE');
+    expect(airKoreaSource.fetchedAt).toBe(AIRKOREA_FETCHED_AT_ISO);
+    expect(body.data.sources).toHaveLength(3);
+    expect(body.data.sources.some((source) => source.sourceId === CURRENT_SOURCE_ID)).toBe(true);
+    expect(body.data.sources.some((source) => source.sourceId === SHORT_SOURCE_ID)).toBe(true);
+
+    // Public-boundary check: no internal AirKorea stage/trace/service-key/raw-payload leak, and the
+    // response shape stays the public WeatherResponseV1 envelope.
+    expectNoForbiddenKeys(body);
+    expectNoLeakage(body, FAKE_AIRKOREA_SERVICE_KEY);
+    expect(Object.keys(body).sort()).toEqual(['data', 'meta', 'ok']);
   });
 
   it('B. unsupported location (Null Island) → 422 UNSUPPORTED_LOCATION, no fetch (current is never attempted, since the hourly LOCATION failure short-circuits before PR #77 calls current)', async () => {
