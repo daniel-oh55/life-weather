@@ -202,9 +202,20 @@ Owner-observed live JSON evidence로 확인됨(§ "Owner-observed live JSON evid
 이 provider가 실제로 소비하는 필드만 `airKoreaCurrentAirQualityItemSchema`
 (`current-raw-schema.ts`)에 선언하며, 문서의 필수/옵션 구분을 그대로 반영합니다:
 
-* **필수 문자열** (항목구분: 1 — 키 자체가 없으면 malformed 응답으로 거부): `dataTime`,
-  `stationName`, `pm10Value`, `o3Value`, `khaiValue`, `khaiGrade`, `pm10Grade`, `o3Grade`.
-* **옵션 문자열** (항목구분: 0 — 키 자체가 없어도 정상): `pm25Value`, `pm25Grade`.
+* **필수 문자열** (항목구분: 1 — 키 자체가 없으면 malformed 응답으로 거부, 값은 항상 문자열):
+  `dataTime`, `stationName`, `pm10Value`, `o3Value`, `khaiValue`.
+* **필수 `string | null`** (항목구분: 1 — 키 자체가 없으면 malformed 응답으로 거부하지만, 키가
+  존재하면 값으로 문자열 또는 JSON `null`을 모두 허용): `khaiGrade`, `pm10Grade`, `o3Grade`.
+* **옵션 문자열** (항목구분: 0 — 키 자체가 없어도 정상, 키가 있으면 값은 항상 문자열): `pm25Value`.
+* **옵션 `string | null`** (항목구분: 0 — 키 자체가 없어도 정상이고, 키가 있으면 값으로 문자열 또는
+  JSON `null`을 모두 허용): `pm25Grade`.
+
+키 존재(presence)와 값(value)의 의미는 다음과 같이 명확히 구분됩니다.
+
+* 필수 grade 키(`khaiGrade`/`pm10Grade`/`o3Grade`) ABSENT → malformed (raw schema 단계에서 거부).
+* 필수 grade 키 present, 값 JSON `null` → 정상적인 결측치 표현.
+* `pm25Grade` ABSENT → 정상(옵션 필드).
+* `pm25Grade` present, 값 JSON `null` → 정상적인 결측치 표현.
 
 문서상 필수인 나머지 필드(`so2Value`/`coValue`/`no2Value`/`so2Grade`/`coGrade`/`no2Grade`
 등)는 이 provider가 전혀 소비하지 않으므로 raw schema에 선언하지 않고, Zod의 기본
@@ -270,7 +281,8 @@ export됩니다.
 | `3` | 나쁨 | `BAD` |
 | `4` | 매우나쁨 | `VERY_BAD` |
 | `""` (결측) | - | `null` |
-| 그 외 모든 값 | 미문서화 | 정규화 실패 (조용히 `UNKNOWN`이나 임의 등급으로 승격하지 않음) |
+| JSON `null` (결측) | - | `null` |
+| 위 허용 표현 외 값 | 미문서화 | 정규화 실패 (조용히 `UNKNOWN`이나 임의 등급으로 승격하지 않음) |
 
 이 PR에서는 농도 기반 등급을 자체 계산하지 않고, AirKorea가 이미 계산해 제공하는 native
 등급만 그대로 매핑합니다.
@@ -349,9 +361,20 @@ interface AirKoreaCurrentAirQualityProvider {
 
 성공 결과(`AirKoreaCurrentAirQualityProviderSuccess`)는 선택된 최신 item의 필드
 (`stationName`, `dataTime`, 4개 측정값, 4개 등급)만 노출합니다 — raw body, URL, 서비스키는
-전혀 포함되지 않습니다. 이 타입의 필수/옵션 구분은 raw 계약을 그대로 따릅니다:
-`pm10Value`/`o3Value`/`khaiValue`/`khaiGrade`/`pm10Grade`/`o3Grade`는 필수 문자열이고
-(raw schema가 이미 그 존재를 보장), `pm25Value`/`pm25Grade`만 옵션입니다.
+전혀 포함되지 않습니다. 이 타입의 필수/옵션 구분은 raw 계약을 그대로 따르며(raw schema가 키
+존재를 이미 보장), 값 타입도 raw 계약을 그대로 반영합니다.
+
+필수(키 존재 보장):
+
+* `pm10Value: string`, `o3Value: string`, `khaiValue: string`
+* `khaiGrade: string | null`, `pm10Grade: string | null`, `o3Grade: string | null`
+
+옵션(키 부재 가능):
+
+* `pm25Value?: string`
+* `pm25Grade?: string | null`
+
+필수/옵션은 key presence를 뜻한다는 원칙은 raw 계약과 동일합니다(위 "Raw response 계약" 참고).
 
 실패 kind: `INVALID_REQUEST`, `TIMEOUT`, `ABORTED`, `NETWORK_ERROR`, `HTTP_ERROR`,
 `RESPONSE_TOO_LARGE`, `EMPTY_RESPONSE`, `NON_JSON_RESPONSE`, `INVALID_JSON`,
