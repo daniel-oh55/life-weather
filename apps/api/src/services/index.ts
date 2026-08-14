@@ -546,3 +546,23 @@ export {
   type AirKoreaLocationCurrentAirQualityResult,
   type AirKoreaLocationCurrentAirQualityService,
 } from './airkorea-location-current-air-quality.js';
+
+export {
+  overlayAirKoreaCurrentAirQualityOnWeatherOverview,
+  type AirKoreaCurrentSourceMetadataInput,
+  type AirQualityCurrentOverlayInput,
+} from './weather-overview-air-quality-overlay.js';
+
+export {
+  createAirKoreaLiveCurrentSourceMetadataResolver,
+  type AirKoreaCurrentSourceMetadataClock,
+  type AirKoreaCurrentSourceMetadataResolver,
+} from './airkorea-current-source-metadata.js';
+
+export {
+  createKmaAirKoreaWeatherOverviewService,
+  type KmaAirKoreaWeatherOverviewInput,
+  type KmaAirKoreaWeatherOverviewOptions,
+  type KmaAirKoreaWeatherOverviewResult,
+  type KmaAirKoreaWeatherOverviewService,
+} from './kma-airkorea-weather-overview.js';

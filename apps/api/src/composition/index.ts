@@ -217,7 +217,20 @@ export {
 } from './kma-location-current-hourly-overview.js';
 
 export {
+  createAirKoreaLocationCurrentAirQualityCompositionFromEnv,
+  type AirKoreaLocationCurrentAirQualityCompositionDependencies,
+  type CreateAirKoreaLocationCurrentAirQualityCompositionResult,
+} from './airkorea-location-current-air-quality.js';
+
+export {
+  createKmaAirKoreaWeatherOverviewCompositionFromEnv,
+  type CreateKmaAirKoreaWeatherOverviewCompositionResult,
+  type KmaAirKoreaWeatherOverviewCompositionDependencies,
+} from './kma-airkorea-weather-overview.js';
+
+export {
   createProductionWeatherRouteDependencies,
+  AIRKOREA_SERVICE_KEY_REQUIRED_MESSAGE,
   KMA_SERVICE_KEY_REQUIRED_MESSAGE,
   PRODUCTION_WEATHER_PRODUCT,
   type ProductionWeatherRouteOptions,
