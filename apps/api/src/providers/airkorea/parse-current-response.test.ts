@@ -39,7 +39,7 @@ function successResponse(items: unknown[]) {
         numOfRows: 100,
         pageNo: 1,
         totalCount: items.length,
-        items: { item: items },
+        items,
       },
     },
   };
@@ -62,6 +62,24 @@ describe('parseAirKoreaCurrentAirQualityResponse — success', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.page.items).toEqual([]);
+    }
+  });
+
+  it('rejects the old { item: [...] } wrapper shape as INVALID_RESPONSE (2026-08-13 live evidence: body.items is a direct array)', () => {
+    const result = parseAirKoreaCurrentAirQualityResponse({
+      response: {
+        header: { resultCode: '00', resultMsg: 'NORMAL_CODE' },
+        body: {
+          numOfRows: 100,
+          pageNo: 1,
+          totalCount: 1,
+          items: { item: [VALID_ITEM] },
+        },
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe('INVALID_RESPONSE');
     }
   });
 });
@@ -118,7 +136,7 @@ describe('parseAirKoreaCurrentAirQualityResponse — invalid response', () => {
           numOfRows: 100,
           pageNo: 1,
           totalCount: 1,
-          items: { item: [{ dataTime: 'bad', stationName: '종로구' }] },
+          items: [{ dataTime: 'bad', stationName: '종로구' }],
         },
       },
     });

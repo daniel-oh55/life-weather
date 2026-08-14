@@ -19,7 +19,7 @@ function successBody(
         numOfRows: 100,
         pageNo: 1,
         totalCount: overrides.totalCount ?? items.length,
-        items: { item: items },
+        items,
       },
     },
   });
@@ -102,6 +102,33 @@ describe('AirKorea TM-coordinate provider — successful in-memory JSON', () => 
     expect(initArg?.method).toBe('GET');
     expect(initArg?.headers).toEqual({ Accept: 'application/json' });
     expect(initArg?.redirect).toBe('error');
+  });
+
+  it('accepts a direct-array body.items live JSON shape (2026-08-13 Owner-observed evidence)', async () => {
+    const fetchImpl = vi.fn(async () => new Response(successBody([item()]), { status: 200 }));
+    const result = createAirKoreaTmCoordinateProvider({ serviceKey: FAKE_KEY, fetchImpl });
+    if (!result.ok) throw new Error('unexpected config error');
+
+    const outcome = await result.provider.fetchTmCoordinates(VALID_REQUEST);
+    expect(outcome.ok).toBe(true);
+  });
+
+  it('rejects the old { item: [...] } wrapper shape as AIRKOREA_INVALID_RESPONSE', async () => {
+    const body = JSON.stringify({
+      response: {
+        header: { resultCode: '00', resultMsg: 'NORMAL_CODE' },
+        body: { numOfRows: 100, pageNo: 1, totalCount: 1, items: { item: [item()] } },
+      },
+    });
+    const fetchImpl = vi.fn(async () => new Response(body, { status: 200 }));
+    const result = createAirKoreaTmCoordinateProvider({ serviceKey: FAKE_KEY, fetchImpl });
+    if (!result.ok) throw new Error('unexpected config error');
+
+    const outcome = await result.provider.fetchTmCoordinates(VALID_REQUEST);
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.error.kind).toBe('AIRKOREA_INVALID_RESPONSE');
+    }
   });
 });
 

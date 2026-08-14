@@ -55,6 +55,7 @@ import {
   type AirKoreaCurrentAirQualityPage,
   type AirKoreaCurrentResponseIssue,
 } from './parse-current-response.js';
+import { parseAirKoreaDataTime, formatAirKoreaDataTimeCanonical } from './current-raw-schema.js';
 import {
   buildAirKoreaNearbyStationRequestUrl,
   validateAirKoreaNearbyStationRequest,
@@ -355,20 +356,37 @@ function findResponseMismatch(
 }
 
 /**
- * Select the *latest* item among a validated page's items by comparing each item's `dataTime`
- * string directly (fixed-width, zero-padded `YYYY-MM-DD HH:mm` — every candidate has already
- * passed `parseAirKoreaDataTime`, so lexicographic order over this format is chronological order).
- * This does **not** rely on the array's position/order — only on the officially documented
- * `dataTime` field's value — per the project's "do not silently use `items[0]`" policy. On an exact
- * tie (a data anomaly that should not occur for one station's real hourly series), the
- * first-encountered item wins, which is a deterministic fallback, not an assumption about API
- * ordering.
+ * The canonical (post-`24:00`-rollover) comparison key for one item's `dataTime` — see
+ * {@link parseAirKoreaDataTime}/{@link formatAirKoreaDataTimeCanonical}. `dataTime` has already
+ * passed the raw schema's validation by the time a page reaches this function, so `parts` is never
+ * `null` in practice; the raw string is used as a defensive fallback key only for total safety
+ * against a caller that bypasses the type system at runtime.
+ */
+function airKoreaDataTimeSortKey(dataTime: string): string {
+  const parts = parseAirKoreaDataTime(dataTime);
+  return parts === null ? dataTime : formatAirKoreaDataTimeCanonical(parts);
+}
+
+/**
+ * Select the *latest* item among a validated page's items by comparing each item's *canonical,
+ * post-`24:00`-rollover* `dataTime` (fixed-width, zero-padded `YYYY-MM-DD HH:mm`, always
+ * `hour <= 23` — see {@link airKoreaDataTimeSortKey}), not the raw string. Comparing canonical keys
+ * — rather than the raw `dataTime` text directly — means a `24:00` row and the next calendar day's
+ * `00:00` row, which denote the *same* instant, compare equal instead of being treated as two
+ * different times. This does **not** rely on the array's position/order — only on the officially
+ * documented `dataTime` field's value — per the project's "do not silently use `items[0]`" policy.
+ * On an exact tie (whether a literal duplicate `dataTime` or two different raw representations of
+ * the same semantic instant), the first-encountered item wins, which is a deterministic fallback,
+ * not an assumption about API ordering or a fabricated time difference.
  */
 function selectLatestItem<T extends { readonly dataTime: string }>(items: readonly T[]): T {
   let latest = items[0]!;
+  let latestKey = airKoreaDataTimeSortKey(latest.dataTime);
   for (const item of items.slice(1)) {
-    if (item.dataTime > latest.dataTime) {
+    const key = airKoreaDataTimeSortKey(item.dataTime);
+    if (key > latestKey) {
       latest = item;
+      latestKey = key;
     }
   }
   return latest;
