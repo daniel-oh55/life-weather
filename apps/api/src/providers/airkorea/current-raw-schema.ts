@@ -213,10 +213,16 @@ const airKoreaMeasurementValue = z.string();
  * A grade field (`khaiGrade`, `pm10Grade`, `pm25Grade`, `o3Grade`). Official documented values are
  * the literal digit strings `"1"`-`"4"` (좋음/보통/나쁨/매우나쁨); the technical document's XML
  * sample shows a missing grade as a self-closing element (`<so2Grade/>`), i.e. an empty string.
- * Semantic mapping happens in `normalize-current.ts`. Per-field required-vs-optional key presence is
- * enforced where this schema is used, not here.
+ * JSON `null` is also accepted — a 2026-08-14 Owner-authenticated live JSON call against
+ * `getMsrstnAcctoRltmMesureDnsty` observed `khaiGrade`/`pm10Grade`/`pm25Grade`/`o3Grade` serialized as
+ * JSON `null` for several historical hourly rows in an otherwise-successful page (key present, value
+ * `null` — never key-absent for the required three; see
+ * `docs/airkorea-current-air-quality-provider.md`, "Owner-observed live JSON evidence"). Semantic
+ * mapping (string sentinel vs. `null` vs. a documented code vs. malformed) happens in
+ * `normalize-current.ts`. Per-field required-vs-optional key presence is enforced where this schema
+ * is used, not here.
  */
-const airKoreaGradeValue = z.string();
+const airKoreaGradeValue = z.string().nullable();
 
 /**
  * One 측정소별 실시간 측정정보 조회 `item`. `dataTime` and `stationName` are always present once
@@ -228,7 +234,10 @@ const airKoreaGradeValue = z.string();
  * docblock and `docs/airkorea-current-air-quality-provider.md` for the full field table). A
  * required key that is *present* but holds its documented sentinel string (`"-"` / `""`) still
  * parses here — presence and value are different concepts; sentinel-vs-malformed-vs-valid
- * interpretation is `normalize-current.ts`'s job. Unknown extra keys (e.g. `mangName`,
+ * interpretation is `normalize-current.ts`'s job. The four grade fields (`khaiGrade`, `pm10Grade`,
+ * `pm25Grade`, `o3Grade`) additionally accept JSON `null` as a present value (2026-08-14
+ * Owner-observed live JSON evidence — see {@link airKoreaGradeValue}); `pm25Grade` combines this with
+ * `.optional()`, so it may be key-absent, `null`, or a string. Unknown extra keys (e.g. `mangName`,
  * `stationCode`, `pm10Value24`, the `*Flag` fields, the 1-hour PM grades) are stripped by Zod's
  * default — this provider does not consume them.
  */

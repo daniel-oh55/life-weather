@@ -277,7 +277,9 @@ async function performAirKoreaGetRequest(
  * (`airKoreaCurrentAirQualityItemSchema`): `pm10Value`/`o3Value`/`khaiValue`/`khaiGrade`/
  * `pm10Grade`/`o3Grade` are officially required response fields, so the raw schema already
  * guarantees their presence by the time a page reaches this type; only `pm25Value`/`pm25Grade` are
- * documented optional fields and may be absent.
+ * documented optional fields and may be absent. The four grade fields are additionally `string |
+ * null` — a present JSON `null` is a documented live-observed missing-grade serialization (2026-08-14
+ * Owner-observed live JSON evidence, see `current-raw-schema.ts`), distinct from key-absence.
  */
 export interface AirKoreaCurrentAirQualityProviderSuccess {
   readonly stationName: string;
@@ -286,10 +288,10 @@ export interface AirKoreaCurrentAirQualityProviderSuccess {
   readonly pm25Value?: string;
   readonly o3Value: string;
   readonly khaiValue: string;
-  readonly khaiGrade: string;
-  readonly pm10Grade: string;
-  readonly pm25Grade?: string;
-  readonly o3Grade: string;
+  readonly khaiGrade: string | null;
+  readonly pm10Grade: string | null;
+  readonly pm25Grade?: string | null;
+  readonly o3Grade: string | null;
 }
 
 /** The field a request/response correlation check found inconsistent. */
