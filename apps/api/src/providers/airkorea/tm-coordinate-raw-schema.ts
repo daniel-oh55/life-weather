@@ -26,6 +26,11 @@
  * project inconsistency: the technical document genuinely states two different 항목크기 values for
  * the same field name in its request table (§ b) versus its response table (§ c), so this module
  * defines its own response-side predicate rather than reusing the request-side one.
+ *
+ * `body.items` is a **direct array** (not a `{ item: [...] }` wrapper) and `tmX`/`tmY` remain JSON
+ * **strings** — both confirmed by an Owner-executed authenticated Public Data Portal preview call
+ * on 2026-08-13 (see `docs/airkorea-tm-coordinate-provider.md`, "Owner-observed live JSON
+ * evidence").
  */
 
 import { z } from 'zod';
@@ -123,10 +128,11 @@ export const airKoreaTmCoordinateItemSchema = z.object({
 
 export type AirKoreaTmCoordinateItem = z.infer<typeof airKoreaTmCoordinateItemSchema>;
 
-/** `response.body.items`. The list is nested under `items.item`, which must be an **array**. */
-export const airKoreaTmCoordinateItemsSchema = z.object({
-  item: z.array(airKoreaTmCoordinateItemSchema),
-});
+/**
+ * `response.body.items` — a **direct array** of items (Owner-observed live JSON evidence,
+ * 2026-08-13; see the module docblock). Not a `{ item: [...] }` wrapper.
+ */
+export const airKoreaTmCoordinateItemsSchema = z.array(airKoreaTmCoordinateItemSchema);
 
 /** A 1-based page index (`pageNo`). */
 const airKoreaPageNumber = z.number().int().min(1);
@@ -158,12 +164,12 @@ export const airKoreaTmCoordinateBodySchema = z
     items: airKoreaTmCoordinateItemsSchema,
   })
   .superRefine((body, ctx) => {
-    const itemCount = body.items.item.length;
+    const itemCount = body.items.length;
 
     if (itemCount > body.numOfRows) {
       ctx.addIssue({
         code: 'custom',
-        path: ['items', 'item'],
+        path: ['items'],
         message: 'item count must not exceed numOfRows',
       });
     }
@@ -172,14 +178,14 @@ export const airKoreaTmCoordinateBodySchema = z
       if (itemCount > 0) {
         ctx.addIssue({
           code: 'custom',
-          path: ['items', 'item'],
+          path: ['items'],
           message: 'items must be empty when totalCount is zero',
         });
       }
     } else if (itemCount > body.totalCount) {
       ctx.addIssue({
         code: 'custom',
-        path: ['items', 'item'],
+        path: ['items'],
         message: 'item count must not exceed totalCount',
       });
     }

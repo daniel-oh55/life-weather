@@ -12,6 +12,24 @@ TM 좌표 candidate 목록으로 바꾸는 **provider boundary까지만** 구현
 변환, 행정구역 disambiguation, 최종 TM 좌표 하나 선택, `getNearbyMsrstnList`와의 orchestration,
 application service/composition, `POST /weather` 연결은 이 PR 범위가 아닙니다.
 
+## Owner-observed live JSON evidence (2026-08-13, PR #87)
+
+PR #84 시점에는 공식 기술문서(XML 예제만 제공)만 근거였고, JSON 직렬화의 세부 사항은 여러 항목이
+미검증 gap으로 남아 있었습니다(§ "실제 인증 API 검증 상태" 참고). 2026-08-13, Owner가 인증된
+Public Data Portal preview 호출 3건을 직접 실행했고, 그중 하나가 이 operation
+(`getTMStdrCrdnt`)의 성공 응답이었습니다. 이 호출에서 다음이 실측 확인되었습니다 — PR #84
+당시에는 알려지지 않았던 사실이며, 아래에서 이 문서의 나머지 내용과 명확히 구분합니다.
+
+* **`response.body.items`는 `{ item: [...] }` wrapper가 아니라 direct array입니다.** 이전
+  구현은 문서에 명시되지 않은 상태에서 KMA provider의 관행을 따라 wrapper 형태를 가정했으나,
+  실측 결과 direct array임이 확인되어 PR #87에서 raw schema를 수정했습니다.
+* **`tmX`/`tmY`는 이전 구현이 이미 가정한 대로 JSON 문자열입니다.** 이 preview 호출은 이 가정을
+  바꾸지 않았습니다 — `tmX`/`tmY`의 문자열 파싱(`parseAirKoreaTmCoordinateValue`)은 변경되지
+  않았습니다.
+
+이 사실은 **positive(성공) 응답에서만** 확인되었습니다 — 0건 결과(zero-result)의 실제 JSON
+직렬화 형태는 이 preview 호출로 검증되지 않았습니다(§ "Zero-result" 참고).
+
 ## 공식 자료 — 재검증 기록
 
 이 PR은 구현 전 공식 데이터를 **다시 다운로드하여** PR #83이 기록한 evidence와 byte-identical한지
@@ -109,7 +127,9 @@ URL은 `URL` + `URLSearchParams`로만 구성하며, 서비스키와 `umdName`(�
 
 ## Raw response 계약
 
-문서의 응답 필드 표(TM 기준좌표 조회 § c) 전체를 옮기면 다음과 같습니다.
+`response.body.items`는 **direct array**입니다(`{ item: [...] }` wrapper 아님) — 2026-08-13
+Owner-observed live JSON evidence로 확인됨(§ "Owner-observed live JSON evidence" 참고). 문서의
+응답 필드 표(TM 기준좌표 조회 § c) 전체를 옮기면 다음과 같습니다.
 
 | 필드 | 항목구분 | 항목크기 | 샘플데이터 | 설명 |
 | --- | --- | --- | --- | --- |
@@ -233,11 +253,14 @@ totalCount > items.length
 
 PR #83과 동일한 gap입니다. 응답 필드 표(§ c)는 `items`의 항목크기를 `0..n`으로 표기해 0개 결과가
 가능함을 시사하지만, 기술문서는 이 operation에 대해 0개 결과 응답의 예제를 전혀 제공하지
-않습니다 — § d의 예제는 1개 결과가 반환되는 경우만 보여줍니다. 이 provider는 PR #83과 동일하게
-다음 JSON 형태를 만났을 때만 `NO_DATA`로 인식합니다.
+않습니다 — § d의 예제는 1개 결과가 반환되는 경우만 보여줍니다. `body.items`가 direct array임은
+2026-08-13 live evidence로 확인되었지만(§ "Owner-observed live JSON evidence" 참고), 그 preview
+호출은 positive(성공, non-empty) 응답 한 건만 관찰했으므로 zero-result 자체의 직렬화 형태는
+별도로 실측되지 않았습니다. 이 provider는 확인된 direct-array shape에서 항목이 0개인 경우로
+구조적으로 자연스럽게 도출되는 다음 JSON 형태를 만났을 때만 `NO_DATA`로 인식합니다.
 
 ```json
-{ "items": { "item": [] } }
+{ "items": [] }
 ```
 
 이 정확한 zero-result JSON 직렬화 형태는 **공식적으로 검증되지 않았습니다**. 실제 인증된 API가
@@ -321,17 +344,26 @@ PR #82/#83 provider의 runtime semantics는 이 PR에서 전혀 변경되지 않
 
 ## 실제 인증 API 검증 상태
 
-**실제 인증 서비스키를 사용한 AirKorea API 호출은 수행하지 않았습니다.** 모든 request/response
-shape 근거는 위 공식 기술문서의 텍스트·요청응답 예제에서만 가져왔습니다. 아래는 문서만으로는
-100% 확정할 수 없어 향후 인증된 실응답으로 재확인이 필요한 항목입니다.
+PR #84 시점에는 실제 인증 서비스키를 사용한 AirKorea API 호출을 전혀 수행하지 않았습니다. PR #87
+(2026-08-13)에서 Owner가 인증된 Public Data Portal preview 호출을 직접 실행해 아래 항목을
+확인했습니다 — 자세한 내용은 § "Owner-observed live JSON evidence" 참고.
 
-* JSON 직렬화에서 `tmX`/`tmY`가 실제로 문자열로 나타나는지(문서 예제는 XML만 제공).
+* ~~JSON 직렬화에서 `body.items`가 direct array인지 `{ item: [...] }` wrapper인지~~ —
+  **2026-08-13 확인됨: direct array.**
+* ~~JSON 직렬화에서 `tmX`/`tmY`가 실제로 문자열로 나타나는지~~ — **2026-08-13 확인됨: JSON
+  문자열(기존 가정과 일치).**
+
+이 preview 호출은 이 operation의 **positive(성공) 응답 하나만** 대상이었으므로, 아래 항목은
+여전히 문서만으로는 100% 확정할 수 없어 향후 추가 인증된 실응답으로 재확인이 필요합니다.
+
 * `tmX`/`tmY`가 실제로 음수를 반환하는 경우가 존재하는지(대한민국 TM 중부원점 좌표계의 실무 범위는
   항상 양수이지만, 문서에 명시적 범위 제약은 없음 — 이 provider는 이를 이유로 음수를 거부하지
   않습니다).
 * 동명이동 `umdName`이 실제로 `numOfRows=100` 상한을 초과해 `INCOMPLETE_RESULT`를 유발하는 사례가
   존재하는지.
-* zero-result의 실제 JSON 직렬화 형태(위 "Zero-result" 절 참고).
+* zero-result의 실제 JSON 직렬화 형태(아래 "Zero-result" 절 참고 — 이 provider는 아직 positive
+  응답만 확인했으므로, zero-result가 여전히 빈 direct array(`items: []`)로 직렬화되는지는 구조적으로
+  자연스럽게 도출되는 가정일 뿐, 별도로 실측되지 않았습니다).
 
 ## 범위 확인 (이 PR에서 구현하지 않은 것)
 

@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import { parseAirKoreaNearbyStationResponse } from './parse-nearby-station-response.js';
 
+/** 2026-08-13 Owner-observed live JSON evidence: `tm` is a JSON number. */
 const VALID_ITEM = {
-  tm: '8.2',
+  tm: 8.2,
   stationName: '부발읍',
   addr: '경기도 이천시 부발읍 무촌로 117부발보건지소 옥상',
 };
@@ -25,7 +26,7 @@ function successResponse(items: unknown[]) {
         numOfRows: 10,
         pageNo: 1,
         totalCount: items.length,
-        items: { item: items },
+        items,
       },
     },
   };
@@ -48,6 +49,19 @@ describe('parseAirKoreaNearbyStationResponse — success', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.page.items).toEqual([]);
+    }
+  });
+
+  it('rejects the old { item: [...] } wrapper shape as INVALID_RESPONSE (2026-08-13 live evidence: body.items is a direct array)', () => {
+    const result = parseAirKoreaNearbyStationResponse({
+      response: {
+        header: { resultCode: '00', resultMsg: 'NORMAL_CODE' },
+        body: { numOfRows: 10, pageNo: 1, totalCount: 1, items: { item: [VALID_ITEM] } },
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe('INVALID_RESPONSE');
     }
   });
 });
@@ -104,7 +118,7 @@ describe('parseAirKoreaNearbyStationResponse — invalid response', () => {
           numOfRows: 10,
           pageNo: 1,
           totalCount: 1,
-          items: { item: [{ tm: '8.2' }] },
+          items: [{ tm: 8.2 }],
         },
       },
     });

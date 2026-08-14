@@ -12,6 +12,26 @@ request/response shape의 근거로 사용하지 않았습니다.
 변환, 최종 closest-station 선택, application service/composition, `POST /weather` 연결은 이 PR
 범위가 아닙니다.
 
+## Owner-observed live JSON evidence (2026-08-13, PR #87)
+
+PR #83 시점에는 공식 기술문서(XML 예제만 제공)만 근거였고, JSON 직렬화의 세부 사항은 여러 항목이
+미검증 gap으로 남아 있었습니다(§ "실제 인증 API 검증 상태" 참고). 2026-08-13, Owner가 인증된
+Public Data Portal preview 호출 3건을 직접 실행했고, 그중 하나가 이 operation
+(`getNearbyMsrstnList`)의 성공 응답이었습니다. 이 호출에서 다음 두 가지가 실측 확인되었습니다 —
+PR #83 당시에는 알려지지 않았던 사실이며, 아래에서 이 문서의 나머지 내용과 명확히 구분합니다.
+
+* **`response.body.items`는 `{ item: [...] }` wrapper가 아니라 direct array입니다.** 이전
+  구현은 문서에 명시되지 않은 상태에서 KMA provider의 관행을 따라 wrapper 형태를 가정했으나,
+  실측 결과 direct array임이 확인되어 PR #87에서 raw schema를 수정했습니다.
+* **`tm`(거리, km)은 JSON 문자열이 아니라 JSON `number`입니다** (실측값 예: `1.5`, `1.7`, `1.9`).
+  PR #83은 문서가 XML 예제만 제공한다는 이유로(PR #82의 `khaiValue` 등과 같은 선례를 따라)
+  문자열로 가정했으나, 이 가정은 틀렸음이 실측으로 확인되었습니다. PR #87은 이를 JSON `number`
+  타입으로 정정했고, `z.coerce`나 `string | number` union 없이 정확히 number 타입만 허용합니다 —
+  문자열 `tm`(숫자처럼 보이는 값 포함)은 이제 malformed 응답으로 거부됩니다.
+
+이 두 사실은 **positive(성공) 응답에서만** 확인되었습니다 — 0건 결과(zero-result)의 실제 JSON
+직렬화 형태는 이 preview 호출로 검증되지 않았습니다(§ "Zero-result" 참고).
+
 ## 공식 자료
 
 | 항목 | 값 |
@@ -104,7 +124,9 @@ percent-encode됩니다. 파라미터 순서는 `serviceKey`, `returnType`, `tmX
 
 ## Raw response 계약
 
-문서의 응답 필드 표(근접측정소 목록 조회 § c) 전체를 옮기면 다음과 같습니다.
+`response.body.items`는 **direct array**입니다(`{ item: [...] }` wrapper 아님) — 2026-08-13
+Owner-observed live JSON evidence로 확인됨(§ "Owner-observed live JSON evidence" 참고). 문서의
+응답 필드 표(근접측정소 목록 조회 § c) 전체를 옮기면 다음과 같습니다.
 
 | 필드 | 항목구분 | 항목크기 | 샘플데이터 | 설명 |
 | --- | --- | --- | --- | --- |
@@ -161,18 +183,19 @@ import가 아닙니다.
 ### 거리(`tm`, km) 파싱
 
 문서의 요청/응답 메시지 예제(§ d)는 `tm`을 XML 텍스트(`<tm>8.2</tm>`)로만 보여줍니다 — JSON
-샘플은 제공되지 않습니다(PR #82의 `khaiValue` 등과 동일한 gap). PR #82의 선례를 따라, 이
-provider는 `returnType=json` 요청에서도 `tm`을 문자열로 취급합니다 — raw schema는 문자열
-존재만 검증하고(`airKoreaNearbyStationDistance = z.string()`), 실제 숫자 파싱은
-`parseAirKoreaNearbyStationDistanceKm`(`nearby-station-raw-schema.ts`)가 담당합니다.
+샘플은 제공되지 않았습니다. PR #83은 이 gap 때문에(PR #82의 `khaiValue` 등의 선례를 따라) `tm`을
+문자열로 가정했으나, **2026-08-13 Owner-observed live JSON evidence로 이 가정이 틀렸음이
+확인되었습니다** — 실제 응답에서 `tm`은 JSON `number`입니다(실측값 예: `1.5`, `1.7`, `1.9`). PR
+#87은 raw schema를 `z.number()`로 정정했습니다(`z.coerce` 없음 — 숫자처럼 보이는 문자열도
+거부). raw schema는 값이 JSON number 타입인지만 검증하고, finite/non-negative 여부의 semantic
+검증은 `parseAirKoreaNearbyStationDistanceKm`(`nearby-station-raw-schema.ts`)가 담당합니다.
 
 `tm`에는 (PR #82의 `khaiValue: "-"`와 달리) 문서에 명시된 "결측치" sentinel이 없습니다 — 반환된
-측정소까지의 거리는 항상 계산 가능한 값이므로, 결측 표현을 허용하지 않습니다. 파싱 규칙:
+측정소까지의 거리는 항상 계산 가능한 값이므로, 결측 표현을 허용하지 않습니다. 검증 규칙:
 
-* 정규식 `^\d+(\.\d+)?$` — 부호 없는 순수 십진 표기(정수 또는 소수)만 허용, 지수 표기·음수·빈
-  문자열·AirKorea sentinel(`"-"`) 모두 거부.
-* 위 정규식을 통과해도 `Number()` 변환 결과가 `Number.isFinite`가 아니면(예: 400자리 숫자
-  문자열이 `Infinity`로 오버플로) 거부 — malformed 텍스트를 정상 거리로 승격하지 않습니다.
+* `Number.isFinite(value)` — `NaN`/`Infinity`/`-Infinity` 거부(다만 이 값들은 JSON으로 직렬화될
+  수 없으므로, 실제 upstream 응답에서는 malformed 응답이 아닌 한 나타나지 않습니다).
+* `value >= 0` — 음수 거리는 malformed로 거부, `0`으로도 다른 값으로도 승격하지 않습니다.
 * 위 두 조건을 모두 만족하는 경우에만 finite, non-negative 숫자를 반환합니다.
 
 ## "가장 가까운 측정소" 미선택 정책
@@ -297,16 +320,26 @@ PR #82의 current-air-quality provider의 runtime semantics는 이 PR에서 전�
 
 ## 실제 인증 API 검증 상태
 
-**실제 인증 서비스키를 사용한 AirKorea API 호출은 수행하지 않았습니다.** 모든 request/response
-shape 근거는 위 공식 기술문서의 텍스트·요청응답 예제에서만 가져왔습니다. 아래는 문서만으로는
-100% 확정할 수 없어 향후 인증된 실응답으로 재확인이 필요한 항목입니다.
+PR #83 시점에는 실제 인증 서비스키를 사용한 AirKorea API 호출을 전혀 수행하지 않았습니다. PR #87
+(2026-08-13)에서 Owner가 인증된 Public Data Portal preview 호출을 직접 실행해 아래 두 항목을
+확인했습니다 — 자세한 내용은 § "Owner-observed live JSON evidence" 참고.
 
-* JSON 직렬화에서 `tm`이 실제로 문자열로 나타나는지(문서 예제는 XML만 제공).
+* ~~JSON 직렬화에서 `body.items`가 direct array인지 `{ item: [...] }` wrapper인지~~ —
+  **2026-08-13 확인됨: direct array.**
+* ~~JSON 직렬화에서 `tm`이 실제로 문자열로 나타나는지~~ — **2026-08-13 확인됨: JSON `number`
+  (문자열 아님, 실측값 `1.5`/`1.7`/`1.9`).**
+
+이 preview 호출은 이 operation의 **positive(성공) 응답 하나만** 대상이었으므로, 아래 항목은
+여전히 문서만으로는 100% 확정할 수 없어 향후 추가 인증된 실응답으로 재확인이 필요합니다.
+
 * `stationCode`가 no-version 요청에서 실제로 완전히 생략되는지(§ c 응답 표와 § d 예제 사이의
   문서 내 모순 — 위 "stationCode의 문서 내 모순" 참고).
 * `numOfRows`의 실제 서버 기본값이 문서 예제와 같이 10인지, 아니면 다른 상황에서 달라지는지.
 * 근접측정소 목록의 실제 정렬 순서(있다면)가 항상 일관되는지 — 이 provider는 이를 가정하지
   않으므로 검증 결과와 무관하게 동작이 바뀌지 않습니다.
+* 0건 결과(zero-result)의 실제 JSON 직렬화 형태(아래 "Zero-result" 참고 — 이 provider는 아직
+  positive 응답만 확인했으므로, zero-result가 여전히 빈 direct array(`items: []`)로 직렬화되는지는
+  구조적으로 자연스럽게 도출되는 가정일 뿐, 별도로 실측되지 않았습니다).
 
 ### Zero-result(결과 없음) JSON 직렬화 — 미검증 evidence gap
 
@@ -315,25 +348,29 @@ shape 근거는 위 공식 기술문서의 텍스트·요청응답 예제에서�
 않습니다 — § d의 요청/응답 메시지 예제는 3개 결과가 반환되는 경우만 보여줍니다. 즉 zero-result
 응답이 JSON으로 실제 어떻게 직렬화되는지에 대한 공식 자료(JSON 예제 포함)는 존재하지 않습니다.
 
-**현재 프로젝트 가정 / fail-closed boundary**: 이 provider는 현재 다음 JSON 형태를 만났을 때만
-"결과 없음"(`totalCount === 0`이고 반환된 item이 0개)을 성공적인 `NO_DATA`로 인식합니다:
+**현재 프로젝트 가정 / fail-closed boundary**: PR #87부터 `body.items`는 direct array임이
+2026-08-13 live evidence로 확인되었으므로(§ "Owner-observed live JSON evidence" 참고), 이
+provider는 다음 JSON 형태를 만났을 때 "결과 없음"(`totalCount === 0`이고 반환된 item이 0개)을
+성공적인 `NO_DATA`로 인식합니다:
 
 ```json
-{ "items": { "item": [] } }
+{ "items": [] }
 ```
 
-이 정확한 zero-result JSON 직렬화 형태는 **공식적으로 검증되지 않았습니다** — 문서가 제공하는
-것은 항목크기 표기(`0..n`)뿐이며, 실제 zero-result JSON 예제가 아닙니다.
+이 형태는 확인된 direct-array shape에서 항목이 0개인 경우로 **구조적으로 자연스럽게 도출**되지만
+— zero-result 응답 자체가 이 preview 호출로 별도 실측된 것은 **아닙니다**. 2026-08-13 preview
+호출은 이 operation에 대해 positive(성공, non-empty) 응답 한 건만 관찰했습니다. 문서가 제공하는
+것도 여전히 항목크기 표기(`0..n`)뿐이며, 실제 zero-result JSON 예제가 아닙니다.
 
 **결과**: 만약 실제 인증된 API가 0개 결과를 `items` 필드 자체를 생략하거나, `null`로 채우거나,
 다른 형태로 직렬화한다면, 현재 runtime은 이를 `NO_DATA`가 아니라 `AIRKOREA_INVALID_RESPONSE`로
-분류합니다(raw schema가 `items: { item: [...] }` 형태를 필수로 요구하므로). 이 프로젝트는 근거
-없는 permissive 형태(예: `items`가 없거나 `null`인 경우까지 허용)를 추측만으로 미리 추가하지
-않습니다 — 이는 향후 인증된 integration/QA 단계에서 반드시 재확인해야 할 항목입니다(위 "실제
-인증 API 검증 상태" 목록에 포함).
+분류합니다(raw schema가 `items`를 direct array로 요구하므로). 이 프로젝트는 근거 없는 permissive
+형태(예: `items`가 없거나 `null`인 경우까지 허용)를 추측만으로 미리 추가하지 않습니다 — 이는
+향후 인증된 integration/QA 단계에서 반드시 재확인해야 할 항목입니다(위 "실제 인증 API 검증 상태"
+목록에 포함).
 
-이 gap을 공식적으로 검증된 no-data 표현으로 오인해서는 안 됩니다 — 이는 문서의 항목크기
-표기(`0..n`)로부터 유추한 project-owned 가정일 뿐입니다.
+이 gap을 공식적으로 검증된 no-data 표현으로 오인해서는 안 됩니다 — 이는 확인된 direct-array shape
+로부터 유추한 project-owned 가정일 뿐, zero-result 자체가 live-verified라는 뜻은 아닙니다.
 
 ## 범위 확인 (이 PR에서 구현하지 않은 것)
 

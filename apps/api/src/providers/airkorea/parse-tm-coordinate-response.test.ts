@@ -27,7 +27,7 @@ function successResponse(items: unknown[]) {
         numOfRows: 10,
         pageNo: 1,
         totalCount: items.length,
-        items: { item: items },
+        items,
       },
     },
   };
@@ -50,6 +50,19 @@ describe('parseAirKoreaTmCoordinateResponse — success', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.page.items).toEqual([]);
+    }
+  });
+
+  it('rejects the old { item: [...] } wrapper shape as INVALID_RESPONSE (2026-08-13 live evidence: body.items is a direct array)', () => {
+    const result = parseAirKoreaTmCoordinateResponse({
+      response: {
+        header: { resultCode: '00', resultMsg: 'NORMAL_CODE' },
+        body: { numOfRows: 10, pageNo: 1, totalCount: 1, items: { item: [VALID_ITEM] } },
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe('INVALID_RESPONSE');
     }
   });
 });
@@ -106,7 +119,7 @@ describe('parseAirKoreaTmCoordinateResponse — invalid response', () => {
           numOfRows: 10,
           pageNo: 1,
           totalCount: 1,
-          items: { item: [{ sidoName: '서울특별시' }] },
+          items: [{ sidoName: '서울특별시' }],
         },
       },
     });

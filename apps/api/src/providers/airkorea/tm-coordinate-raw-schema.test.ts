@@ -31,7 +31,7 @@ function successResponse(items: unknown[], overrides?: Record<string, unknown>) 
         numOfRows: 10,
         pageNo: 1,
         totalCount: items.length,
-        items: { item: items },
+        items,
         ...overrides,
       },
     },
@@ -159,7 +159,7 @@ describe('airKoreaTmCoordinateBodySchema', () => {
       numOfRows: 10,
       pageNo: 1,
       totalCount: 1,
-      items: { item: [VALID_ITEM] },
+      items: [VALID_ITEM],
     });
     expect(result.success).toBe(true);
   });
@@ -169,7 +169,7 @@ describe('airKoreaTmCoordinateBodySchema', () => {
       numOfRows: 10,
       pageNo: 1,
       totalCount: 0,
-      items: { item: [] },
+      items: [],
     });
     expect(result.success).toBe(true);
   });
@@ -179,7 +179,7 @@ describe('airKoreaTmCoordinateBodySchema', () => {
       numOfRows: 10,
       pageNo: 1,
       totalCount: 0,
-      items: { item: [VALID_ITEM] },
+      items: [VALID_ITEM],
     });
     expect(result.success).toBe(false);
   });
@@ -189,7 +189,7 @@ describe('airKoreaTmCoordinateBodySchema', () => {
       numOfRows: 10,
       pageNo: 1,
       totalCount: 1,
-      items: { item: [VALID_ITEM, VALID_ITEM] },
+      items: [VALID_ITEM, VALID_ITEM],
     });
     expect(result.success).toBe(false);
   });
@@ -199,7 +199,7 @@ describe('airKoreaTmCoordinateBodySchema', () => {
       numOfRows: 1,
       pageNo: 1,
       totalCount: 2,
-      items: { item: [VALID_ITEM, VALID_ITEM] },
+      items: [VALID_ITEM, VALID_ITEM],
     });
     expect(result.success).toBe(false);
   });
@@ -209,14 +209,24 @@ describe('airKoreaTmCoordinateBodySchema', () => {
       numOfRows: 10,
       pageNo: 1,
       totalCount: 5,
-      items: { item: [VALID_ITEM] },
+      items: [VALID_ITEM],
     });
     expect(result.success).toBe(true);
+  });
+
+  it('rejects the old { item: [...] } wrapper shape (old-format regression check)', () => {
+    const result = airKoreaTmCoordinateBodySchema.safeParse({
+      numOfRows: 10,
+      pageNo: 1,
+      totalCount: 1,
+      items: { item: [VALID_ITEM] },
+    });
+    expect(result.success).toBe(false);
   });
 });
 
 describe('airKoreaTmCoordinateSuccessResponseSchema', () => {
-  it('accepts the technical document’s own no-version response example shape', () => {
+  it('accepts the 2026-08-13 Owner-observed live JSON response shape', () => {
     const result = airKoreaTmCoordinateSuccessResponseSchema.safeParse(
       successResponse([VALID_ITEM]),
     );

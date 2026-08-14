@@ -11,11 +11,17 @@
  * `한국환경공단_에어코리아_대기오염정보_기술문서_v1.4.docx`.
  *
  * This is an **independent** schema module from `../kma/*-raw-schema.ts` — it defines its own
- * envelope shape (`resultCode`/`resultMsg` header, `body.items.item[]`) rather than importing the
- * KMA provider's types, per the project's provider-namespace isolation policy. The envelope shape
+ * envelope shape (`resultCode`/`resultMsg` header, `body.items[]`) rather than importing the KMA
+ * provider's types, per the project's provider-namespace isolation policy. The envelope shape
  * happens to resemble KMA's (both are 공공데이터포털 services), but AirKorea's body has **no**
  * `dataType` field — unlike KMA, this operation's technical document response table does not list
  * one.
+ *
+ * `body.items` is a **direct array** (not a `{ item: [...] }` wrapper) — confirmed by an
+ * Owner-executed authenticated Public Data Portal preview call on 2026-08-13 (see
+ * `docs/airkorea-current-air-quality-provider.md`, "Owner-observed live JSON evidence"). The
+ * technical document's own field table never specified this nesting; only that live call
+ * established it.
  *
  * Type discipline: no `z.coerce`; unknown extra keys are dropped by Zod's default object strip. The
  * technical document's own field table marks `pm10Value`, `o3Value`, `khaiValue`, `khaiGrade`,
@@ -64,7 +70,19 @@ function isLeapYear(year: number): boolean {
 /** `dataTime` structural pattern: `YYYY-MM-DD HH:mm` (official sample: `2020-11-25 13:00`). */
 const AIRKOREA_DATA_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/;
 
-/** The parsed numeric components of a validated `dataTime` string. */
+/**
+ * The maximum four-digit year `dataTime`'s `YYYY` component can represent (the pattern above is
+ * exactly 4 digits). A `24:00` end-of-day rollover on December 31 of this year would need a
+ * 5-digit next year, which the format cannot represent — see the boundary check in
+ * {@link parseAirKoreaDataTime}.
+ */
+const AIRKOREA_MAX_YEAR = 9999;
+
+/**
+ * The parsed numeric components of a validated `dataTime` string, **after** any `24:00`
+ * end-of-day rollover has already been applied — `hour` is therefore always `00`-`23`. See
+ * {@link parseAirKoreaDataTime}.
+ */
 export interface AirKoreaDataTimeParts {
   readonly year: number;
   readonly month: number;
@@ -74,15 +92,45 @@ export interface AirKoreaDataTimeParts {
 }
 
 /**
+ * Roll `YYYY-MM-DD 24:00` over to the next calendar day at `00:00`, handling ordinary month-end,
+ * December 31 → January 1 of the next year, and the leap-year February boundary. `year`/`month`/
+ * `day` are already known-valid (checked by the caller before this runs), and the caller has
+ * already rejected the one input (`9999-12-31`) where a December 31 → next-year rollover would
+ * produce an unrepresentable 5-digit year, so `year + 1` here is always a valid 4-digit year. Pure
+ * arithmetic — no `Date`, no system clock.
+ */
+function rollOverAirKoreaDataTimeToNextDay(
+  year: number,
+  month: number,
+  day: number,
+): AirKoreaDataTimeParts {
+  const maxDay = month === 2 && isLeapYear(year) ? 29 : DAYS_IN_MONTH[month - 1];
+  if (day < maxDay) {
+    return { year, month, day: day + 1, hour: 0, minute: 0 };
+  }
+  if (month < 12) {
+    return { year, month: month + 1, day: 1, hour: 0, minute: 0 };
+  }
+  return { year: year + 1, month: 1, day: 1, hour: 0, minute: 0 };
+}
+
+/**
  * Parse and validate an AirKorea `dataTime` string (`YYYY-MM-DD HH:mm`), or return `null` if it is
- * not a real calendar date/clock time. Hour is `00`-`23` and minute is `00`-`59` — the technical
- * document's own sample (`2020-11-25 13:00`) uses this range; no official confirmation of a
- * `24:00`-style end-of-day convention exists for *this* operation's `dataTime`, so such a value is
- * rejected rather than silently reinterpreted (documented as a known gap in
- * `docs/airkorea-current-air-quality-provider.md`). Pure arithmetic — no `Date`, no system clock.
- * Exported so `normalize-current.ts` (building `measuredAt`) and `provider.ts` (comparing
- * candidate rows by recency — the fixed-width zero-padded format sorts lexicographically in
- * chronological order once every candidate is confirmed well-formed) share one source of truth.
+ * not a real calendar date/clock time. Minute is `00`-`59` for every hour. Hour is `00`-`23`
+ * **or** the literal end-of-day notation `24:00` (minute must be exactly `00`; `24:01`/`24:59` and
+ * any other hour above `23` are rejected) — confirmed for *this* operation's `dataTime` by an
+ * Owner-executed authenticated Public Data Portal preview call on 2026-08-13 that returned a
+ * `"2026-08-12 24:00"` row (see `docs/airkorea-current-air-quality-provider.md`, "Owner-observed
+ * live JSON evidence"; the project previously had no official confirmation either way). A valid
+ * `24:00` is canonicalized here to the next calendar day's `00:00` via
+ * {@link rollOverAirKoreaDataTimeToNextDay} — callers never see a `hour: 24` part. The one
+ * exception is `9999-12-31 24:00`: rolling over would require year `10000`, which has no
+ * representable 4-digit `YYYY`, so that specific timestamp is rejected (`null`) rather than
+ * silently overflowing — every other `24:00` rollover (ordinary month-end, December 31 in any
+ * other year, leap-year and non-leap-year February) is unaffected. Pure arithmetic — no `Date`, no
+ * system clock. Exported so `normalize-current.ts` (building `measuredAt`) and `provider.ts`
+ * (comparing candidate rows by recency using the canonical, post-rollover parts — see
+ * `formatAirKoreaDataTimeCanonical`) share one source of truth.
  */
 export function parseAirKoreaDataTime(value: string): AirKoreaDataTimeParts | null {
   const match = AIRKOREA_DATA_TIME_PATTERN.exec(value);
@@ -102,11 +150,39 @@ export function parseAirKoreaDataTime(value: string): AirKoreaDataTimeParts | nu
   if (day > maxDay) {
     return null;
   }
+
+  if (hour === 24) {
+    if (minute !== 0) {
+      return null;
+    }
+    if (year === AIRKOREA_MAX_YEAR && month === 12 && day === 31) {
+      return null;
+    }
+    return rollOverAirKoreaDataTimeToNextDay(year, month, day);
+  }
   if (hour > 23 || minute > 59) {
     return null;
   }
 
   return { year, month, day, hour, minute };
+}
+
+/**
+ * Format already-validated (post-rollover) `dataTime` parts as a canonical, zero-padded
+ * `YYYY-MM-DD HH:mm` string. Because {@link parseAirKoreaDataTime} always resolves a `24:00` value
+ * to the next day's `00:00` before returning, `hour` here is always `00`-`23` — so lexicographic
+ * comparison over this canonical form is chronological order, *including* across a `24:00`
+ * boundary, where the raw string differs from the next day's raw `00:00` string but both
+ * canonicalize to the same value (used by `provider.ts`'s latest-row selection to treat the two as
+ * the same instant rather than fabricating a difference).
+ */
+export function formatAirKoreaDataTimeCanonical(parts: AirKoreaDataTimeParts): string {
+  const year = String(parts.year).padStart(4, '0');
+  const month = String(parts.month).padStart(2, '0');
+  const day = String(parts.day).padStart(2, '0');
+  const hour = String(parts.hour).padStart(2, '0');
+  const minute = String(parts.minute).padStart(2, '0');
+  return `${year}-${month}-${day} ${hour}:${minute}`;
 }
 
 /** Whether `value` is a well-formed `dataTime` string — see {@link parseAirKoreaDataTime}. */
@@ -171,10 +247,11 @@ export const airKoreaCurrentAirQualityItemSchema = z.object({
 
 export type AirKoreaCurrentAirQualityItem = z.infer<typeof airKoreaCurrentAirQualityItemSchema>;
 
-/** `response.body.items`. The list is nested under `items.item`, which must be an **array**. */
-export const airKoreaCurrentAirQualityItemsSchema = z.object({
-  item: z.array(airKoreaCurrentAirQualityItemSchema),
-});
+/**
+ * `response.body.items` — a **direct array** of items (Owner-observed live JSON evidence,
+ * 2026-08-13; see the module docblock). Not a `{ item: [...] }` wrapper.
+ */
+export const airKoreaCurrentAirQualityItemsSchema = z.array(airKoreaCurrentAirQualityItemSchema);
 
 /** A 1-based page index (`pageNo`). */
 const airKoreaPageNumber = z.number().int().min(1);
@@ -199,12 +276,12 @@ export const airKoreaCurrentAirQualityBodySchema = z
     items: airKoreaCurrentAirQualityItemsSchema,
   })
   .superRefine((body, ctx) => {
-    const itemCount = body.items.item.length;
+    const itemCount = body.items.length;
 
     if (itemCount > body.numOfRows) {
       ctx.addIssue({
         code: 'custom',
-        path: ['items', 'item'],
+        path: ['items'],
         message: 'item count must not exceed numOfRows',
       });
     }
@@ -213,14 +290,14 @@ export const airKoreaCurrentAirQualityBodySchema = z
       if (itemCount > 0) {
         ctx.addIssue({
           code: 'custom',
-          path: ['items', 'item'],
+          path: ['items'],
           message: 'items must be empty when totalCount is zero',
         });
       }
     } else if (itemCount > body.totalCount) {
       ctx.addIssue({
         code: 'custom',
-        path: ['items', 'item'],
+        path: ['items'],
         message: 'item count must not exceed totalCount',
       });
     }

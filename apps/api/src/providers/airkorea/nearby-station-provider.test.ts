@@ -20,15 +20,16 @@ function successBody(
         numOfRows: 10,
         pageNo: 1,
         totalCount: overrides.totalCount ?? items.length,
-        items: { item: items },
+        items,
       },
     },
   });
 }
 
+/** `tm` is a JSON number (2026-08-13 Owner-observed live JSON evidence). */
 function item(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    tm: '8.2',
+    tm: 8.2,
     stationName: '부발읍',
     addr: '경기도 이천시 부발읍 무촌로 117부발보건지소 옥상',
     ...overrides,
@@ -54,8 +55,8 @@ describe('AirKorea nearby-station provider — successful in-memory JSON', () =>
   });
 
   it('returns candidates in upstream item order without sorting or picking a single closest station', async () => {
-    const first = item({ tm: '9.7', stationName: '창전동' });
-    const second = item({ tm: '8.2', stationName: '부발읍' });
+    const first = item({ tm: 9.7, stationName: '창전동' });
+    const second = item({ tm: 8.2, stationName: '부발읍' });
     const fetchImpl = vi.fn(async () => new Response(successBody([first, second]), { status: 200 }));
     const result = createAirKoreaNearbyStationProvider({ serviceKey: FAKE_KEY, fetchImpl });
     if (!result.ok) throw new Error('unexpected config error');
@@ -92,6 +93,15 @@ describe('AirKorea nearby-station provider — successful in-memory JSON', () =>
     expect(initArg?.method).toBe('GET');
     expect(initArg?.headers).toEqual({ Accept: 'application/json' });
     expect(initArg?.redirect).toBe('error');
+  });
+
+  it('accepts a direct-array body.items live JSON shape (2026-08-13 Owner-observed evidence)', async () => {
+    const fetchImpl = vi.fn(async () => new Response(successBody([item()]), { status: 200 }));
+    const result = createAirKoreaNearbyStationProvider({ serviceKey: FAKE_KEY, fetchImpl });
+    if (!result.ok) throw new Error('unexpected config error');
+
+    const outcome = await result.provider.fetchNearbyStations(VALID_REQUEST);
+    expect(outcome.ok).toBe(true);
   });
 });
 
@@ -235,8 +245,8 @@ describe('AirKorea nearby-station provider — response classification', () => {
   });
 
   it('classifies a complete multi-item result (totalCount === items.length) as success', async () => {
-    const first = item({ stationName: '창전동', tm: '9.7' });
-    const second = item({ stationName: '부발읍', tm: '8.2' });
+    const first = item({ stationName: '창전동', tm: 9.7 });
+    const second = item({ stationName: '부발읍', tm: 8.2 });
     const fetchImpl = vi.fn(async () => new Response(successBody([first, second]), { status: 200 }));
     const result = createAirKoreaNearbyStationProvider({ serviceKey: FAKE_KEY, fetchImpl });
     if (!result.ok) throw new Error('unexpected config error');
@@ -251,9 +261,23 @@ describe('AirKorea nearby-station provider — response classification', () => {
     });
   });
 
-  it('classifies a malformed distance as MALFORMED_DISTANCE (never promoted to a fabricated value)', async () => {
+  it('rejects a string tm as AIRKOREA_INVALID_RESPONSE — no z.coerce, never accepted for backward compatibility with old fixtures', async () => {
     const fetchImpl = vi.fn(
-      async () => new Response(successBody([item({ tm: 'not-a-number' })]), { status: 200 }),
+      async () => new Response(successBody([item({ tm: '8.2' })]), { status: 200 }),
+    );
+    const result = createAirKoreaNearbyStationProvider({ serviceKey: FAKE_KEY, fetchImpl });
+    if (!result.ok) throw new Error('unexpected config error');
+
+    const outcome = await result.provider.fetchNearbyStations(VALID_REQUEST);
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.error.kind).toBe('AIRKOREA_INVALID_RESPONSE');
+    }
+  });
+
+  it('classifies a negative distance as MALFORMED_DISTANCE (never promoted to a fabricated value)', async () => {
+    const fetchImpl = vi.fn(
+      async () => new Response(successBody([item({ tm: -1 })]), { status: 200 }),
     );
     const result = createAirKoreaNearbyStationProvider({ serviceKey: FAKE_KEY, fetchImpl });
     if (!result.ok) throw new Error('unexpected config error');
@@ -262,11 +286,11 @@ describe('AirKorea nearby-station provider — response classification', () => {
     expect(outcome).toEqual({ ok: false, error: { kind: 'MALFORMED_DISTANCE' } });
   });
 
-  it('classifies a single malformed distance among otherwise-valid items as MALFORMED_DISTANCE for the whole page', async () => {
+  it('classifies a single negative distance among otherwise-valid items as MALFORMED_DISTANCE for the whole page', async () => {
     const fetchImpl = vi.fn(
       async () =>
         new Response(
-          successBody([item({ stationName: '창전동', tm: '9.7' }), item({ stationName: '설성면', tm: '-1' })]),
+          successBody([item({ stationName: '창전동', tm: 9.7 }), item({ stationName: '설성면', tm: -1 })]),
           { status: 200 },
         ),
     );
