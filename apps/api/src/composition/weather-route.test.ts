@@ -281,7 +281,7 @@ function tmCoordinateSuccessBody(items: readonly Record<string, unknown>[]): str
   return JSON.stringify({
     response: {
       header: { resultCode: '00', resultMsg: 'NORMAL_CODE' },
-      body: { numOfRows: 100, pageNo: 1, totalCount: items.length, items: { item: items } },
+      body: { numOfRows: 100, pageNo: 1, totalCount: items.length, items },
     },
   });
 }
@@ -302,20 +302,20 @@ function nearbyStationSuccessBody(items: readonly Record<string, unknown>[]): st
   return JSON.stringify({
     response: {
       header: { resultCode: '00', resultMsg: 'NORMAL_CODE' },
-      body: { numOfRows: 10, pageNo: 1, totalCount: items.length, items: { item: items } },
+      body: { numOfRows: 10, pageNo: 1, totalCount: items.length, items },
     },
   });
 }
 
 function nearbyStationItem(overrides: Record<string, unknown> = {}) {
-  return { tm: '1.2', stationName: '종로구', addr: '서울특별시 종로구', ...overrides };
+  return { tm: 1.2, stationName: '종로구', addr: '서울특별시 종로구', ...overrides };
 }
 
 function currentAirQualitySuccessBody(items: readonly Record<string, unknown>[]): string {
   return JSON.stringify({
     response: {
       header: { resultCode: '00', resultMsg: 'NORMAL_SERVICE' },
-      body: { numOfRows: 100, pageNo: 1, totalCount: items.length, items: { item: items } },
+      body: { numOfRows: 100, pageNo: 1, totalCount: items.length, items },
     },
   });
 }
