@@ -86,6 +86,22 @@ describe('normalizeAirKoreaCurrentAirQuality — measuredAt (KST)', () => {
       const result = normalizeAirKoreaCurrentAirQuality({ ...BASE, dataTime: '2026-08-12 25:00' });
       expect(result.ok).toBe(false);
     });
+
+    it('fails normalization for 9999-12-31 24:00 — rollover would need an unrepresentable 5-digit year, so it produces the sanitized measuredAt issue rather than a year-10000 datetime', () => {
+      const result = normalizeAirKoreaCurrentAirQuality({ ...BASE, dataTime: '9999-12-31 24:00' });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.issues).toEqual([{ field: 'measuredAt', reason: 'INVALID' }]);
+      }
+    });
+
+    it('still normalizes 9999-12-31 23:59 (no rollover, no overflow)', () => {
+      const result = normalizeAirKoreaCurrentAirQuality({ ...BASE, dataTime: '9999-12-31 23:59' });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.current.measuredAt).toBe('9999-12-31T23:59:00+09:00');
+      }
+    });
   });
 });
 

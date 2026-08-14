@@ -71,6 +71,14 @@ function isLeapYear(year: number): boolean {
 const AIRKOREA_DATA_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/;
 
 /**
+ * The maximum four-digit year `dataTime`'s `YYYY` component can represent (the pattern above is
+ * exactly 4 digits). A `24:00` end-of-day rollover on December 31 of this year would need a
+ * 5-digit next year, which the format cannot represent — see the boundary check in
+ * {@link parseAirKoreaDataTime}.
+ */
+const AIRKOREA_MAX_YEAR = 9999;
+
+/**
  * The parsed numeric components of a validated `dataTime` string, **after** any `24:00`
  * end-of-day rollover has already been applied — `hour` is therefore always `00`-`23`. See
  * {@link parseAirKoreaDataTime}.
@@ -86,8 +94,10 @@ export interface AirKoreaDataTimeParts {
 /**
  * Roll `YYYY-MM-DD 24:00` over to the next calendar day at `00:00`, handling ordinary month-end,
  * December 31 → January 1 of the next year, and the leap-year February boundary. `year`/`month`/
- * `day` are already known-valid (checked by the caller before this runs). Pure arithmetic — no
- * `Date`, no system clock.
+ * `day` are already known-valid (checked by the caller before this runs), and the caller has
+ * already rejected the one input (`9999-12-31`) where a December 31 → next-year rollover would
+ * produce an unrepresentable 5-digit year, so `year + 1` here is always a valid 4-digit year. Pure
+ * arithmetic — no `Date`, no system clock.
  */
 function rollOverAirKoreaDataTimeToNextDay(
   year: number,
@@ -113,10 +123,14 @@ function rollOverAirKoreaDataTimeToNextDay(
  * `"2026-08-12 24:00"` row (see `docs/airkorea-current-air-quality-provider.md`, "Owner-observed
  * live JSON evidence"; the project previously had no official confirmation either way). A valid
  * `24:00` is canonicalized here to the next calendar day's `00:00` via
- * {@link rollOverAirKoreaDataTimeToNextDay} — callers never see a `hour: 24` part. Pure arithmetic
- * — no `Date`, no system clock. Exported so `normalize-current.ts` (building `measuredAt`) and
- * `provider.ts` (comparing candidate rows by recency using the canonical, post-rollover parts —
- * see `formatAirKoreaDataTimeCanonical`) share one source of truth.
+ * {@link rollOverAirKoreaDataTimeToNextDay} — callers never see a `hour: 24` part. The one
+ * exception is `9999-12-31 24:00`: rolling over would require year `10000`, which has no
+ * representable 4-digit `YYYY`, so that specific timestamp is rejected (`null`) rather than
+ * silently overflowing — every other `24:00` rollover (ordinary month-end, December 31 in any
+ * other year, leap-year and non-leap-year February) is unaffected. Pure arithmetic — no `Date`, no
+ * system clock. Exported so `normalize-current.ts` (building `measuredAt`) and `provider.ts`
+ * (comparing candidate rows by recency using the canonical, post-rollover parts — see
+ * `formatAirKoreaDataTimeCanonical`) share one source of truth.
  */
 export function parseAirKoreaDataTime(value: string): AirKoreaDataTimeParts | null {
   const match = AIRKOREA_DATA_TIME_PATTERN.exec(value);
@@ -139,6 +153,9 @@ export function parseAirKoreaDataTime(value: string): AirKoreaDataTimeParts | nu
 
   if (hour === 24) {
     if (minute !== 0) {
+      return null;
+    }
+    if (year === AIRKOREA_MAX_YEAR && month === 12 && day === 31) {
       return null;
     }
     return rollOverAirKoreaDataTimeToNextDay(year, month, day);

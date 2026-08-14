@@ -766,7 +766,9 @@
   실시간 측정정보 조회(`getMsrstnAcctoRltmMesureDnsty`)의 `dataTime`에 자정을 `24:00`으로 표기하는
   실제 사례(`"2026-08-12 24:00"`)가 확인되어, `parseAirKoreaDataTime`(`current-raw-schema.ts`)이
   정확히 `24:00`(다른 `24:xx`는 계속 거부)만 순수 달력 연산(월말·연말·윤년 처리 포함, `Date`나
-  시스템 시계 없음)으로 다음 날 `00:00`으로 canonicalize하고, `normalizeAirKoreaCurrentAirQuality`가
+  시스템 시계 없음)으로 다음 날 `00:00`으로 canonicalize합니다 — 단, 결과 연도가 `dataTime`의
+  4자리 `YYYY`가 표현 가능한 최대값(`9999`)을 넘는 유일한 입력(`9999-12-31 24:00`)은 5자리 연도가
+  되어 표현 불가능하므로 다른 malformed 값과 동일하게 거부됩니다. `normalizeAirKoreaCurrentAirQuality`가
   이를 그대로 다음 날 KST `measuredAt`으로 반영하도록 확장했습니다. "최신 측정값" 선택
   (`provider.ts`의 `selectLatestItem`)도 raw 문자열이 아닌 이 canonical(24:00-rollover 적용 후)
   시각을 비교하도록 바뀌어, `24:00` 행과 다음 날 `00:00` 행처럼 서로 다른 표기가 같은 순간을

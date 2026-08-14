@@ -228,6 +228,25 @@ describe('AirKorea provider — successful in-memory JSON', () => {
       }
     });
   });
+
+  describe('max-representable-year rollover boundary (9999-12-31 24:00)', () => {
+    it('fails closed with AIRKOREA_INVALID_RESPONSE when a page contains the unsupported overflow timestamp, rather than dropping it and selecting the older valid row', async () => {
+      const valid = item({ dataTime: '9999-12-31 23:00', pm10Value: 'older-valid' });
+      const overflow = item({ dataTime: '9999-12-31 24:00', pm10Value: 'overflow' });
+
+      const fetchImpl = vi.fn(
+        async () => new Response(successBody([valid, overflow]), { status: 200 }),
+      );
+      const result = createAirKoreaCurrentAirQualityProvider({ serviceKey: FAKE_KEY, fetchImpl });
+      if (!result.ok) throw new Error('unexpected config error');
+
+      const outcome = await result.provider.fetchCurrentAirQuality({ stationName: '종로구' });
+      expect(outcome).toEqual({
+        ok: false,
+        error: { kind: 'AIRKOREA_INVALID_RESPONSE', issues: expect.any(Array) },
+      });
+    });
+  });
 });
 
 describe('AirKorea provider — request validation', () => {

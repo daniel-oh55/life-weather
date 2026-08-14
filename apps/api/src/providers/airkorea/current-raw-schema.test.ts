@@ -175,6 +175,53 @@ describe('parseAirKoreaDataTime', () => {
       });
     });
   });
+
+  describe('max-representable-year rollover boundary (9999-12-31 24:00)', () => {
+    it('rejects 9999-12-31 24:00 — rolling over would need a 5-digit year (10000)', () => {
+      expect(parseAirKoreaDataTime('9999-12-31 24:00')).toBeNull();
+    });
+
+    it('still accepts 9999-12-31 23:59 (no rollover, no overflow)', () => {
+      expect(parseAirKoreaDataTime('9999-12-31 23:59')).toEqual({
+        year: 9999,
+        month: 12,
+        day: 31,
+        hour: 23,
+        minute: 59,
+      });
+    });
+
+    it('does not affect ordinary rollovers in other years (regression guard)', () => {
+      expect(parseAirKoreaDataTime('2026-08-12 24:00')).toEqual({
+        year: 2026,
+        month: 8,
+        day: 13,
+        hour: 0,
+        minute: 0,
+      });
+      expect(parseAirKoreaDataTime('2026-12-31 24:00')).toEqual({
+        year: 2027,
+        month: 1,
+        day: 1,
+        hour: 0,
+        minute: 0,
+      });
+      expect(parseAirKoreaDataTime('2024-02-29 24:00')).toEqual({
+        year: 2024,
+        month: 3,
+        day: 1,
+        hour: 0,
+        minute: 0,
+      });
+      expect(parseAirKoreaDataTime('2025-02-28 24:00')).toEqual({
+        year: 2025,
+        month: 3,
+        day: 1,
+        hour: 0,
+        minute: 0,
+      });
+    });
+  });
 });
 
 describe('formatAirKoreaDataTimeCanonical', () => {
@@ -239,6 +286,14 @@ describe('airKoreaCurrentAirQualityItemSchema', () => {
     const result = airKoreaCurrentAirQualityItemSchema.safeParse({
       ...VALID_ITEM,
       dataTime: 'not-a-date',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects dataTime 9999-12-31 24:00 (max-year rollover overflow)', () => {
+    const result = airKoreaCurrentAirQualityItemSchema.safeParse({
+      ...VALID_ITEM,
+      dataTime: '9999-12-31 24:00',
     });
     expect(result.success).toBe(false);
   });
@@ -411,6 +466,13 @@ describe('airKoreaCurrentAirQualitySuccessResponseSchema', () => {
         body: { numOfRows: 100, pageNo: 1 },
       },
     });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a response whose item dataTime is the max-year rollover overflow (9999-12-31 24:00)', () => {
+    const result = airKoreaCurrentAirQualitySuccessResponseSchema.safeParse(
+      successResponse([{ ...VALID_ITEM, dataTime: '9999-12-31 24:00' }]),
+    );
     expect(result.success).toBe(false);
   });
 });
