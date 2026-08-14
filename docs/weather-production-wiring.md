@@ -1,4 +1,4 @@
-# Weather route production wiring (PR #31; combined current+hourly graph as of PR #81)
+# Weather route production wiring (PR #31; KMA current+hourly graph as of PR #81; AirKorea current air quality as of PR #86)
 
 PR #31 connects the PR #30 mountable `POST /weather` route factory to the real production Hono app, so
 `POST /weather` is now a **live production endpoint** alongside the unchanged `GET /health`. Before this PR
@@ -11,9 +11,11 @@ dependency; and it implemented no cache, rate-limit, auth, CORS, logging, or tel
 
 **As of PR #81**, the production KMA graph this wiring builds changed from the PR #27 hourly-only root to
 the PR #78 combined current+hourly root — see [Current production state (PR #81)](#current-production-state-pr-81)
-below. The rest of this document (through "Vercel Hono deployment build configuration") is the historical
-PR #31 record and is preserved as originally written; where it says "hourly-overview graph" or
-"hourly-only", read that as the PR #81 update describes.
+below. **As of PR #86**, that graph was further extended with AirKorea current air quality — see
+[Current production state (PR #86)](#current-production-state-pr-86) below for the present state. The rest
+of this document (through "Vercel Hono deployment build configuration") is the historical PR #31 record and
+is preserved as originally written; where it says "hourly-overview graph" or "hourly-only", read that as the
+PR #81 and PR #86 updates describe.
 
 ## The three pieces
 
@@ -293,8 +295,9 @@ now serves.
 
 **PR #86** wires the PR #85 AirKorea location current air-quality application service into the same
 `POST /weather` production graph this document describes, so the response now carries KMA hourly +
-current **and** AirKorea current air quality. Everything else in this document (the route factory, the
-presenter, `index.ts`/`api-app.ts` runtime, the deployment configuration sections above) is unchanged.
+current **and** AirKorea current air quality. The route factory, the presenter, `api-app.ts`, and the
+deployment configuration sections above are unchanged. `index.ts`'s startup composition **is** changed —
+it now also reads and fail-fasts on `AIRKOREA_SERVICE_KEY` (see below) — while remaining network-free.
 
 - **New cross-provider production graph.** `apps/api/src/composition/weather-route.ts` now builds
   `createKmaAirKoreaWeatherOverviewCompositionFromEnv`
