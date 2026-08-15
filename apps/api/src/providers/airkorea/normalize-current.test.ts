@@ -233,6 +233,49 @@ describe('normalizeAirKoreaCurrentAirQuality — grades', () => {
       }
     },
   );
+
+  describe('JSON null grades (2026-08-14 Owner-authenticated live JSON evidence)', () => {
+    it('maps a present null khaiGrade to a null overallGrade (not an issue)', () => {
+      const result = normalizeAirKoreaCurrentAirQuality({ ...BASE, khaiGrade: null });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.current.overallGrade).toBeNull();
+      }
+    });
+
+    it('maps a present null pm10Grade to a null pm10Grade (not an issue)', () => {
+      const result = normalizeAirKoreaCurrentAirQuality({ ...BASE, pm10Grade: null });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.current.pm10Grade).toBeNull();
+      }
+    });
+
+    it('maps a present null o3Grade to a null ozoneGrade (not an issue)', () => {
+      const result = normalizeAirKoreaCurrentAirQuality({ ...BASE, o3Grade: null });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.current.ozoneGrade).toBeNull();
+      }
+    });
+
+    it('maps a present null pm25Grade to a null pm25Grade (not an issue)', () => {
+      const result = normalizeAirKoreaCurrentAirQuality({ ...BASE, pm25Grade: null });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.current.pm25Grade).toBeNull();
+      }
+    });
+
+    it('does not conflate undefined (ABSENT) with null for a required grade key', () => {
+      const bypassedAbsent = omitKey(BASE, 'khaiGrade') as AirKoreaCurrentAirQualityProviderSuccess;
+      const absentResult = normalizeAirKoreaCurrentAirQuality(bypassedAbsent);
+      expect(absentResult.ok).toBe(false);
+
+      const nullResult = normalizeAirKoreaCurrentAirQuality({ ...BASE, khaiGrade: null });
+      expect(nullResult.ok).toBe(true);
+    });
+  });
 });
 
 /** Return a shallow clone of `obj` with `key` deleted — works around TS's optional-only `delete`. */

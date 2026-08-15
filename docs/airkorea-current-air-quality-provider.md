@@ -33,6 +33,47 @@ Public Data Portal preview 호출 3건을 직접 실행했고, 그중 하나가 
 JSON 직렬화 등 그 외 미검증 gap은 이 preview로 해소되지 않았으므로 § "실제 인증 API 검증 상태"에
 계속 미검증으로 남습니다.
 
+## Owner-observed live JSON evidence (2026-08-14, PR #88) — grade `null` 직렬화
+
+2026-08-14, Owner가 인증된 Public Data Portal API를 이 operation(`getMsrstnAcctoRltmMesureDnsty`)에
+대해 Production과 동일한 request 정책(`stationName=종로구`, `returnType=json`, `pageNo=1`,
+`numOfRows=100`, `dataTerm=DAILY`, `ver=1.5`)으로 직접 호출했습니다. HTTP 200, `resultCode=00`,
+`totalCount=22`, `items=22`.
+
+이 호출에서 소비 필드별 JSON 상태(STRING/NULL/ABSENT/OTHER)를 세어 확인했습니다.
+
+| 필드 | STRING | NULL | ABSENT | OTHER |
+| --- | --- | --- | --- | --- |
+| `dataTime` | 22 | 0 | 0 | 0 |
+| `stationName` | 22 | 0 | 0 | 0 |
+| `pm10Value` | 22 | 0 | 0 | 0 |
+| `pm25Value` | 22 | 0 | 0 | 0 |
+| `o3Value` | 22 | 0 | 0 | 0 |
+| `khaiValue` | 22 | 0 | 0 | 0 |
+| `khaiGrade` | 17 | 5 | 0 | 0 |
+| `pm10Grade` | 18 | 4 | 0 | 0 |
+| `pm25Grade` | 18 | 4 | 0 | 0 |
+| `o3Grade` | 20 | 2 | 0 | 0 |
+
+이로써 다음이 실측 확인되었습니다 — PR #82/#83/#84/#87 당시에는 알려지지 않았던 사실입니다.
+
+* **등급 필드(`khaiGrade`/`pm10Grade`/`pm25Grade`/`o3Grade`)의 결측값은 키가 존재하되 값이 JSON
+  `null`인 형태로도 실제 직렬화될 수 있습니다.** 이전 문서(아래 "결측치(sentinel) 표현" 및 § "실제
+  인증 API 검증 상태")는 XML 예제의 self-closing 요소(`<so2Grade/>`)만 근거로 JSON에서는 빈 문자열
+  `""`로 나타날 것이라고 가정했으나, 실측 결과 최소 4건의 hourly item에서 각 등급 필드가 JSON `null`로
+  나타남을 확인했습니다. 이 관측 범위에서 등급 필드의 key ABSENT 또는 STRING/NULL 외 다른 형태
+  (OTHER)는 한 건도 없었습니다 — 이 provider가 요구하는 필수 등급 3종(`khaiGrade`/`pm10Grade`/
+  `o3Grade`)이 key 자체가 없는 채로 오는 경우는 이번 관측에서 발견되지 않았습니다.
+* **이 관측에서 소비 필드 중 측정값(`dataTime`/`stationName`/`pm10Value`/`pm25Value`/`o3Value`/
+  `khaiValue`)은 모두 STRING이었고 NULL/ABSENT/OTHER는 0건이었습니다.** 이 사실은 **등급 필드에만**
+  적용됩니다 — 측정값 필드도 JSON `null`을 허용한다고 일반화하지 않습니다. 이 provider의 raw schema는
+  이번 PR에서 등급 필드만 `string | null`로 넓혔고, 측정값 필드(`pm10Value`/`pm25Value`/`o3Value`/
+  `khaiValue`)는 여전히 `string`만 허용합니다.
+
+이 evidence는 이 operation의 **positive(성공) 응답 하나**에서 얻은 관측이며, zero-result 직렬화나
+다른 AirKorea operation의 null 정책을 검증하지 않습니다 — § "실제 인증 API 검증 상태"의 다른 미검증
+gap에는 영향을 주지 않습니다. 실제 raw response body, 측정값, API key는 기록하지 않습니다.
+
 ## 공식 자료
 
 | 항목 | 값 |
@@ -161,9 +202,20 @@ Owner-observed live JSON evidence로 확인됨(§ "Owner-observed live JSON evid
 이 provider가 실제로 소비하는 필드만 `airKoreaCurrentAirQualityItemSchema`
 (`current-raw-schema.ts`)에 선언하며, 문서의 필수/옵션 구분을 그대로 반영합니다:
 
-* **필수 문자열** (항목구분: 1 — 키 자체가 없으면 malformed 응답으로 거부): `dataTime`,
-  `stationName`, `pm10Value`, `o3Value`, `khaiValue`, `khaiGrade`, `pm10Grade`, `o3Grade`.
-* **옵션 문자열** (항목구분: 0 — 키 자체가 없어도 정상): `pm25Value`, `pm25Grade`.
+* **필수 문자열** (항목구분: 1 — 키 자체가 없으면 malformed 응답으로 거부, 값은 항상 문자열):
+  `dataTime`, `stationName`, `pm10Value`, `o3Value`, `khaiValue`.
+* **필수 `string | null`** (항목구분: 1 — 키 자체가 없으면 malformed 응답으로 거부하지만, 키가
+  존재하면 값으로 문자열 또는 JSON `null`을 모두 허용): `khaiGrade`, `pm10Grade`, `o3Grade`.
+* **옵션 문자열** (항목구분: 0 — 키 자체가 없어도 정상, 키가 있으면 값은 항상 문자열): `pm25Value`.
+* **옵션 `string | null`** (항목구분: 0 — 키 자체가 없어도 정상이고, 키가 있으면 값으로 문자열 또는
+  JSON `null`을 모두 허용): `pm25Grade`.
+
+키 존재(presence)와 값(value)의 의미는 다음과 같이 명확히 구분됩니다.
+
+* 필수 grade 키(`khaiGrade`/`pm10Grade`/`o3Grade`) ABSENT → malformed (raw schema 단계에서 거부).
+* 필수 grade 키 present, 값 JSON `null` → 정상적인 결측치 표현.
+* `pm25Grade` ABSENT → 정상(옵션 필드).
+* `pm25Grade` present, 값 JSON `null` → 정상적인 결측치 표현.
 
 문서상 필수인 나머지 필드(`so2Value`/`coValue`/`no2Value`/`so2Grade`/`coGrade`/`no2Grade`
 등)는 이 provider가 전혀 소비하지 않으므로 raw schema에 선언하지 않고, Zod의 기본
@@ -199,7 +251,11 @@ export됩니다.
   (PM10/PM2.5/O3)에도 동일하게 적용한 것으로, 제3자 자료가 아니라 **같은 공식 문서, 같은
   필드군**에 대한 최소한의 확장 해석입니다. 인증된 실응답으로 재확인이 필요한 항목으로
   남겨둡니다.
-* **등급**(`khaiGrade`/`pm10Grade`/`pm25Grade`/`o3Grade`): 빈 문자열 `""` → `null`.
+* **등급**(`khaiGrade`/`pm10Grade`/`pm25Grade`/`o3Grade`): 빈 문자열 `""` → `null`. 2026-08-14
+  Owner-observed live JSON evidence로 확인된 세 번째 결측 표현: 키가 존재하되 값이 JSON `null`인
+  경우도 → `null`(§ "Owner-observed live JSON evidence (2026-08-14, PR #88)" 참고). raw schema
+  단계에서는 `string | null`을 그대로 허용하고, `""`/`null` 모두 `normalize-current.ts`에서 동일하게
+  `null`로 정규화합니다.
 * 옵션 필드(`pm25Value`/`pm25Grade`)의 **부재**는 위와 동일하게 `null`로 취급합니다 —
   문서가 명시한 옵션 필드(항목구분: 0)이므로 malformed가 아니라 정상적인 결측치 표현입니다.
 * **필수 필드**(`pm10Value`/`o3Value`/`khaiValue`/`khaiGrade`/`pm10Grade`/`o3Grade`)의
@@ -225,7 +281,8 @@ export됩니다.
 | `3` | 나쁨 | `BAD` |
 | `4` | 매우나쁨 | `VERY_BAD` |
 | `""` (결측) | - | `null` |
-| 그 외 모든 값 | 미문서화 | 정규화 실패 (조용히 `UNKNOWN`이나 임의 등급으로 승격하지 않음) |
+| JSON `null` (결측) | - | `null` |
+| 위 허용 표현 외 값 | 미문서화 | 정규화 실패 (조용히 `UNKNOWN`이나 임의 등급으로 승격하지 않음) |
 
 이 PR에서는 농도 기반 등급을 자체 계산하지 않고, AirKorea가 이미 계산해 제공하는 native
 등급만 그대로 매핑합니다.
@@ -304,9 +361,20 @@ interface AirKoreaCurrentAirQualityProvider {
 
 성공 결과(`AirKoreaCurrentAirQualityProviderSuccess`)는 선택된 최신 item의 필드
 (`stationName`, `dataTime`, 4개 측정값, 4개 등급)만 노출합니다 — raw body, URL, 서비스키는
-전혀 포함되지 않습니다. 이 타입의 필수/옵션 구분은 raw 계약을 그대로 따릅니다:
-`pm10Value`/`o3Value`/`khaiValue`/`khaiGrade`/`pm10Grade`/`o3Grade`는 필수 문자열이고
-(raw schema가 이미 그 존재를 보장), `pm25Value`/`pm25Grade`만 옵션입니다.
+전혀 포함되지 않습니다. 이 타입의 필수/옵션 구분은 raw 계약을 그대로 따르며(raw schema가 키
+존재를 이미 보장), 값 타입도 raw 계약을 그대로 반영합니다.
+
+필수(키 존재 보장):
+
+* `pm10Value: string`, `o3Value: string`, `khaiValue: string`
+* `khaiGrade: string | null`, `pm10Grade: string | null`, `o3Grade: string | null`
+
+옵션(키 부재 가능):
+
+* `pm25Value?: string`
+* `pm25Grade?: string | null`
+
+필수/옵션은 key presence를 뜻한다는 원칙은 raw 계약과 동일합니다(위 "Raw response 계약" 참고).
 
 실패 kind: `INVALID_REQUEST`, `TIMEOUT`, `ABORTED`, `NETWORK_ERROR`, `HTTP_ERROR`,
 `RESPONSE_TOO_LARGE`, `EMPTY_RESPONSE`, `NON_JSON_RESPONSE`, `INVALID_JSON`,
@@ -339,22 +407,34 @@ provider의 런타임 동작은 이 PR에서 전혀 변경되지 않았습니다
 ## 실제 인증 API 검증 상태
 
 PR #82 시점에는 실제 인증 서비스키를 사용한 AirKorea API 호출을 전혀 수행하지 않았습니다. PR #87
-(2026-08-13)에서 Owner가 인증된 Public Data Portal preview 호출을 직접 실행해 아래 두 항목을
-확인했습니다 — 자세한 내용은 § "Owner-observed live JSON evidence" 참고.
+(2026-08-13)에서 Owner가 인증된 Public Data Portal preview 호출을 직접 실행해 두 항목을
+확인했고, PR #88 (2026-08-14)에서 이 operation을 다시 직접 호출해 등급 필드의 JSON `null`
+직렬화를 추가로 확인했습니다 — 자세한 내용은 § "Owner-observed live JSON evidence" 및
+§ "Owner-observed live JSON evidence (2026-08-14, PR #88)" 참고.
 
 * ~~JSON 직렬화에서 `body.items`가 direct array인지 `{ item: [...] }` wrapper인지~~ —
   **2026-08-13 확인됨: direct array.**
 * ~~`dataTime`에 자정을 `24:00`으로 표기하는 사례가 실제로 존재하는지~~ — **2026-08-13 확인됨:
   존재함(`"2026-08-12 24:00"`).**
 
-이 preview 호출은 이 operation의 **positive(성공) 응답 하나만** 대상이었으므로, 아래 항목은
+이 preview 호출들은 이 operation의 **positive(성공) 응답**만 대상이었으므로, 아래 항목은
 여전히 문서만으로는 100% 확정할 수 없어 향후 추가 인증된 실응답으로 재확인이 필요합니다.
 
-* JSON 직렬화에서 결측 등급이 실제로 빈 문자열(`""`)로 나타나는지(문서 예제는 XML만 제공).
-* `pm25Value`/`pm25Grade`가 `ver=1.5`에서 실제로 항상 키 자체는 존재하되 값만 sentinel인지,
-  아니면 키 자체가 완전히 생략되는지.
+* ~~JSON 직렬화에서 결측 등급이 실제로 어떻게 나타나는지~~ — **2026-08-14 확인됨: 키가 존재하되
+  값이 JSON `null`인 형태로 나타날 수 있음** (§ "Owner-observed live JSON evidence (2026-08-14,
+  PR #88)" 참고, `khaiGrade`/`pm10Grade`/`pm25Grade`/`o3Grade` 모두 관측). 다만 이 관측에서는
+  빈 문자열 `""` 형태의 실제 사례는 나타나지 않았으므로, JSON에서 `""` 형태도 실제로 나올 수
+  있는지는 여전히 별도로 확인되지 않았습니다 — 이 provider는 `null`과 `""`를 모두 유효한 결측
+  표현으로 계속 허용합니다.
+* `pm25Value`가 `ver=1.5`에서 실제로 항상 키 자체는 존재하되 값만 sentinel인지, 아니면 키 자체가
+  완전히 생략되는지 — 2026-08-14 관측에서는 `pm25Value`가 22건 모두 STRING이었을 뿐 ABSENT 사례가
+  없어 미확인으로 남습니다.
 * PM10/PM2.5/O3/CAI 각각에 `"-"` sentinel이 실제로 동일하게 적용되는지(문서에는 `khaiValue`
-  예시만 있음).
+  예시만 있음) — 2026-08-14 관측에서도 4개 측정값 필드 모두 STRING(sentinel 여부 미확인, `"-"`
+  관측 없음)이었습니다.
+* 측정값 필드(`pm10Value`/`pm25Value`/`o3Value`/`khaiValue`)가 JSON `null`로 직렬화될 수 있는지 —
+  2026-08-14 관측에서는 4개 필드 모두 STRING(22/22)이었고 NULL은 0건이었으므로, 이 PR은 등급
+  필드만 `null`을 허용하도록 넓혔고 측정값 필드는 넓히지 않았습니다.
 * 0건 결과(zero-result)의 실제 JSON 직렬화 형태(§ "Zero-result" 관련 — 이 provider는 아직
   positive 응답만 확인했으므로, zero-result가 여전히 빈 direct array(`items: []`)로 직렬화되는지는
   구조적으로 자연스럽게 도출되는 가정일 뿐, 별도로 실측되지 않았습니다).

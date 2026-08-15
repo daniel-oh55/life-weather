@@ -249,6 +249,60 @@ describe('AirKorea provider — successful in-memory JSON', () => {
   });
 });
 
+describe('AirKorea provider — null grade values (2026-08-14 Owner-authenticated live JSON evidence)', () => {
+  it('succeeds and selects the latest item when only a historical (non-latest) item has a null grade', async () => {
+    const historical = item({
+      dataTime: '2020-11-25 09:00',
+      pm10Value: '10',
+      khaiGrade: null,
+      pm10Grade: null,
+      pm25Grade: null,
+      o3Grade: null,
+    });
+    const latest = item({ dataTime: '2020-11-25 13:00', pm10Value: '99' });
+    const fetchImpl = vi.fn(
+      async () => new Response(successBody([historical, latest]), { status: 200 }),
+    );
+    const result = createAirKoreaCurrentAirQualityProvider({ serviceKey: FAKE_KEY, fetchImpl });
+    if (!result.ok) throw new Error('unexpected config error');
+
+    const outcome = await result.provider.fetchCurrentAirQuality({ stationName: '종로구' });
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.observation.dataTime).toBe('2020-11-25 13:00');
+      expect(outcome.observation.pm10Value).toBe('99');
+      expect(outcome.observation.khaiGrade).toBe('2');
+    }
+  });
+
+  it('succeeds when the latest item itself has a null required grade, passing the null through exactly', async () => {
+    const older = item({ dataTime: '2020-11-25 09:00', pm10Value: '10' });
+    const latestWithNullGrade = item({
+      dataTime: '2020-11-25 13:00',
+      pm10Value: '99',
+      khaiGrade: null,
+      pm10Grade: null,
+      o3Grade: null,
+      pm25Grade: null,
+    });
+    const fetchImpl = vi.fn(
+      async () => new Response(successBody([older, latestWithNullGrade]), { status: 200 }),
+    );
+    const result = createAirKoreaCurrentAirQualityProvider({ serviceKey: FAKE_KEY, fetchImpl });
+    if (!result.ok) throw new Error('unexpected config error');
+
+    const outcome = await result.provider.fetchCurrentAirQuality({ stationName: '종로구' });
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.observation.dataTime).toBe('2020-11-25 13:00');
+      expect(outcome.observation.khaiGrade).toBeNull();
+      expect(outcome.observation.pm10Grade).toBeNull();
+      expect(outcome.observation.o3Grade).toBeNull();
+      expect(outcome.observation.pm25Grade).toBeNull();
+    }
+  });
+});
+
 describe('AirKorea provider — request validation', () => {
   it('rejects an invalid request without performing a fetch', async () => {
     const fetchImpl = vi.fn(async () => new Response(successBody([item()]), { status: 200 }));

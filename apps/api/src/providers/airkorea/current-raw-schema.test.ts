@@ -335,6 +335,73 @@ describe('airKoreaCurrentAirQualityItemSchema', () => {
     },
   );
 
+  const REQUIRED_GRADE_FIELDS = ['khaiGrade', 'pm10Grade', 'o3Grade'] as const;
+
+  describe('grade null handling (2026-08-14 Owner-authenticated live JSON evidence)', () => {
+    it.each(REQUIRED_GRADE_FIELDS)(
+      'accepts a present JSON null for required grade %s',
+      (field) => {
+        const result = airKoreaCurrentAirQualityItemSchema.safeParse({
+          ...VALID_ITEM,
+          [field]: null,
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data[field]).toBeNull();
+        }
+      },
+    );
+
+    it('accepts a present JSON null for optional pm25Grade', () => {
+      const result = airKoreaCurrentAirQualityItemSchema.safeParse({
+        ...VALID_ITEM,
+        pm25Grade: null,
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.pm25Grade).toBeNull();
+      }
+    });
+
+    it.each(REQUIRED_GRADE_FIELDS)(
+      'still rejects a key-absent required grade %s (null is not the same as absent)',
+      (field) => {
+        const result = airKoreaCurrentAirQualityItemSchema.safeParse(omitKey(VALID_ITEM, field));
+        expect(result.success).toBe(false);
+      },
+    );
+
+    it('pm25Grade key-absence continues to succeed (unaffected by null support)', () => {
+      const { pm25Grade, ...rest } = VALID_ITEM;
+      const result = airKoreaCurrentAirQualityItemSchema.safeParse(rest);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.pm25Grade).toBeUndefined();
+      }
+    });
+
+    it.each(['khaiGrade', 'pm10Grade', 'pm25Grade', 'o3Grade'] as const)(
+      'still rejects wrong-primitive/object/array values for grade %s',
+      (field) => {
+        for (const badValue of [7, true, {}, []]) {
+          const result = airKoreaCurrentAirQualityItemSchema.safeParse({
+            ...VALID_ITEM,
+            [field]: badValue,
+          });
+          expect(result.success).toBe(false);
+        }
+      },
+    );
+
+    it('does not widen measurement fields to accept null', () => {
+      const result = airKoreaCurrentAirQualityItemSchema.safeParse({
+        ...VALID_ITEM,
+        khaiValue: null,
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
   it('strips unknown extra raw keys', () => {
     const result = airKoreaCurrentAirQualityItemSchema.safeParse({
       ...VALID_ITEM,

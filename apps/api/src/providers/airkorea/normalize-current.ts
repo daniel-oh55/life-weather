@@ -23,20 +23,29 @@
  *   confirmed by the technical document's `<khaiValue>-</khaiValue>` sample; `""` for a grade,
  *   confirmed by its self-closing `<so2Grade/>` sample) → the contract field is `null`. Not a
  *   normalization issue — the key is present, only its value encodes "no data".
- * - **VALUE** (present, non-sentinel) → parsed. A value that does not match the documented shape is
- *   an explicit normalization issue (see below).
+ * - **JSON `null`** (grade fields only — present key, JSON `null` value; 2026-08-14 Owner-observed
+ *   live JSON evidence, see `current-raw-schema.ts` and
+ *   `docs/airkorea-current-air-quality-provider.md`) → the contract field is `null`. Also not a
+ *   normalization issue, and distinct from ABSENT: the raw schema still rejects a missing key for
+ *   these three grades, but a *present* `null` is a documented live serialization of "no data".
+ * - **VALUE** (present, non-sentinel, non-`null`) → parsed. A value that does not match the
+ *   documented shape is an explicit normalization issue (see below).
  *
  * Optional fields (`pm25Value`, `pm25Grade` — the raw schema's own optional keys):
  *
  * - **ABSENT** (documented optional at any `ver`) → the contract field is `null`. Not a
  *   normalization issue.
  * - **SENTINEL** → the contract field is `null`. Not a normalization issue.
- * - **VALUE** (present, non-sentinel) → parsed, same as a required field.
+ * - **JSON `null`** (`pm25Grade` only) → the contract field is `null`. Not a normalization issue.
+ * - **VALUE** (present, non-sentinel, non-`null`) → parsed, same as a required field.
  *
- * For both groups, a present value that does not match the documented shape (a bare non-negative
- * decimal for a measurement; the literal digits `"1"`-`"4"` for a grade) is an explicit
+ * For both groups, a present *string* value that does not match the documented shape (a bare
+ * non-negative decimal for a measurement; the literal digits `"1"`-`"4"` for a grade) is an explicit
  * normalization **issue** — it is never silently coerced to `null` or to zero, per the project's
- * "malformed data must not become a documented missing value" policy.
+ * "malformed data must not become a documented missing value" policy. Measurement fields are not
+ * widened to accept JSON `null` by this change — only grade fields are (raw evidence only covers
+ * grades; see the module's `docs/airkorea-current-air-quality-provider.md` "Owner-observed live JSON
+ * evidence" entry for 2026-08-14).
  *
  * `measuredAt` is required: a malformed `dataTime` blocks normalization entirely (the raw schema
  * already guarantees a well-formed `dataTime`; this is a defensive re-check, matching the KMA
@@ -194,15 +203,21 @@ function resolveOptionalMeasurement(
 /**
  * Resolve a *required* grade field (`khaiGrade`/`pm10Grade`/`o3Grade`). `undefined` (ABSENT) is a
  * malformed-response issue — see {@link resolveRequiredMeasurement} for the same runtime-bypass
- * rationale.
+ * rationale. `null` (present key, JSON `null` value — 2026-08-14 Owner-observed live JSON evidence)
+ * is a documented missing-grade outcome, not an issue: it is distinct from ABSENT and resolves to a
+ * `null` contract grade, exactly like the `""` string sentinel. `parseAirKoreaGrade` keeps its
+ * string-only signature; the `null` case is handled here, before it is called.
  */
 function resolveRequiredGrade(
   field: AirKoreaCurrentNormalizationIssue['field'],
-  raw: string | undefined,
+  raw: string | null | undefined,
   issues: AirKoreaCurrentNormalizationIssue[],
 ): AirQualityGrade | null {
   if (raw === undefined) {
     issues.push({ field, reason: 'INVALID' });
+    return null;
+  }
+  if (raw === null) {
     return null;
   }
   const parsed = parseAirKoreaGrade(raw);
@@ -215,14 +230,15 @@ function resolveRequiredGrade(
 
 /**
  * Resolve the *optional* PM2.5 grade field (`pm25Grade`). `undefined` (ABSENT) is a documented
- * optional-field outcome and is treated exactly like the sentinel — never an issue.
+ * optional-field outcome and `null` (present key, JSON `null` value) is a documented missing-grade
+ * outcome — both are treated exactly like the `""` string sentinel, never an issue.
  */
 function resolveOptionalGrade(
   field: AirKoreaCurrentNormalizationIssue['field'],
-  raw: string | undefined,
+  raw: string | null | undefined,
   issues: AirKoreaCurrentNormalizationIssue[],
 ): AirQualityGrade | null {
-  if (raw === undefined) {
+  if (raw === undefined || raw === null) {
     return null;
   }
   const parsed = parseAirKoreaGrade(raw);
