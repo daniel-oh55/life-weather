@@ -278,6 +278,19 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
+// header — the screen owns its own product header now that the Tabs header is suppressed for
+// this route (see `../app/(tabs)/_layout`).
+// ---------------------------------------------------------------------------
+
+describe('header', () => {
+  it('renders its own "오늘" title regardless of saved-location state', async () => {
+    const render = await loadScreen();
+
+    expect(texts(render())).toContain('오늘');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // A. saved-location states
 // ---------------------------------------------------------------------------
 
@@ -798,22 +811,25 @@ describe('weather hero', () => {
     expect(texts(render())).toContain(label);
   });
 
-  it('shows the air-quality grade pill when overallGrade is present', async () => {
+  it('shows a grade-only pill when overallGrade is present and CAI is absent', async () => {
     mockStoredEnvelope('a');
     useMobileWeatherQueryMock.mockReturnValue(
       successSnapshot({
         current: syntheticCurrent(),
-        airQualityCurrent: syntheticAirQuality({ overallGrade: 'GOOD' }),
+        airQualityCurrent: syntheticAirQuality({
+          overallGrade: 'GOOD',
+          comprehensiveAirQualityIndex: null,
+        }),
       }),
     );
 
     const render = await loadScreen();
     await hydrateAndInitialize();
 
-    expect(texts(render())).toContain('좋음');
+    expect(texts(render())).toContain('대기질 좋음');
   });
 
-  it('falls back to the CAI value when overallGrade is null, without fabricating a grade', async () => {
+  it('shows a CAI-only pill when overallGrade is null, without fabricating a grade', async () => {
     mockStoredEnvelope('a');
     useMobileWeatherQueryMock.mockReturnValue(
       successSnapshot({
@@ -829,10 +845,28 @@ describe('weather hero', () => {
     await hydrateAndInitialize();
     const rendered = texts(render()).join('\n');
 
-    expect(rendered).toContain('CAI 77');
+    expect(rendered).toContain('대기질 CAI 77');
     expect(rendered).not.toContain('좋음');
     expect(rendered).not.toContain('보통');
     expect(rendered).not.toContain('나쁨');
+  });
+
+  it('shows a combined grade-and-CAI pill when both are present', async () => {
+    mockStoredEnvelope('a');
+    useMobileWeatherQueryMock.mockReturnValue(
+      successSnapshot({
+        current: syntheticCurrent(),
+        airQualityCurrent: syntheticAirQuality({
+          overallGrade: 'MODERATE',
+          comprehensiveAirQualityIndex: 47,
+        }),
+      }),
+    );
+
+    const render = await loadScreen();
+    await hydrateAndInitialize();
+
+    expect(texts(render())).toContain('대기질 보통 · CAI 47');
   });
 
   it('shows no air-quality pill when current air quality is absent', async () => {
@@ -845,8 +879,7 @@ describe('weather hero', () => {
     await hydrateAndInitialize();
     const rendered = texts(render()).join('\n');
 
-    expect(rendered).not.toContain('좋음');
-    expect(rendered).not.toContain('보통');
+    expect(rendered).not.toContain('대기질');
     expect(rendered).not.toContain('CAI');
   });
 
@@ -918,6 +951,29 @@ describe('lifestyle at-a-glance', () => {
     expect(texts(element)).toEqual(
       expect.arrayContaining(['우산', '옷차림', '마스크', '빨래']),
     );
+  });
+
+  it('renders each card\'s recommendation, and its reason only when it happens to equal the recommendation', async () => {
+    mockStoredEnvelope('a');
+    const snapshot = successSnapshot({ current: syntheticCurrent() });
+    useMobileWeatherQueryMock.mockReturnValue(snapshot);
+
+    const render = await loadScreen();
+    await hydrateAndInitialize();
+    const rendered = texts(render());
+
+    const { createMobileLifestyleOverview } = await import(
+      '../lifestyle/create-mobile-lifestyle-overview'
+    );
+    const cards = createMobileLifestyleOverview(snapshot.data);
+    expect(cards.some((card) => card.reason !== card.recommendation)).toBe(true);
+
+    for (const card of cards) {
+      expect(rendered).toContain(card.recommendation);
+      if (card.reason !== card.recommendation) {
+        expect(rendered).not.toContain(card.reason);
+      }
+    }
   });
 
   it('does not fabricate a fifth lifestyle policy', async () => {

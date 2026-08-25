@@ -77,7 +77,7 @@ describe('(tabs) layout', () => {
       screens.map((screen) => [screen.props.name as string, screen.props.options]),
     );
     expect([...optionsByName.keys()]).toEqual(['index', 'hourly', 'lifestyle', 'details', 'settings']);
-    expect(optionsByName.get('index')).toMatchObject({ title: '오늘' });
+    expect(optionsByName.get('index')).toMatchObject({ title: '오늘', headerShown: false });
     expect(optionsByName.get('hourly')).toMatchObject({ title: '시간별' });
     expect(optionsByName.get('lifestyle')).toMatchObject({ title: '생활날씨' });
     expect(optionsByName.get('details')).toMatchObject({ title: '상세기상' });

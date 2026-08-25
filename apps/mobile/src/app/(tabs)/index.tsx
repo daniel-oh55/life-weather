@@ -98,17 +98,19 @@ function describeSavedLocationsLoading(
 }
 
 /**
- * The compact air-quality pill's text, or `null` when nothing real is available. Never fabricates
- * a grade: `overallGrade` is preferred, and only when it is `null` does a present CAI value show.
+ * The compact air-quality pill's text, or `null` when neither value is available. Shows whichever
+ * of grade/CAI are actually present, joined, so the pill never reads as ambiguously as a bare
+ * grade word — never fabricates either value.
  */
 function describeAirQualityPill(airQuality: CurrentAirQuality): string | null {
-  if (airQuality.overallGrade !== null) {
-    return AIR_QUALITY_GRADE_LABELS[airQuality.overallGrade];
-  }
-  if (airQuality.comprehensiveAirQualityIndex !== null) {
-    return `CAI ${airQuality.comprehensiveAirQualityIndex}`;
-  }
-  return null;
+  const gradeLabel =
+    airQuality.overallGrade !== null ? AIR_QUALITY_GRADE_LABELS[airQuality.overallGrade] : null;
+  const caiLabel =
+    airQuality.comprehensiveAirQualityIndex !== null
+      ? `CAI ${airQuality.comprehensiveAirQualityIndex}`
+      : null;
+  const parts = [gradeLabel, caiLabel].filter((part): part is string => part !== null);
+  return parts.length > 0 ? `대기질 ${parts.join(' · ')}` : null;
 }
 
 /** Format an ISO instant as `HH:mm` in the given saved location's own timezone — never device. */
@@ -191,7 +193,12 @@ function renderHero(weatherQuery: MobileWeatherQuerySnapshot, onRetry: () => voi
   );
 }
 
-/** One lifestyle card: glyph, title, status pill, then the engine's own reason copy. */
+/**
+ * One at-a-glance lifestyle card: glyph, title, status pill, then the engine's own `recommendation`
+ * copy (not `reason` — the full reason/action detail stays on the dedicated 생활날씨 screen).
+ * `recommendation` is truncated to 2 lines for Today's at-a-glance density; the explicit
+ * `accessibilityLabel` keeps the full text available to assistive tech despite the truncation.
+ */
 function renderLifestyleCard(card: MobileLifestyleCard) {
   return (
     <View key={card.id} style={styles.lifestyleCard}>
@@ -200,7 +207,13 @@ function renderLifestyleCard(card: MobileLifestyleCard) {
       <View style={styles.lifestylePill}>
         <Text style={styles.lifestylePillText}>{card.statusLabel}</Text>
       </View>
-      <Text style={styles.lifestyleReason}>{card.reason}</Text>
+      <Text
+        style={styles.lifestyleRecommendation}
+        numberOfLines={2}
+        accessibilityLabel={card.recommendation}
+      >
+        {card.recommendation}
+      </Text>
     </View>
   );
 }
@@ -440,7 +453,8 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     alignItems: 'center',
-    paddingVertical: 20,
+    paddingTop: 20,
+    paddingBottom: 96,
   },
   page: {
     width: '100%',
@@ -606,8 +620,8 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: BORDER_COLOR,
-    padding: 12,
-    gap: 6,
+    padding: 10,
+    gap: 5,
   },
   lifestyleGlyph: {
     fontSize: 22,
@@ -629,7 +643,7 @@ const styles = StyleSheet.create({
     color: PILL_TEXT,
     fontWeight: '600',
   },
-  lifestyleReason: {
+  lifestyleRecommendation: {
     fontSize: 13,
     color: TEXT_SECONDARY,
     flexShrink: 1,
