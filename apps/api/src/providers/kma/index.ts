@@ -32,6 +32,23 @@
  * This PR does **not** wire current observation into `POST /weather`, `services`, `composition`,
  * or `routes` — see `docs/kma-current-observation-provider.md` for the full scope boundary.
  *
+ * Alert events (기상특보 조회서비스 `getPwnCd`, PR #89) is a **third, independent** boundary against
+ * a different `WthrWrnInfoService` service family (its own base URL and service-key query casing —
+ * see `docs/kma-alert-event-provider.md`):
+ *
+ * 1. `alert-request.ts` / `alert-raw-schema.ts` / `parse-alert-response.ts` — request validation,
+ *    the raw-response boundary, and a **four**-outcome parser (success / confirmed no-data /
+ *    upstream error / invalid response — `getPwnCd`'s `03` is a confirmed valid zero-match result
+ *    for this operation, unlike the generic `UPSTREAM_ERROR` the forecast/current boundaries give
+ *    every non-success code).
+ * 2. `createKmaAlertEventProvider` / `createKmaAlertEventProviderFromEnv` (`provider.ts`) — the
+ *    HTTP provider, sharing the same transport policy via `performKmaGetRequest`.
+ *
+ * This PR stops at validated alert **lifecycle event** records — it does not normalize them to the
+ * public `WeatherAlert[]` contract, fold lifecycle state into an active-alert set, or wire this
+ * provider into `POST /weather`/`services`/`composition`/`routes`. See
+ * `docs/kma-alert-event-provider.md` for the full scope boundary.
+ *
  * The `WeatherOverview` assembly, `SourceMetadata`, daily forecast, and the API route are **not**
  * here — those are later PRs. See `docs/kma-response-boundary.md`, `docs/kma-http-provider.md`,
  * `docs/kma-hourly-normalization.md`, and `docs/kma-current-observation-provider.md` for the
@@ -40,12 +57,21 @@
  */
 
 export {
+  createKmaAlertEventProvider,
+  createKmaAlertEventProviderFromEnv,
   createKmaCurrentObservationProvider,
   createKmaCurrentObservationProviderFromEnv,
   createKmaForecastProvider,
   createKmaForecastProviderFromEnv,
+  type CreateKmaAlertEventProviderResult,
   type CreateKmaCurrentObservationProviderResult,
   type CreateKmaForecastProviderResult,
+  type KmaAlertEventProvider,
+  type KmaAlertEventProviderError,
+  type KmaAlertEventProviderResult,
+  type KmaAlertEventProviderSuccess,
+  type KmaAlertEventRecord,
+  type KmaAlertResponseMismatchField,
   type KmaCurrentObservationProvider,
   type KmaCurrentObservationProviderError,
   type KmaCurrentObservationProviderResult,
@@ -84,6 +110,31 @@ export {
   type KmaCurrentObservationRequest,
   type KmaCurrentRequestIssue,
 } from './current-request.js';
+
+export {
+  KMA_ALERT_WARNING_TYPES,
+  type KmaAlertEventRequest,
+  type KmaAlertRequestIssue,
+  type KmaAlertWarningType,
+} from './alert-request.js';
+
+export {
+  parseKmaAlertEventResponse,
+  type KmaAlertEventPage,
+  type KmaAlertResponseIssue,
+  type ParseKmaAlertEventResponseResult,
+} from './parse-alert-response.js';
+
+export {
+  kmaAlertEventBodySchema,
+  kmaAlertEventItemSchema,
+  kmaAlertEventItemsSchema,
+  kmaAlertEventSuccessResponseSchema,
+  kmaAlertNoDataResponseSchema,
+  KMA_ALERT_NO_DATA_RESULT_CODE,
+  type KmaAlertEventBody,
+  type KmaAlertEventItem,
+} from './alert-raw-schema.js';
 
 export {
   parseKmaForecastResponse,

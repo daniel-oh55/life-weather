@@ -1,12 +1,15 @@
 import { KmaForecastProduct } from '@life-weather/weather-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { KmaAlertEventRequest } from './alert-request.js';
 import type { KmaCurrentObservationRequest } from './current-request.js';
 import { getKmaCurrentObservationField } from './group-current-observation-items.js';
 import { getKmaForecastField } from './group-forecast-items.js';
 import {
+  createKmaAlertEventProvider,
   createKmaCurrentObservationProvider,
   createKmaForecastProvider,
+  type KmaAlertEventProvider,
   type KmaCurrentObservationProvider,
   type KmaForecastProvider,
 } from './provider.js';
@@ -1858,6 +1861,442 @@ describe('fetchCurrentObservation — secret non-exposure across error variants'
     const result = await currentProviderWith(fetchImpl).fetchCurrentObservation(CURRENT_REQUEST);
     const serialized = JSON.stringify(result);
     for (const secret of [...forbidden, FAKE_KEY, 'apis.data.go.kr', 'ServiceKey']) {
+      expect(serialized).not.toContain(secret);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fetchAlertEvents (PR #89 — getPwnCd). The shared transport (timeout/caller-abort/HTTP-status/
+// response-size/gateway-XML detection) is exhaustively covered above by the forecast and
+// current-observation suites against the same `performKmaGetRequest` helper this provider reuses
+// unchanged — so only representative transport-passthrough coverage is repeated here. The
+// alert-specific concerns (request validation, the confirmed NO_DATA outcome, pagination
+// correlation, incomplete-page rejection, and secret non-exposure) are covered in full.
+// ---------------------------------------------------------------------------
+
+const ALERT_REQUEST: KmaAlertEventRequest = {
+  fromTmFc: '20260825',
+  toTmFc: '20260825',
+};
+
+interface RawAlertItem {
+  stnId: string;
+  tmFc: number;
+  tmSeq: number;
+  areaCode: string;
+  areaName: string;
+  warnVar: number;
+  warnStress: number;
+  command: string;
+  startTime: number;
+  endTime: number;
+  allEndTime: number;
+  cancel: string;
+}
+
+function alertItem(overrides: Partial<RawAlertItem> = {}): RawAlertItem {
+  return {
+    stnId: '108',
+    tmFc: 202608251400,
+    tmSeq: 1,
+    areaCode: 'L1010100',
+    areaName: '서울',
+    warnVar: 3,
+    warnStress: 2,
+    command: '발표',
+    startTime: 202608251400,
+    endTime: 202608261400,
+    allEndTime: 202608261400,
+    cancel: '0',
+    ...overrides,
+  };
+}
+
+interface AlertBodyOptions {
+  pageNo?: number;
+  numOfRows?: number;
+  totalCount?: number;
+  items?: readonly RawAlertItem[];
+  resultCode?: string;
+  resultMsg?: string;
+}
+
+/** Serialize a KMA alert-event success/error envelope to a JSON string. */
+function alertBody(options: AlertBodyOptions = {}): string {
+  const items = options.items ?? [alertItem()];
+  return JSON.stringify({
+    response: {
+      header: {
+        resultCode: options.resultCode ?? '00',
+        resultMsg: options.resultMsg ?? 'NORMAL_SERVICE',
+      },
+      body: {
+        dataType: 'JSON',
+        pageNo: options.pageNo ?? 1,
+        numOfRows: options.numOfRows ?? 1000,
+        totalCount: options.totalCount ?? items.length,
+        items: { item: items },
+      },
+    },
+  });
+}
+
+/** Serialize the confirmed `03` no-data envelope (no `body` key at all). */
+function alertNoDataBody(resultMsg = 'NODATA_ERROR'): string {
+  return JSON.stringify({ response: { header: { resultCode: '03', resultMsg } } });
+}
+
+function alertProviderWith(
+  fetchImpl: typeof fetch,
+  options: { timeoutMs?: number; maxResponseBytes?: number } = {},
+): KmaAlertEventProvider {
+  const created = createKmaAlertEventProvider({ serviceKey: FAKE_KEY, fetchImpl, ...options });
+  if (!created.ok) {
+    throw new Error('unexpected config error in test setup');
+  }
+  return created.provider;
+}
+
+describe('fetchAlertEvents — request validation', () => {
+  it('returns INVALID_REQUEST without calling fetch for a bad request', async () => {
+    const spy = vi.fn(fetchReturning(jsonOk(alertBody())));
+    const result = await alertProviderWith(spy as unknown as typeof fetch).fetchAlertEvents({
+      ...ALERT_REQUEST,
+      fromTmFc: 'bad',
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe('INVALID_REQUEST');
+    }
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('returns INVALID_REQUEST without calling fetch for an over-limit areaCode', async () => {
+    const spy = vi.fn(fetchReturning(jsonOk(alertBody())));
+    const result = await alertProviderWith(spy as unknown as typeof fetch).fetchAlertEvents({
+      ...ALERT_REQUEST,
+      areaCode: '12345678901',
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe('INVALID_REQUEST');
+    }
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('returns INVALID_REQUEST without calling fetch for an over-limit stnId', async () => {
+    const spy = vi.fn(fetchReturning(jsonOk(alertBody())));
+    const result = await alertProviderWith(spy as unknown as typeof fetch).fetchAlertEvents({
+      ...ALERT_REQUEST,
+      stnId: '123456',
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe('INVALID_REQUEST');
+    }
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe('fetchAlertEvents — optional date request', () => {
+  it('accepts a date-less request and performs exactly one fetch', async () => {
+    const spy = vi.fn(fetchReturning(jsonOk(alertBody())));
+    const result = await alertProviderWith(spy as unknown as typeof fetch).fetchAlertEvents({});
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(true);
+  });
+
+  it('reports omitted dates as null in the success identity, never synthesizing today', async () => {
+    const result = await alertProviderWith(fetchReturning(jsonOk(alertBody()))).fetchAlertEvents(
+      {},
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.alertEvents.fromTmFc).toBeNull();
+      expect(result.alertEvents.toTmFc).toBeNull();
+    }
+  });
+});
+
+describe('fetchAlertEvents — transport passthrough (shared performKmaGetRequest)', () => {
+  it('propagates HTTP_ERROR from the shared transport', async () => {
+    const result = await alertProviderWith(
+      fetchReturning(new Response('', { status: 500 })),
+    ).fetchAlertEvents(ALERT_REQUEST);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toEqual({ kind: 'HTTP_ERROR', status: 500 });
+    }
+  });
+
+  it('propagates NETWORK_ERROR from the shared transport', async () => {
+    const result = await alertProviderWith(
+      fetchRejecting(new Error('boom')),
+    ).fetchAlertEvents(ALERT_REQUEST);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toEqual({ kind: 'NETWORK_ERROR' });
+    }
+  });
+
+  it('issues exactly one fetch per fetchAlertEvents call', async () => {
+    const spy = vi.fn(fetchReturning(jsonOk(alertBody())));
+    await alertProviderWith(spy as unknown as typeof fetch).fetchAlertEvents(ALERT_REQUEST);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuses the same serviceKey/timeout/maxResponseBytes config validation as the forecast provider', () => {
+    const created = createKmaAlertEventProvider({ serviceKey: '' });
+    expect(created.ok).toBe(false);
+    if (!created.ok) {
+      expect(created.error).toEqual({ kind: 'CONFIG_ERROR', field: 'serviceKey', reason: 'MISSING' });
+    }
+  });
+});
+
+describe('fetchAlertEvents — body format', () => {
+  it('returns EMPTY_RESPONSE for an empty body', async () => {
+    const result = await alertProviderWith(fetchReturning(jsonOk('   '))).fetchAlertEvents(
+      ALERT_REQUEST,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe('EMPTY_RESPONSE');
+    }
+  });
+
+  it('returns GATEWAY_ERROR for a data.go.kr gateway XML wrapper', async () => {
+    const xml =
+      '<OpenAPI_ServiceResponse><returnReasonCode>30</returnReasonCode><returnAuthMsg>SERVICE_KEY_IS_NOT_REGISTERED_ERROR</returnAuthMsg></OpenAPI_ServiceResponse>';
+    const result = await alertProviderWith(fetchReturning(jsonOk(xml))).fetchAlertEvents(
+      ALERT_REQUEST,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toEqual({ kind: 'GATEWAY_ERROR', reasonCode: '30' });
+    }
+  });
+
+  it('returns NON_JSON_RESPONSE for arbitrary XML/HTML', async () => {
+    const result = await alertProviderWith(
+      fetchReturning(jsonOk('<html><body>not gateway xml</body></html>')),
+    ).fetchAlertEvents(ALERT_REQUEST);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe('NON_JSON_RESPONSE');
+    }
+  });
+
+  it('returns INVALID_JSON for malformed JSON text', async () => {
+    const result = await alertProviderWith(
+      fetchReturning(jsonOk('{not-json')),
+    ).fetchAlertEvents(ALERT_REQUEST);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe('INVALID_JSON');
+    }
+  });
+});
+
+describe('fetchAlertEvents — response parser connection', () => {
+  it('returns a successful result with events on a normal success page', async () => {
+    const result = await alertProviderWith(
+      fetchReturning(jsonOk(alertBody())),
+    ).fetchAlertEvents(ALERT_REQUEST);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.alertEvents.events).toHaveLength(1);
+      expect(result.alertEvents.events[0]).toMatchObject({ areaCode: 'L1010100', warnVar: 3 });
+    }
+  });
+
+  it('accepts a release-like event with no startTime as success, not KMA_INVALID_RESPONSE', async () => {
+    const item: Record<string, unknown> = { ...alertItem() };
+    delete item.startTime;
+    const result = await alertProviderWith(
+      fetchReturning(jsonOk(alertBody({ items: [item as unknown as RawAlertItem] }))),
+    ).fetchAlertEvents(ALERT_REQUEST);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.alertEvents.events).toHaveLength(1);
+    }
+  });
+
+  it('accepts an issue-like event with no endTime as success, not KMA_INVALID_RESPONSE', async () => {
+    const item: Record<string, unknown> = { ...alertItem() };
+    delete item.endTime;
+    const result = await alertProviderWith(
+      fetchReturning(jsonOk(alertBody({ items: [item as unknown as RawAlertItem] }))),
+    ).fetchAlertEvents(ALERT_REQUEST);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.alertEvents.events).toHaveLength(1);
+    }
+  });
+
+  it('turns the confirmed 03 NO_DATA outcome into a successful empty result, not an error', async () => {
+    const result = await alertProviderWith(
+      fetchReturning(jsonOk(alertNoDataBody())),
+    ).fetchAlertEvents(ALERT_REQUEST);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.alertEvents.totalCount).toBe(0);
+      expect(result.alertEvents.events).toEqual([]);
+    }
+  });
+
+  it('returns KMA_UPSTREAM_ERROR (preserving only resultCode) for any other non-success code', async () => {
+    const result = await alertProviderWith(
+      fetchReturning(jsonOk(alertBody({ resultCode: '30', resultMsg: 'SECRET_UPSTREAM_MSG' }))),
+    ).fetchAlertEvents(ALERT_REQUEST);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toEqual({ kind: 'KMA_UPSTREAM_ERROR', resultCode: '30' });
+    }
+  });
+
+  it('returns KMA_INVALID_RESPONSE for a malformed success body', async () => {
+    const result = await alertProviderWith(
+      fetchReturning(jsonOk(alertBody({ items: [{ ...alertItem(), tmFc: 'not-a-number' } as never] }))),
+    ).fetchAlertEvents(ALERT_REQUEST);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe('KMA_INVALID_RESPONSE');
+    }
+  });
+
+  it('a 03 response that unexpectedly carries a body is reported as KMA_INVALID_RESPONSE, not silently accepted', async () => {
+    const contradicting = JSON.stringify({
+      response: {
+        header: { resultCode: '03', resultMsg: 'NODATA_ERROR' },
+        body: { dataType: 'JSON', pageNo: 1, numOfRows: 1000, totalCount: 0, items: { item: [] } },
+      },
+    });
+    const result = await alertProviderWith(fetchReturning(jsonOk(contradicting))).fetchAlertEvents(
+      ALERT_REQUEST,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe('KMA_INVALID_RESPONSE');
+    }
+  });
+});
+
+describe('fetchAlertEvents — pagination correlation', () => {
+  it('returns RESPONSE_MISMATCH(pageNo) when the response echoes a different pageNo', async () => {
+    const result = await alertProviderWith(
+      fetchReturning(jsonOk(alertBody({ pageNo: 2 }))),
+    ).fetchAlertEvents(ALERT_REQUEST);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toEqual({ kind: 'RESPONSE_MISMATCH', field: 'pageNo' });
+    }
+  });
+
+  it('returns RESPONSE_MISMATCH(numOfRows) when the response echoes a different numOfRows', async () => {
+    const result = await alertProviderWith(
+      fetchReturning(jsonOk(alertBody({ numOfRows: 500 }))),
+    ).fetchAlertEvents(ALERT_REQUEST);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toEqual({ kind: 'RESPONSE_MISMATCH', field: 'numOfRows' });
+    }
+  });
+
+  it('returns INCOMPLETE_PAGE when totalCount exceeds the received item count', async () => {
+    const result = await alertProviderWith(
+      fetchReturning(jsonOk(alertBody({ totalCount: 5 }))),
+    ).fetchAlertEvents(ALERT_REQUEST);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toEqual({ kind: 'INCOMPLETE_PAGE', totalCount: 5, receivedCount: 1 });
+    }
+  });
+});
+
+describe('fetchAlertEvents — success result shape', () => {
+  it('echoes the request identity (with null for omitted optional filters) without any raw upstream data', async () => {
+    const result = await alertProviderWith(
+      fetchReturning(jsonOk(alertBody())),
+    ).fetchAlertEvents(ALERT_REQUEST);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.alertEvents).toMatchObject({
+        fromTmFc: '20260825',
+        toTmFc: '20260825',
+        areaCode: null,
+        warningType: null,
+        stnId: null,
+        totalCount: 1,
+      });
+      const serialized = JSON.stringify(result.alertEvents);
+      expect(serialized).not.toContain(FAKE_KEY);
+      expect(serialized).not.toContain('apis.data.go.kr');
+      expect(serialized).not.toContain('serviceKey');
+      expect(serialized).not.toContain('resultMsg');
+      expect(serialized).not.toContain('NORMAL_SERVICE');
+    }
+  });
+
+  it('echoes present optional filters back on the success result', async () => {
+    const request: KmaAlertEventRequest = { ...ALERT_REQUEST, areaCode: 'L1010100', warningType: 3, stnId: '108' };
+    const result = await alertProviderWith(fetchReturning(jsonOk(alertBody()))).fetchAlertEvents(
+      request,
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.alertEvents.areaCode).toBe('L1010100');
+      expect(result.alertEvents.warningType).toBe(3);
+      expect(result.alertEvents.stnId).toBe('108');
+    }
+  });
+
+  it('does not group or dedupe events — every validated item becomes one record, in response order', async () => {
+    const items = [alertItem({ tmSeq: 1 }), alertItem({ tmSeq: 2 }), alertItem({ tmSeq: 1 })];
+    const result = await alertProviderWith(
+      fetchReturning(jsonOk(alertBody({ items }))),
+    ).fetchAlertEvents(ALERT_REQUEST);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.alertEvents.events.map((event) => event.tmSeq)).toEqual([1, 2, 1]);
+    }
+  });
+});
+
+describe('fetchAlertEvents — secret non-exposure across error variants', () => {
+  const gatewaySecret = 'ALERT_GATEWAY_SECRET_AUTH==';
+  const gatewayXml = `<OpenAPI_ServiceResponse><returnReasonCode>30</returnReasonCode><returnAuthMsg>${gatewaySecret}</returnAuthMsg></OpenAPI_ServiceResponse>`;
+
+  const scenarios: { name: string; fetchImpl: typeof fetch; forbidden: string[] }[] = [
+    {
+      name: 'HTTP_ERROR',
+      fetchImpl: fetchReturning(new Response('SECRET_HTTP_BODY', { status: 500 })),
+      forbidden: ['SECRET_HTTP_BODY'],
+    },
+    {
+      name: 'NETWORK_ERROR',
+      fetchImpl: fetchRejecting(new Error('SECRET_NETWORK_EXCEPTION')),
+      forbidden: ['SECRET_NETWORK_EXCEPTION'],
+    },
+    {
+      name: 'GATEWAY_ERROR',
+      fetchImpl: fetchReturning(jsonOk(gatewayXml)),
+      forbidden: [gatewaySecret],
+    },
+    {
+      name: 'KMA_UPSTREAM_ERROR',
+      fetchImpl: fetchReturning(
+        jsonOk(alertBody({ resultCode: '99', resultMsg: 'SECRET_UPSTREAM_MSG' })),
+      ),
+      forbidden: ['SECRET_UPSTREAM_MSG'],
+    },
+  ];
+
+  it.each(scenarios)('$name never leaks secrets or the URL/key', async ({ fetchImpl, forbidden }) => {
+    const result = await alertProviderWith(fetchImpl).fetchAlertEvents(ALERT_REQUEST);
+    const serialized = JSON.stringify(result);
+    for (const secret of [...forbidden, FAKE_KEY, 'apis.data.go.kr', 'serviceKey']) {
       expect(serialized).not.toContain(secret);
     }
   });

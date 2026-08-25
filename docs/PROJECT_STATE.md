@@ -828,5 +828,28 @@
   않았습니다. 자세한 내용은 [weather-production-wiring.md](./weather-production-wiring.md)의
   "Current production state (PR #86)" 절 참고. AirKorea 예보·대기질 특보, response cache는 여전히
   미구현입니다.
+- **PR #89**(현재 **OPEN Draft**, `feat/pr-89-kma-alert-event-provider`)는 KMA 기상특보
+  조회서비스(`WthrWrnInfoService`) 특보코드조회(`getPwnCd`)의 첫 provider boundary — request
+  검증/URL 생성(`alert-request.ts`), raw JSON schema(`alert-raw-schema.ts`), 성공/확인된
+  no-data/upstream error/invalid response 4-outcome parser(`parse-alert-response.ts`), 기존
+  `performKmaGetRequest` transport를 재사용하는 HTTP provider
+  (`createKmaAlertEventProvider`/`…FromEnv`, `provider.ts`)입니다. `WthrWrnInfoService`는
+  `VilageFcstInfoService_2.0`과 다른 서비스 패밀리(자체 base URL, `serviceKey` 소문자 파라미터
+  casing — Owner-authorized 2026-08-25 live 진단으로 확인)이며, `resultCode === '03'`은 이
+  operation에 한해 확인된 유효한 zero-match 결과로 별도 모델링됩니다(forecast/current의 일괄
+  `UPSTREAM_ERROR` 분류와 다름). Codex 초기 HIGH 리뷰의 finding을 반영해 request/response
+  optionality를 공식 260601 가이드에 맞춰 정정했습니다: `fromTmFc`/`toTmFc`/`areaCode`/
+  `warningType`/`stnId` 다섯 필드 모두 optional 필터(생략된 날짜는 upstream 문서화된 기본값에
+  위임하며 이 provider가 합성하지 않음, 생략된 필터는 성공 결과에 `null`로 기록), `areaCode`
+  max size 10/`stnId` max size 5 강제. raw item은 `stnId`/`tmFc`/`areaCode`/`areaName`/
+  `allEndTime`만 required로 남고 `tmSeq`/`warnVar`/`warnStress`/`command`/`startTime`/`endTime`/
+  `cancel`은 가이드가 문서화한 optional/조건부 필드라 absence를 허용하되(present일 때는 여전히
+  evidenced strict 타입만 허용, `null`/coercion 없음) — 검증된 raw alert lifecycle event record까지만
+  반환하며, `WeatherAlert[]` 정규화·활성-특보 folding·`POST /weather` 연결은 후속 PR로 미룹니다.
+  `packages/contracts`, `packages/weather-core`, `apps/api/src/services`·`composition`·`routes`·
+  `presenters`는 변경하지 않았습니다. 이 PR 자체는 추가 실제 KMA 호출을 수행하지 않았습니다.
+  단일-item `items.item`의 object 직렬화는 여전히 독립적으로 관측되지 않았습니다. corrected-HEAD에
+  대한 Codex HIGH 독립 재검토가 아직 pending입니다. 자세한 내용은
+  [kma-alert-event-provider.md](./kma-alert-event-provider.md) 참고.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
