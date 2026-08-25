@@ -862,7 +862,8 @@
   저장 지역 추가·선택·삭제·재시도 동작과 모든 loading/empty/error 상태는 그대로 보존됩니다.
   `packages/contracts`, `packages/lifestyle-engine`, `packages/weather-core`, `apps/api`,
   saved-location store/persistence, dependency는 변경하지 않았고, 실제 provider 호출과 배포는
-  수행하지 않았습니다. Owner의 로컬 synthetic API 기반 visual checkpoint(~412×915)가 아직
-  pending입니다.
+  수행하지 않았습니다. Owner의 로컬 synthetic `/weather` 서버 기반 visual checkpoint(~412×915)는
+  **완료(PASS)** — 실제 live API 호출 없음. PR은 Owner Ready gate까지 여전히 **OPEN Draft**로
+  유지됩니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
