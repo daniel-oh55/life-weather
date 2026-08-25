@@ -40,7 +40,9 @@ vi.mock('react', async (importOriginal) => {
 
 // ---------------------------------------------------------------------------
 // `react-native` ships Flow syntax this Vitest/Rolldown setup cannot parse, so it is replaced with
-// minimal marker components and a `StyleSheet.create` passthrough.
+// minimal marker components and a `StyleSheet.create` passthrough. `ScrollView` and
+// `ActivityIndicator` are added here (beyond the prior debug layout's primitives) because the
+// redesigned screen is a scrollable, loading-indicator-bearing layout.
 // ---------------------------------------------------------------------------
 
 const MockView = vi.hoisted(() => function MockView(): null {
@@ -52,12 +54,20 @@ const MockText = vi.hoisted(() => function MockText(): null {
 const MockPressable = vi.hoisted(() => function MockPressable(): null {
   return null;
 });
+const MockScrollView = vi.hoisted(() => function MockScrollView(): null {
+  return null;
+});
+const MockActivityIndicator = vi.hoisted(() => function MockActivityIndicator(): null {
+  return null;
+});
 
 vi.mock('react-native', () => ({
   View: MockView,
   Text: MockText,
   Pressable: MockPressable,
-  StyleSheet: { create: (styles: unknown) => styles },
+  ScrollView: MockScrollView,
+  ActivityIndicator: MockActivityIndicator,
+  StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
 }));
 
 // ---------------------------------------------------------------------------
@@ -268,21 +278,21 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// read-only states, including the new SELECTION_LOADING state.
+// A. saved-location states
 // ---------------------------------------------------------------------------
 
-describe('read-only states', () => {
-  it('renders the not-started copy with no controls and no storage I/O', async () => {
+describe('saved-location states', () => {
+  it('renders the not-started loading card with no controls and no storage I/O', async () => {
     const render = await loadScreen();
 
     const element = render();
 
-    expect(texts(element)).toEqual(['저장 지역을 준비하고 있습니다.']);
+    expect(texts(element)).toContain('저장된 지역을 불러오는 중입니다.');
     expect(pressables(element)).toHaveLength(0);
     expect(asyncStorageMock.getItem).toHaveBeenCalledTimes(0);
   });
 
-  it('renders the selection-loading copy after saved hydration but before selection resolves', async () => {
+  it('renders the selection-loading card after saved hydration but before selection resolves', async () => {
     let resolveSelected: (value: string | null) => void = () => {};
     asyncStorageMock.getItem.mockImplementation(async (key: string) => {
       if (key === SELECTED_KEY) {
@@ -304,27 +314,27 @@ describe('read-only states', () => {
     await mobileSavedLocationHydrationStore.hydrate();
     const initializing = mobileSavedLocationApplicationStore.initializeSelectedLocation();
 
-    expect(texts(render())).toEqual(['선택 지역을 준비하는 중입니다.']);
+    expect(texts(render())).toContain('선택 지역을 준비하는 중입니다.');
     expect(pressables(render())).toHaveLength(0);
 
     resolveSelected(null);
     await initializing;
   });
 
-  it('renders the empty copy with only the "지역 추가" entry point', async () => {
+  it('renders a welcoming empty state with only the "지역 추가" CTA', async () => {
     const render = await loadScreen();
 
     await hydrateAndInitialize();
     const element = render();
 
-    expect(texts(element)).toEqual(['저장된 지역이 없습니다.', '지역 추가']);
+    expect(texts(element)).toContain('저장된 지역이 없습니다.');
     expect(pressables(element).map((pressable) => pressable.props.accessibilityLabel)).toEqual([
       '지역 추가',
     ]);
     expect(pressables(element)[0]?.props.disabled).toBe(false);
   });
 
-  it('renders the ready copy, one row per saved location with selection/delete controls, and the "지역 추가" entry point', async () => {
+  it('shows the selected saved location in the header and every row with its controls when READY', async () => {
     mockStoredEnvelope('a', 'b', 'c');
     const render = await loadScreen();
 
@@ -332,25 +342,18 @@ describe('read-only states', () => {
     const element = render();
 
     // 'a' is sortOrder 0, so it resolves as the fallback selection.
-    expect(texts(element)).toEqual([
-      '저장된 지역이 준비되었습니다.\n저장 지역 수: 3',
-      '지역 추가',
-      'Synthetic a',
-      '선택됨',
-      '삭제',
-      'Synthetic b',
-      '선택',
-      '삭제',
-      'Synthetic c',
-      '선택',
-      '삭제',
-    ]);
+    expect(texts(element)).toContain('Synthetic a');
+    expect(texts(element)).toContain('저장 지역');
+    expect(texts(element)).toEqual(
+      expect.arrayContaining(['Synthetic a', 'Synthetic b', 'Synthetic c', '지역 추가']),
+    );
     expect(pressableByLabel(element, 'Synthetic a 선택됨').props.disabled).toBe(true);
     expect(pressableByLabel(element, 'Synthetic b 선택').props.disabled).toBe(false);
     expect(pressableByLabel(element, 'Synthetic c 선택').props.disabled).toBe(false);
+    expect(pressableByLabel(element, 'Synthetic a 삭제')).toBeDefined();
   });
 
-  it('renders the error copy with a retry control and no raw error detail', async () => {
+  it('renders the error card with a retry control and no raw error detail', async () => {
     asyncStorageMock.getItem.mockRejectedValue(new Error('synthetic storage failure'));
     const render = await loadScreen();
     const { mobileSavedLocationHydrationStore } = await import(
@@ -361,7 +364,7 @@ describe('read-only states', () => {
     const element = render();
     const rendered = texts(element).join('\n');
 
-    expect(texts(element)).toEqual(['저장된 지역을 불러오지 못했습니다.', '다시 시도']);
+    expect(texts(element)).toContain('저장된 지역을 불러오지 못했습니다.');
     expect(pressableByLabel(element, '저장 지역 다시 불러오기')).toBeDefined();
     expect(rendered).not.toContain('STORAGE_READ_FAILED');
     expect(rendered).not.toContain('SAVED_LOCATIONS');
@@ -408,6 +411,16 @@ describe('"지역 추가" entry point', () => {
     expect(routerMock.back).toHaveBeenCalledTimes(0);
   });
 
+  it('navigates to /locations when pressed from the READY 저장 지역 card', async () => {
+    mockStoredEnvelope('a');
+    const render = await loadScreen();
+
+    await hydrateAndInitialize();
+    press(pressableByLabel(render(), '지역 추가'));
+
+    expect(routerMock.push).toHaveBeenCalledWith('/locations');
+  });
+
   it('does not appear outside EMPTY/READY', async () => {
     asyncStorageMock.getItem.mockRejectedValue(new Error('synthetic storage failure'));
     const render = await loadScreen();
@@ -423,10 +436,10 @@ describe('"지역 추가" entry point', () => {
 });
 
 // ---------------------------------------------------------------------------
-// explicit retry — now routed through retryInitialization().
+// retry — routed through retryInitialization().
 // ---------------------------------------------------------------------------
 
-describe('retry', () => {
+describe('saved-location retry', () => {
   it('re-reads storage once and reflects the recovered state', async () => {
     let savedLocationAttempt = 0;
     asyncStorageMock.getItem.mockImplementation(async (key: string) => {
@@ -455,13 +468,8 @@ describe('retry', () => {
     await flush();
     await mobileSavedLocationApplicationStore.initializeSelectedLocation();
 
-    expect(texts(render())).toEqual([
-      '저장된 지역이 준비되었습니다.\n저장 지역 수: 1',
-      '지역 추가',
-      'Synthetic a',
-      '선택됨',
-      '삭제',
-    ]);
+    expect(texts(render())).toContain('Synthetic a');
+    expect(pressableByLabel(render(), 'Synthetic a 선택됨')).toBeDefined();
   });
 });
 
@@ -502,7 +510,13 @@ describe('select', () => {
     press(pressableByLabel(render(), 'Synthetic b 선택'));
 
     const during = render();
-    expect(pressables(during).every((pressable) => pressable.props.disabled === true)).toBe(true);
+    const savedLocationButtons = pressables(during).filter((pressable) =>
+      ['Synthetic a 선택', 'Synthetic b 선택됨', 'Synthetic a 삭제', 'Synthetic b 삭제'].includes(
+        pressable.props.accessibilityLabel as string,
+      ),
+    );
+    expect(savedLocationButtons.length).toBeGreaterThan(0);
+    expect(savedLocationButtons.every((pressable) => pressable.props.disabled === true)).toBe(true);
 
     resolveSetItem();
     await flush();
@@ -539,16 +553,11 @@ describe('delete', () => {
     press(pressableByLabel(render(), 'Synthetic b 삭제'));
     await flush();
 
-    expect(texts(render())).toEqual([
-      '저장된 지역이 준비되었습니다.\n저장 지역 수: 2',
-      '지역 추가',
-      'Synthetic a',
-      '선택됨',
-      '삭제',
-      'Synthetic c',
-      '선택',
-      '삭제',
-    ]);
+    const element = render();
+    expect(texts(element)).toEqual(
+      expect.arrayContaining(['Synthetic a', 'Synthetic c']),
+    );
+    expect(texts(element)).not.toContain('Synthetic b');
   });
 
   it('moves the selected indicator to the documented fallback when the selected location is deleted', async () => {
@@ -573,7 +582,11 @@ describe('delete', () => {
     press(pressableByLabel(render(), 'Synthetic a 삭제'));
     await flush();
 
-    expect(texts(render())).toEqual(['저장된 지역이 없습니다.', '지역 추가']);
+    const element = render();
+    expect(texts(element)).toContain('저장된 지역이 없습니다.');
+    expect(pressables(element).map((pressable) => pressable.props.accessibilityLabel)).toEqual([
+      '지역 추가',
+    ]);
     expect(asyncStorageMock.removeItem).toHaveBeenCalledTimes(0);
   });
 
@@ -619,16 +632,64 @@ describe('delete', () => {
 });
 
 // ---------------------------------------------------------------------------
-// weather block — `useMobileWeatherQuery` and the production weather-query store's `retry` are
-// mocked (see the top-level `vi.mock` calls); this screen owns only the presentation of whatever
-// snapshot the (separately tested) hook returns, never the hook's own request/reset lifecycle.
+// B/C. weather hero — `useMobileWeatherQuery` and the production weather-query store's `retry`
+// are mocked (see the top-level `vi.mock` calls); this screen owns only the presentation of
+// whatever snapshot the (separately tested) hook returns, never the hook's own request/reset
+// lifecycle.
 // ---------------------------------------------------------------------------
 
+/** A synthetic, contract-valid `current` block with every optional field populated. */
+function syntheticCurrent(overrides: Partial<WeatherSuccessResponseV1['data']['current']> = {}) {
+  return {
+    observedAt: '2026-07-15T11:00:00Z',
+    condition: 'CLEAR' as const,
+    temperatureCelsius: 24,
+    feelsLikeCelsius: 26,
+    humidityPercent: 60,
+    windSpeedMetersPerSecond: 3.2,
+    windDirectionDegrees: 180,
+    precipitationLastHourMillimeters: 0,
+    visibilityMeters: 8000,
+    ...overrides,
+  };
+}
+
+/** A synthetic, contract-valid current-air-quality block. */
+function syntheticAirQuality(
+  overrides: Partial<NonNullable<WeatherSuccessResponseV1['data']['airQuality']['current']>> = {},
+) {
+  return {
+    measuredAt: '2026-07-15T11:00:00Z',
+    pm10MicrogramsPerCubicMeter: 30,
+    pm25MicrogramsPerCubicMeter: 15,
+    ozonePartsPerMillion: 0.02,
+    comprehensiveAirQualityIndex: 55,
+    overallGrade: 'MODERATE' as const,
+    pm10Grade: 'MODERATE' as const,
+    pm25Grade: 'GOOD' as const,
+    ozoneGrade: 'GOOD' as const,
+    ...overrides,
+  };
+}
+
 function successSnapshot(
-  hourlyOverrides: Partial<WeatherSuccessResponseV1['data']['hourly'][number]> = {},
+  overrides: {
+    current?: WeatherSuccessResponseV1['data']['current'];
+    airQualityCurrent?: WeatherSuccessResponseV1['data']['airQuality']['current'];
+    hourly?: WeatherSuccessResponseV1['data']['hourly'];
+  } = {},
 ): { readonly status: 'SUCCESS'; readonly locationId: string; readonly data: WeatherSuccessResponseV1 } {
   const base = successResponseBody();
-  const baseHourly = base.data.hourly[0]!;
+  const current = overrides.current !== undefined ? overrides.current : base.data.current;
+  const airQualityCurrent =
+    overrides.airQualityCurrent !== undefined ? overrides.airQualityCurrent : base.data.airQuality.current;
+  const hourly = overrides.hourly !== undefined ? overrides.hourly : base.data.hourly;
+  const missingSections = base.data.missingSections.filter((section) => {
+    if (section === 'CURRENT') return current !== null;
+    if (section === 'AIR_QUALITY_CURRENT') return airQualityCurrent !== null;
+    if (section === 'HOURLY') return hourly.length !== 0;
+    return true;
+  });
   return {
     status: 'SUCCESS',
     locationId: 'a',
@@ -636,14 +697,17 @@ function successSnapshot(
       ...base,
       data: {
         ...base.data,
-        hourly: [{ ...baseHourly, ...hourlyOverrides }],
+        current,
+        hourly,
+        airQuality: { current: airQualityCurrent, daily: base.data.airQuality.daily },
+        missingSections,
       },
     },
   };
 }
 
-describe('weather block', () => {
-  it('renders the loading copy while the weather query is LOADING', async () => {
+describe('weather hero', () => {
+  it('renders a loading state while the weather query is LOADING', async () => {
     mockStoredEnvelope('a');
     useMobileWeatherQueryMock.mockReturnValue({ status: 'LOADING', locationId: 'a' });
 
@@ -651,53 +715,72 @@ describe('weather block', () => {
     await hydrateAndInitialize();
     const element = render();
 
-    expect(texts(element)).toContain('선택한 지역의 날씨를 불러오는 중입니다.');
+    expect(texts(element)).toContain('날씨 정보를 불러오는 중입니다.');
   });
 
-  it('renders the selected location name, hourly forecast, condition label, and precipitation probability on SUCCESS', async () => {
+  it('renders temperature, condition, feels-like, humidity, and wind speed on SUCCESS with current', async () => {
     mockStoredEnvelope('a');
-    useMobileWeatherQueryMock.mockReturnValue(successSnapshot());
+    useMobileWeatherQueryMock.mockReturnValue(successSnapshot({ current: syntheticCurrent() }));
 
     const render = await loadScreen();
     await hydrateAndInitialize();
     const element = render();
 
     expect(texts(element)).toEqual(
-      expect.arrayContaining([
-        'Synthetic a',
-        '2026-07-15T12:00:00Z',
-        '21°C',
-        '맑음',
-        '강수확률 10%',
-      ]),
+      expect.arrayContaining(['24°', '맑음', '체감 26°C', '습도 60%', '풍속 3.2m/s']),
     );
   });
 
-  it('renders the empty-hourly copy without treating it as an error', async () => {
+  it('does not fabricate a current temperature and shows the unavailable message when current is null', async () => {
     mockStoredEnvelope('a');
-    useMobileWeatherQueryMock.mockReturnValue({
-      status: 'SUCCESS',
-      locationId: 'a',
-      data: noSelectionSuccessResponseBody(),
-    });
-
-    const render = await loadScreen();
-    await hydrateAndInitialize();
-    const element = render();
-
-    expect(texts(element)).toContain('표시할 시간별 예보가 없습니다.');
-  });
-
-  it('treats a null current as a normal success without rendering anything for it', async () => {
-    mockStoredEnvelope('a');
-    const snapshot = successSnapshot();
+    const snapshot = successSnapshot({ current: null });
     expect(snapshot.data.data.current).toBeNull();
     useMobileWeatherQueryMock.mockReturnValue(snapshot);
 
     const render = await loadScreen();
     await hydrateAndInitialize();
+    const element = render();
 
-    expect(() => render()).not.toThrow();
+    expect(texts(element)).toContain('현재 관측 정보를 확인할 수 없습니다.');
+    // The hero must not show a fabricated current reading — but the (separately validated) hourly
+    // preview may still legitimately show its own real temperatures.
+    expect(texts(element)).not.toContain('맑음');
+    expect(texts(element)).not.toContain('체감 26°C');
+    expect(texts(element)).not.toContain('습도 60%');
+  });
+
+  it('still renders the hourly preview when current is missing but hourly is present', async () => {
+    mockStoredEnvelope('a');
+    const snapshot = successSnapshot({ current: null });
+
+    const render = await loadScreen();
+    useMobileWeatherQueryMock.mockReturnValue(snapshot);
+    await hydrateAndInitialize();
+    const element = render();
+
+    expect(texts(element)).toContain('시간별');
+    expect(texts(element)).not.toContain('표시할 시간별 예보가 없습니다.');
+  });
+
+  it('omits feels-like/humidity/wind lines that are null without fabricating values', async () => {
+    mockStoredEnvelope('a');
+    useMobileWeatherQueryMock.mockReturnValue(
+      successSnapshot({
+        current: syntheticCurrent({
+          feelsLikeCelsius: null,
+          humidityPercent: null,
+          windSpeedMetersPerSecond: null,
+        }),
+      }),
+    );
+
+    const render = await loadScreen();
+    await hydrateAndInitialize();
+    const rendered = texts(render()).join('\n');
+
+    expect(rendered).not.toContain('체감');
+    expect(rendered).not.toContain('습도');
+    expect(rendered).not.toContain('풍속');
   });
 
   it.each([
@@ -705,7 +788,9 @@ describe('weather block', () => {
     ['UNKNOWN', '상태 미확인'],
   ] as const)('maps the %s condition to "%s"', async (condition, label) => {
     mockStoredEnvelope('a');
-    useMobileWeatherQueryMock.mockReturnValue(successSnapshot({ condition }));
+    useMobileWeatherQueryMock.mockReturnValue(
+      successSnapshot({ current: syntheticCurrent({ condition }) }),
+    );
 
     const render = await loadScreen();
     await hydrateAndInitialize();
@@ -713,17 +798,56 @@ describe('weather block', () => {
     expect(texts(render())).toContain(label);
   });
 
-  it('does not render a precipitation probability line when it is null', async () => {
+  it('shows the air-quality grade pill when overallGrade is present', async () => {
     mockStoredEnvelope('a');
     useMobileWeatherQueryMock.mockReturnValue(
-      successSnapshot({ precipitationProbabilityPercent: null }),
+      successSnapshot({
+        current: syntheticCurrent(),
+        airQualityCurrent: syntheticAirQuality({ overallGrade: 'GOOD' }),
+      }),
+    );
+
+    const render = await loadScreen();
+    await hydrateAndInitialize();
+
+    expect(texts(render())).toContain('좋음');
+  });
+
+  it('falls back to the CAI value when overallGrade is null, without fabricating a grade', async () => {
+    mockStoredEnvelope('a');
+    useMobileWeatherQueryMock.mockReturnValue(
+      successSnapshot({
+        current: syntheticCurrent(),
+        airQualityCurrent: syntheticAirQuality({
+          overallGrade: null,
+          comprehensiveAirQualityIndex: 77,
+        }),
+      }),
     );
 
     const render = await loadScreen();
     await hydrateAndInitialize();
     const rendered = texts(render()).join('\n');
 
-    expect(rendered).not.toContain('강수확률');
+    expect(rendered).toContain('CAI 77');
+    expect(rendered).not.toContain('좋음');
+    expect(rendered).not.toContain('보통');
+    expect(rendered).not.toContain('나쁨');
+  });
+
+  it('shows no air-quality pill when current air quality is absent', async () => {
+    mockStoredEnvelope('a');
+    useMobileWeatherQueryMock.mockReturnValue(
+      successSnapshot({ current: syntheticCurrent(), airQualityCurrent: null }),
+    );
+
+    const render = await loadScreen();
+    await hydrateAndInitialize();
+    const rendered = texts(render()).join('\n');
+
+    expect(rendered).not.toContain('좋음');
+    expect(rendered).not.toContain('보통');
+    expect(rendered).not.toContain('CAI');
   });
 
   it.each([
@@ -745,8 +869,8 @@ describe('weather block', () => {
     expect(rendered).not.toContain(presentation);
   });
 
-  it('calls the production store\'s retry exactly once per press and shows no raw error/location detail', async () => {
-    mockStoredEnvelope('a');
+  it('calls the production store\'s retry exactly once per press and keeps saved-location management usable', async () => {
+    mockStoredEnvelope('a', 'b');
     useMobileWeatherQueryMock.mockReturnValue({
       status: 'ERROR',
       locationId: 'a',
@@ -755,18 +879,168 @@ describe('weather block', () => {
 
     const render = await loadScreen();
     await hydrateAndInitialize();
-    press(pressableByLabel(render(), '날씨 다시 시도'));
+    let element = render();
+    press(pressableByLabel(element, '날씨 다시 시도'));
 
     expect(mobileWeatherQueryStoreMock.retry).toHaveBeenCalledTimes(1);
+
+    // Saved-location controls remain reachable despite the weather error.
+    element = render();
+    expect(pressableByLabel(element, 'Synthetic b 선택').props.disabled).toBe(false);
+    expect(pressableByLabel(element, 'Synthetic a 삭제')).toBeDefined();
   });
 
-  it('does not render a weather block outside READY, even if the query mock reports SUCCESS', async () => {
-    useMobileWeatherQueryMock.mockReturnValue(successSnapshot());
+  it('does not render weather content outside READY, even if the query mock reports SUCCESS', async () => {
+    useMobileWeatherQueryMock.mockReturnValue(successSnapshot({ current: syntheticCurrent() }));
 
     const render = await loadScreen();
     const element = render();
 
-    expect(texts(element)).not.toContain('Synthetic a');
-    expect(texts(element)).not.toContain('2026-07-15T12:00:00Z');
+    expect(texts(element)).not.toContain('24°');
+    expect(texts(element)).not.toContain('맑음');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D. lifestyle at-a-glance.
+// ---------------------------------------------------------------------------
+
+describe('lifestyle at-a-glance', () => {
+  it('renders exactly the four existing lifestyle cards on SUCCESS', async () => {
+    mockStoredEnvelope('a');
+    useMobileWeatherQueryMock.mockReturnValue(successSnapshot({ current: syntheticCurrent() }));
+
+    const render = await loadScreen();
+    await hydrateAndInitialize();
+    const element = render();
+
+    expect(texts(element)).toContain('생활 한눈에');
+    expect(texts(element)).toEqual(
+      expect.arrayContaining(['우산', '옷차림', '마스크', '빨래']),
+    );
+  });
+
+  it('does not fabricate a fifth lifestyle policy', async () => {
+    mockStoredEnvelope('a');
+    useMobileWeatherQueryMock.mockReturnValue(successSnapshot({ current: syntheticCurrent() }));
+
+    const render = await loadScreen();
+    await hydrateAndInitialize();
+    const rendered = texts(render());
+
+    for (const unsupported of ['세차', '야외운동', '일교차', '자외선', '출근길', '퇴근길']) {
+      expect(rendered).not.toContain(unsupported);
+    }
+  });
+
+  it('does not hide 판단 보류 when the engine reports INSUFFICIENT_DATA', async () => {
+    mockStoredEnvelope('a');
+    // Empty hourly and null air quality drive umbrella/outfit/laundry/mask to INSUFFICIENT_DATA.
+    useMobileWeatherQueryMock.mockReturnValue(
+      successSnapshot({ current: syntheticCurrent(), hourly: [], airQualityCurrent: null }),
+    );
+
+    const render = await loadScreen();
+    await hydrateAndInitialize();
+
+    expect(texts(render())).toContain('판단 보류');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// E. hourly preview.
+// ---------------------------------------------------------------------------
+
+describe('hourly preview', () => {
+  function hourlyEntry(hour: string, overrides: Record<string, unknown> = {}) {
+    return {
+      forecastAt: `2026-07-15T${hour}:00:00Z`,
+      condition: 'CLEAR' as const,
+      temperatureCelsius: 20,
+      feelsLikeCelsius: 19,
+      precipitationProbabilityPercent: 10,
+      precipitationAmountMillimeters: 0,
+      snowfallAmountCentimeters: 0,
+      humidityPercent: 50,
+      windSpeedMetersPerSecond: 1,
+      windDirectionDegrees: 90,
+      ...overrides,
+    };
+  }
+
+  it('shows only a limited number of hourly entries, not the full list', async () => {
+    mockStoredEnvelope('a');
+    const hourly = Array.from({ length: 10 }, (_, index) =>
+      hourlyEntry(String(index).padStart(2, '0')),
+    );
+    useMobileWeatherQueryMock.mockReturnValue(
+      successSnapshot({ current: syntheticCurrent(), hourly }),
+    );
+
+    const render = await loadScreen();
+    await hydrateAndInitialize();
+    const element = render();
+
+    const temperatureOccurrences = texts(element).filter((text) => text === '20°').length;
+    expect(temperatureOccurrences).toBeLessThanOrEqual(6);
+    expect(temperatureOccurrences).toBeGreaterThan(0);
+  });
+
+  it('formats hourly preview times in the selected location timezone, not device time', async () => {
+    mockStoredEnvelope('a');
+    useMobileWeatherQueryMock.mockReturnValue(
+      successSnapshot({ current: syntheticCurrent(), hourly: [hourlyEntry('12')] }),
+    );
+
+    const render = await loadScreen();
+    await hydrateAndInitialize();
+
+    // 'Asia/Seoul' (the synthetic location's timezone) is UTC+9, so 12:00Z renders as 21:00.
+    expect(texts(render())).toContain('21:00');
+  });
+
+  it('does not render a fake precipitation probability when it is null', async () => {
+    mockStoredEnvelope('a');
+    useMobileWeatherQueryMock.mockReturnValue(
+      successSnapshot({
+        current: syntheticCurrent(),
+        hourly: [hourlyEntry('12', { precipitationProbabilityPercent: null })],
+      }),
+    );
+
+    const render = await loadScreen();
+    await hydrateAndInitialize();
+    // A standalone "NN%" text node is how the hourly preview renders a real precipitation
+    // probability; other "%" usages (e.g. "습도 60%") are unrelated fields and must not be confused
+    // with a fabricated hourly value.
+    expect(texts(render())).not.toEqual(expect.arrayContaining([expect.stringMatching(/^\d+%$/)]));
+  });
+
+  it('shows a safe no-data message when hourly is empty', async () => {
+    mockStoredEnvelope('a');
+    useMobileWeatherQueryMock.mockReturnValue(
+      successSnapshot({ current: syntheticCurrent(), hourly: [] }),
+    );
+
+    const render = await loadScreen();
+    await hydrateAndInitialize();
+
+    expect(texts(render())).toContain('표시할 시간별 예보가 없습니다.');
+  });
+
+  it('renders the empty-hourly copy without treating it as an error (no-selection fixture)', async () => {
+    mockStoredEnvelope('a');
+    useMobileWeatherQueryMock.mockReturnValue({
+      status: 'SUCCESS',
+      locationId: 'a',
+      data: noSelectionSuccessResponseBody(),
+    });
+
+    const render = await loadScreen();
+    await hydrateAndInitialize();
+    const element = render();
+
+    expect(texts(element)).toContain('현재 관측 정보를 확인할 수 없습니다.');
+    expect(texts(element)).toContain('표시할 시간별 예보가 없습니다.');
   });
 });
