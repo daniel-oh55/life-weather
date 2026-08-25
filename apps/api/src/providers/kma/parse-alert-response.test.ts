@@ -179,9 +179,17 @@ describe('parseKmaAlertEventResponse — invalid response', () => {
   it('deterministically orders issues by (path, message)', () => {
     const response = validSuccessResponse();
     delete (response.response.body.items.item[0] as Record<string, unknown>).areaCode;
-    delete (response.response.body.items.item[0] as Record<string, unknown>).cancel;
+    delete (response.response.body.items.item[0] as Record<string, unknown>).allEndTime;
     const first = parseKmaAlertEventResponse(response);
     const second = parseKmaAlertEventResponse(response);
     expect(first).toEqual(second);
+    if (first.kind === 'INVALID_RESPONSE') {
+      expect(first.issues.map((issue) => issue.path)).toEqual([
+        ['response', 'body', 'items', 'item', 0, 'allEndTime'],
+        ['response', 'body', 'items', 'item', 0, 'areaCode'],
+      ]);
+    } else {
+      expect.fail('expected INVALID_RESPONSE');
+    }
   });
 });
