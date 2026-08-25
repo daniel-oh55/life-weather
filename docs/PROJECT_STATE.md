@@ -828,7 +828,8 @@
   않았습니다. 자세한 내용은 [weather-production-wiring.md](./weather-production-wiring.md)의
   "Current production state (PR #86)" 절 참고. AirKorea 예보·대기질 특보, response cache는 여전히
   미구현입니다.
-- **PR #89**(현재 **OPEN Draft**, `feat/pr-89-kma-alert-event-provider`)는 KMA 기상특보
+- **PR #89**(`feat/pr-89-kma-alert-event-provider`, **MERGED**
+  `dd2a006eb4def094f6fc5c391f464ca280073a8b`로 main에 병합됨)는 KMA 기상특보
   조회서비스(`WthrWrnInfoService`) 특보코드조회(`getPwnCd`)의 첫 provider boundary — request
   검증/URL 생성(`alert-request.ts`), raw JSON schema(`alert-raw-schema.ts`), 성공/확인된
   no-data/upstream error/invalid response 4-outcome parser(`parse-alert-response.ts`), 기존
@@ -848,8 +849,21 @@
   반환하며, `WeatherAlert[]` 정규화·활성-특보 folding·`POST /weather` 연결은 후속 PR로 미룹니다.
   `packages/contracts`, `packages/weather-core`, `apps/api/src/services`·`composition`·`routes`·
   `presenters`는 변경하지 않았습니다. 이 PR 자체는 추가 실제 KMA 호출을 수행하지 않았습니다.
-  단일-item `items.item`의 object 직렬화는 여전히 독립적으로 관측되지 않았습니다. corrected-HEAD에
-  대한 Codex HIGH 독립 재검토가 아직 pending입니다. 자세한 내용은
-  [kma-alert-event-provider.md](./kma-alert-event-provider.md) 참고.
+  단일-item `items.item`의 object 직렬화는 여전히 독립적으로 관측되지 않았습니다. 자세한 내용은
+  [kma-alert-event-provider.md](./kma-alert-event-provider.md) 참고. 이 PR은 provider boundary만
+  추가했으므로, `WeatherAlert[]` 정규화·활성-특보 folding과 `POST /weather` alert 연결은 이 PR
+  이후에도 여전히 미구현입니다.
+- **PR #90**(현재 **OPEN Draft**, `feat/pr-90-today-visual-layout`, base
+  `main@dd2a006eb4def094f6fc5c391f464ca280073a8b`)는 모바일 Today(`오늘`) 화면을 기존
+  중앙정렬 debug 스타일 레이아웃에서 첫 제품 수준 visual layout으로 교체합니다 —
+  `apps/mobile/src/app/(tabs)/index.tsx`만 대상으로 하는 presentation 전용 작업입니다. 스크롤
+  가능한 header(선택 저장 지역 표시)/현재 날씨 hero(AirKorea 대기질 pill 포함)/기존 4개
+  `생활 한눈에` 카드/제한된 `시간별` 미리보기/`저장 지역` 관리 섹션 순서로 재구성했고, 기존
+  저장 지역 추가·선택·삭제·재시도 동작과 모든 loading/empty/error 상태는 그대로 보존됩니다.
+  `packages/contracts`, `packages/lifestyle-engine`, `packages/weather-core`, `apps/api`,
+  saved-location store/persistence, dependency는 변경하지 않았고, 실제 provider 호출과 배포는
+  수행하지 않았습니다. Owner의 로컬 synthetic `/weather` 서버 기반 visual checkpoint(~412×915)는
+  **완료(PASS)** — 실제 live API 호출 없음. PR은 Owner Ready gate까지 여전히 **OPEN Draft**로
+  유지됩니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
