@@ -7,15 +7,18 @@
  * `parse-current-response.ts`), request/response correlation, and slot grouping
  * (`group-forecast-items.ts` / `group-current-observation-items.ts`).
  *
- * Two independent operations share this file: the PR #5 **forecast** provider
- * (`createKmaForecastProvider`, 단기예보/초단기예보) and the PR #63 **current-observation** provider
- * (`createKmaCurrentObservationProvider`, 초단기실황). They share the transport lifecycle — timeout,
- * caller abort, HTTP-status classification, and size-limited body reading — via the private
+ * Three independent operations share this file: the PR #5 **forecast** provider
+ * (`createKmaForecastProvider`, 단기예보/초단기예보), the PR #63 **current-observation** provider
+ * (`createKmaCurrentObservationProvider`, 초단기실황), and the PR #89 **alert-event** provider
+ * (`createKmaAlertEventProvider`, 기상특보 조회서비스 `getPwnCd` — a distinct `WthrWrnInfoService`
+ * service family with its own base URL). They share the transport lifecycle — timeout, caller
+ * abort, HTTP-status classification, and size-limited body reading — via the private
  * {@link performKmaGetRequest} helper, so the security/timeout/abort/response-size policy is
  * defined exactly once. Everything after the raw body text (JSON parsing, KMA-specific response
  * classification, request/response correlation, slot grouping) stays separate per operation, since
- * the two response shapes are genuinely different (`fcstDate`/`fcstTime`/`fcstValue` vs. no
- * forecast target time and `obsrValue`). `fetchForecast`'s public contract, result/error kinds, and
+ * the response shapes are genuinely different (forecast's `fcstDate`/`fcstTime`/`fcstValue` vs.
+ * current observation's `obsrValue` vs. the alert-event lifecycle-record shape — see
+ * `docs/kma-alert-event-provider.md`). `fetchForecast`'s public contract, result/error kinds, and
  * behavior are unchanged from PR #5/#6/#7.
  *
  * Everything except the `fetch` itself is deterministic: the same request + same mocked response
@@ -31,6 +34,16 @@
 
 import type { KmaForecastProduct } from '@life-weather/weather-core';
 
+import {
+  buildKmaAlertEventRequestUrl,
+  validateKmaAlertEventRequest,
+  KMA_ALERT_FIXED_NUM_OF_ROWS,
+  KMA_ALERT_FIXED_PAGE_NO,
+  type KmaAlertEventRequest,
+  type KmaAlertRequestIssue,
+  type KmaAlertWarningType,
+} from './alert-request.js';
+import type { KmaAlertEventItem } from './alert-raw-schema.js';
 import {
   validateKmaProviderOptions,
   type KmaForecastProviderOptions,
@@ -52,6 +65,11 @@ import {
   type KmaForecastSlot,
 } from './group-forecast-items.js';
 import { detectKmaGatewayError } from './gateway-error.js';
+import {
+  parseKmaAlertEventResponse,
+  type KmaAlertEventPage,
+  type KmaAlertResponseIssue,
+} from './parse-alert-response.js';
 import {
   parseKmaCurrentObservationResponse,
   type KmaCurrentObservationPage,
@@ -836,6 +854,261 @@ export function createKmaCurrentObservationProviderFromEnv(
 ): CreateKmaCurrentObservationProviderResult {
   const source = env ?? process.env;
   return createKmaCurrentObservationProvider({
+    serviceKey: source.KMA_SERVICE_KEY as string,
+    fetchImpl: dependencies?.fetchImpl,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Alert-event provider (PR #89 — 기상특보 조회서비스, getPwnCd)
+// ---------------------------------------------------------------------------
+
+/**
+ * One validated KMA alert **lifecycle event** record (issue, release, extension, correction, or
+ * change) — not a "currently active alert". Field set and JSON types are exactly the confirmed raw
+ * item shape from `alert-raw-schema.ts`; this provider does not fold, dedupe, or interpret them.
+ * Determining the active alert set and converting it to the public `WeatherAlert[]` contract is a
+ * later PR's responsibility (see `docs/kma-alert-event-provider.md`).
+ */
+export type KmaAlertEventRecord = KmaAlertEventItem;
+
+/**
+ * A successful alert-event fetch: the request identity (including which optional filters were
+ * used, `null` when omitted), the page total, and the validated event records. A `totalCount: 0` /
+ * `events: []` result covers **both** a genuine empty success page and the confirmed `03` no-data
+ * outcome (see `classifyAlertBody`) — the two are indistinguishable at this boundary by design,
+ * since both mean "no matching alert events for this request".
+ */
+export interface KmaAlertEventProviderSuccess {
+  readonly fromTmFc: string;
+  readonly toTmFc: string;
+  readonly areaCode: string | null;
+  readonly warningType: KmaAlertWarningType | null;
+  readonly stnId: string | null;
+  readonly totalCount: number;
+  readonly events: readonly KmaAlertEventRecord[];
+}
+
+/** The field a request/response correlation check found inconsistent. Only pagination is echoed
+ * by this response shape — `fromTmFc`/`toTmFc`/`areaCode`/`warningType`/`stnId` are not echoed on
+ * any item field, so no mismatch check is added for them (see `docs/kma-alert-event-provider.md`).
+ */
+export type KmaAlertResponseMismatchField = 'pageNo' | 'numOfRows';
+
+/**
+ * Every way an alert-event fetch can fail. Same shape discipline as {@link KmaForecastProviderError}
+ * — each variant carries only the minimum needed to act on it. There is no `DUPLICATE_CATEGORY`
+ * variant: unlike forecast/current observation, alert events are not grouped by category — every
+ * validated item becomes one record in `events`, in response order.
+ */
+export type KmaAlertEventProviderError =
+  | { readonly kind: 'INVALID_REQUEST'; readonly issues: readonly KmaAlertRequestIssue[] }
+  | KmaTransportError
+  | { readonly kind: 'EMPTY_RESPONSE' }
+  | { readonly kind: 'NON_JSON_RESPONSE' }
+  | { readonly kind: 'INVALID_JSON' }
+  | { readonly kind: 'GATEWAY_ERROR'; readonly reasonCode: string | null }
+  | { readonly kind: 'KMA_UPSTREAM_ERROR'; readonly resultCode: string }
+  | { readonly kind: 'KMA_INVALID_RESPONSE'; readonly issues: readonly KmaAlertResponseIssue[] }
+  | { readonly kind: 'RESPONSE_MISMATCH'; readonly field: KmaAlertResponseMismatchField }
+  | {
+      readonly kind: 'INCOMPLETE_PAGE';
+      readonly totalCount: number;
+      readonly receivedCount: number;
+    };
+
+export type KmaAlertEventProviderResult =
+  | { readonly ok: true; readonly alertEvents: KmaAlertEventProviderSuccess }
+  | { readonly ok: false; readonly error: KmaAlertEventProviderError };
+
+/** The alert-event provider's single public method. */
+export interface KmaAlertEventProvider {
+  fetchAlertEvents(
+    request: KmaAlertEventRequest,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<KmaAlertEventProviderResult>;
+}
+
+export type CreateKmaAlertEventProviderResult =
+  | { readonly ok: true; readonly provider: KmaAlertEventProvider }
+  | { readonly ok: false; readonly error: KmaProviderConfigError };
+
+/** Wrap an error variant into a failed alert-event result. */
+function failAlert(error: KmaAlertEventProviderError): KmaAlertEventProviderResult {
+  return { ok: false, error };
+}
+
+/** Build the public success shape, given the request identity and the resolved total/records. */
+function toAlertEventSuccess(
+  request: KmaAlertEventRequest,
+  totalCount: number,
+  events: readonly KmaAlertEventRecord[],
+): KmaAlertEventProviderSuccess {
+  return {
+    fromTmFc: request.fromTmFc,
+    toTmFc: request.toTmFc,
+    areaCode: request.areaCode ?? null,
+    warningType: request.warningType ?? null,
+    stnId: request.stnId ?? null,
+    totalCount,
+    events,
+  };
+}
+
+/**
+ * The only request/response correlation check available for this response shape: fixed pagination
+ * (`pageNo`, `numOfRows`), which the response body always echoes. No other request field is
+ * echoed by any item field, so no further correlation is checked (see
+ * {@link KmaAlertResponseMismatchField}).
+ */
+function findAlertResponseMismatch(page: KmaAlertEventPage): KmaAlertResponseMismatchField | null {
+  if (page.pageNo !== KMA_ALERT_FIXED_PAGE_NO) {
+    return 'pageNo';
+  }
+  if (page.numOfRows !== KMA_ALERT_FIXED_NUM_OF_ROWS) {
+    return 'numOfRows';
+  }
+  return null;
+}
+
+/**
+ * Turn a validated success page into a provider result: correlate its pagination, reject an
+ * incomplete page, then pass its validated items through as event records (no grouping — see the
+ * module doc).
+ */
+function interpretAlertPage(
+  request: KmaAlertEventRequest,
+  page: KmaAlertEventPage,
+): KmaAlertEventProviderResult {
+  const mismatch = findAlertResponseMismatch(page);
+  if (mismatch !== null) {
+    return failAlert({ kind: 'RESPONSE_MISMATCH', field: mismatch });
+  }
+
+  // This provider always requests numOfRows=1000; this provider does not auto-paginate.
+  // `items.length > totalCount` is already rejected by the raw schema, so this is the only gap.
+  if (page.totalCount > page.items.length) {
+    return failAlert({
+      kind: 'INCOMPLETE_PAGE',
+      totalCount: page.totalCount,
+      receivedCount: page.items.length,
+    });
+  }
+
+  return { ok: true, alertEvents: toAlertEventSuccess(request, page.totalCount, page.items) };
+}
+
+/**
+ * Classify a 2xx alert-event response body (already read to text) into a provider result. Decision
+ * order: empty → gateway XML → other XML/HTML (non-JSON) → JSON parse → alert-event parser → page
+ * interpretation. The confirmed `NO_DATA` outcome (see `parse-alert-response.ts`) becomes a
+ * successful empty result here — `resultCode === '03'` for this operation is not an error. Pure and
+ * deterministic; the raw body never leaves this function.
+ */
+function classifyAlertBody(
+  request: KmaAlertEventRequest,
+  text: string,
+): KmaAlertEventProviderResult {
+  const trimmed = text.trim();
+  if (trimmed === '') {
+    return failAlert({ kind: 'EMPTY_RESPONSE' });
+  }
+
+  if (trimmed.startsWith('<')) {
+    const gateway = detectKmaGatewayError(text);
+    return gateway.isGatewayError
+      ? failAlert({ kind: 'GATEWAY_ERROR', reasonCode: gateway.reasonCode })
+      : failAlert({ kind: 'NON_JSON_RESPONSE' });
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // The raw SyntaxError message can echo body fragments, so it is never surfaced.
+    return failAlert({ kind: 'INVALID_JSON' });
+  }
+
+  const parseResult = parseKmaAlertEventResponse(parsed);
+  switch (parseResult.kind) {
+    case 'INVALID_RESPONSE':
+      return failAlert({ kind: 'KMA_INVALID_RESPONSE', issues: parseResult.issues });
+    case 'UPSTREAM_ERROR':
+      return failAlert({ kind: 'KMA_UPSTREAM_ERROR', resultCode: parseResult.resultCode });
+    case 'NO_DATA':
+      return { ok: true, alertEvents: toAlertEventSuccess(request, 0, []) };
+    case 'SUCCESS_PAGE':
+      return interpretAlertPage(request, parseResult.page);
+  }
+}
+
+/**
+ * Perform one alert-event fetch. Request validation and URL building are alert-specific; the
+ * transport is the same shared {@link performKmaGetRequest} the forecast and current-observation
+ * providers use, so all three operations are bound by the identical timeout/abort/HTTP-status/
+ * body-size policy.
+ */
+async function fetchAlertEvents(
+  config: ResolvedKmaProviderConfig,
+  request: KmaAlertEventRequest,
+  options?: { readonly signal?: AbortSignal },
+): Promise<KmaAlertEventProviderResult> {
+  const validation = validateKmaAlertEventRequest(request);
+  if (!validation.ok) {
+    return failAlert({ kind: 'INVALID_REQUEST', issues: validation.issues });
+  }
+
+  const built = buildKmaAlertEventRequestUrl(config.serviceKey, request);
+  if (!built.ok) {
+    // Unreachable in practice (the request already validated), handled for totality.
+    return failAlert({ kind: 'INVALID_REQUEST', issues: built.issues });
+  }
+
+  const transport = await performKmaGetRequest(config, built.url, options);
+  if (!transport.ok) {
+    return failAlert(transport.error);
+  }
+
+  return classifyAlertBody(request, transport.text);
+}
+
+/** Build an alert-event provider bound to a resolved config. */
+function makeAlertEventProvider(config: ResolvedKmaProviderConfig): KmaAlertEventProvider {
+  return {
+    fetchAlertEvents(request, options) {
+      return fetchAlertEvents(config, request, options);
+    },
+  };
+}
+
+/**
+ * Create an alert-event provider from explicit options. Reuses the exact same option shape and
+ * validation as the forecast/current-observation providers ({@link KmaForecastProviderOptions} /
+ * {@link validateKmaProviderOptions}) — all three target the same `KMA_SERVICE_KEY` and the same
+ * defensive timeout/response-size policy, even though `getPwnCd` is a different service family with
+ * its own base URL. Returns a `CONFIG_ERROR` result (never throws) when the options are invalid.
+ */
+export function createKmaAlertEventProvider(
+  options: KmaForecastProviderOptions,
+): CreateKmaAlertEventProviderResult {
+  const validated = validateKmaProviderOptions(options);
+  if (!validated.ok) {
+    return { ok: false, error: validated.error };
+  }
+  return { ok: true, provider: makeAlertEventProvider(validated.config) };
+}
+
+/**
+ * Create an alert-event provider from the environment, reading **only** `KMA_SERVICE_KEY` —
+ * identical env-reading policy to {@link createKmaForecastProviderFromEnv} (read at call time,
+ * never at module import; the key value never appears in the error).
+ */
+export function createKmaAlertEventProviderFromEnv(
+  env?: NodeJS.ProcessEnv,
+  dependencies?: { readonly fetchImpl?: typeof fetch },
+): CreateKmaAlertEventProviderResult {
+  const source = env ?? process.env;
+  return createKmaAlertEventProvider({
     serviceKey: source.KMA_SERVICE_KEY as string,
     fetchImpl: dependencies?.fetchImpl,
   });

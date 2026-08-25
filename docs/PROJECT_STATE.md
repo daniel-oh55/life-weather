@@ -828,5 +828,18 @@
   않았습니다. 자세한 내용은 [weather-production-wiring.md](./weather-production-wiring.md)의
   "Current production state (PR #86)" 절 참고. AirKorea 예보·대기질 특보, response cache는 여전히
   미구현입니다.
+- **PR #89**는 KMA 기상특보 조회서비스(`WthrWrnInfoService`) 특보코드조회(`getPwnCd`)의 첫
+  provider boundary — request 검증/URL 생성(`alert-request.ts`), raw JSON schema
+  (`alert-raw-schema.ts`), 성공/확인된 no-data/upstream error/invalid response 4-outcome parser
+  (`parse-alert-response.ts`), 기존 `performKmaGetRequest` transport를 재사용하는 HTTP provider
+  (`createKmaAlertEventProvider`/`…FromEnv`, `provider.ts`)입니다. `WthrWrnInfoService`는
+  `VilageFcstInfoService_2.0`과 다른 서비스 패밀리(자체 base URL, `serviceKey` 소문자 파라미터
+  casing — Owner-authorized 2026-08-25 live 진단으로 확인)이며, `resultCode === '03'`은 이
+  operation에 한해 확인된 유효한 zero-match 결과로 별도 모델링됩니다(forecast/current의 일괄
+  `UPSTREAM_ERROR` 분류와 다름). 검증된 raw alert lifecycle event record까지만 반환하며,
+  `WeatherAlert[]` 정규화·활성-특보 folding·`POST /weather` 연결은 후속 PR로 미룹니다.
+  `packages/contracts`, `packages/weather-core`, `apps/api/src/services`·`composition`·`routes`·
+  `presenters`는 변경하지 않았습니다. 이 PR 자체는 추가 실제 KMA 호출을 수행하지 않았습니다. 자세한
+  내용은 [kma-alert-event-provider.md](./kma-alert-event-provider.md) 참고.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
