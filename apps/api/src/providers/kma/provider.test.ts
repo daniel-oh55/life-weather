@@ -1971,6 +1971,52 @@ describe('fetchAlertEvents — request validation', () => {
     }
     expect(spy).not.toHaveBeenCalled();
   });
+
+  it('returns INVALID_REQUEST without calling fetch for an over-limit areaCode', async () => {
+    const spy = vi.fn(fetchReturning(jsonOk(alertBody())));
+    const result = await alertProviderWith(spy as unknown as typeof fetch).fetchAlertEvents({
+      ...ALERT_REQUEST,
+      areaCode: '12345678901',
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe('INVALID_REQUEST');
+    }
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('returns INVALID_REQUEST without calling fetch for an over-limit stnId', async () => {
+    const spy = vi.fn(fetchReturning(jsonOk(alertBody())));
+    const result = await alertProviderWith(spy as unknown as typeof fetch).fetchAlertEvents({
+      ...ALERT_REQUEST,
+      stnId: '123456',
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe('INVALID_REQUEST');
+    }
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe('fetchAlertEvents — optional date request', () => {
+  it('accepts a date-less request and performs exactly one fetch', async () => {
+    const spy = vi.fn(fetchReturning(jsonOk(alertBody())));
+    const result = await alertProviderWith(spy as unknown as typeof fetch).fetchAlertEvents({});
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(true);
+  });
+
+  it('reports omitted dates as null in the success identity, never synthesizing today', async () => {
+    const result = await alertProviderWith(fetchReturning(jsonOk(alertBody()))).fetchAlertEvents(
+      {},
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.alertEvents.fromTmFc).toBeNull();
+      expect(result.alertEvents.toTmFc).toBeNull();
+    }
+  });
 });
 
 describe('fetchAlertEvents — transport passthrough (shared performKmaGetRequest)', () => {
@@ -2062,6 +2108,30 @@ describe('fetchAlertEvents — response parser connection', () => {
     if (result.ok) {
       expect(result.alertEvents.events).toHaveLength(1);
       expect(result.alertEvents.events[0]).toMatchObject({ areaCode: 'L1010100', warnVar: 3 });
+    }
+  });
+
+  it('accepts a release-like event with no startTime as success, not KMA_INVALID_RESPONSE', async () => {
+    const item: Record<string, unknown> = { ...alertItem() };
+    delete item.startTime;
+    const result = await alertProviderWith(
+      fetchReturning(jsonOk(alertBody({ items: [item as unknown as RawAlertItem] }))),
+    ).fetchAlertEvents(ALERT_REQUEST);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.alertEvents.events).toHaveLength(1);
+    }
+  });
+
+  it('accepts an issue-like event with no endTime as success, not KMA_INVALID_RESPONSE', async () => {
+    const item: Record<string, unknown> = { ...alertItem() };
+    delete item.endTime;
+    const result = await alertProviderWith(
+      fetchReturning(jsonOk(alertBody({ items: [item as unknown as RawAlertItem] }))),
+    ).fetchAlertEvents(ALERT_REQUEST);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.alertEvents.events).toHaveLength(1);
     }
   });
 

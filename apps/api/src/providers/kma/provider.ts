@@ -874,14 +874,16 @@ export type KmaAlertEventRecord = KmaAlertEventItem;
 
 /**
  * A successful alert-event fetch: the request identity (including which optional filters were
- * used, `null` when omitted), the page total, and the validated event records. A `totalCount: 0` /
- * `events: []` result covers **both** a genuine empty success page and the confirmed `03` no-data
- * outcome (see `classifyAlertBody`) — the two are indistinguishable at this boundary by design,
- * since both mean "no matching alert events for this request".
+ * used, `null` when omitted — `fromTmFc`/`toTmFc` included, since both are now optional filters
+ * too and an omitted date means the caller relied on the upstream documented default, which this
+ * provider never synthesizes), the page total, and the validated event records. A `totalCount: 0`
+ * / `events: []` result covers **both** a genuine empty success page and the confirmed `03`
+ * no-data outcome (see `classifyAlertBody`) — the two are indistinguishable at this boundary by
+ * design, since both mean "no matching alert events for this request".
  */
 export interface KmaAlertEventProviderSuccess {
-  readonly fromTmFc: string;
-  readonly toTmFc: string;
+  readonly fromTmFc: string | null;
+  readonly toTmFc: string | null;
   readonly areaCode: string | null;
   readonly warningType: KmaAlertWarningType | null;
   readonly stnId: string | null;
@@ -945,8 +947,8 @@ function toAlertEventSuccess(
   events: readonly KmaAlertEventRecord[],
 ): KmaAlertEventProviderSuccess {
   return {
-    fromTmFc: request.fromTmFc,
-    toTmFc: request.toTmFc,
+    fromTmFc: request.fromTmFc ?? null,
+    toTmFc: request.toTmFc ?? null,
     areaCode: request.areaCode ?? null,
     warningType: request.warningType ?? null,
     stnId: request.stnId ?? null,

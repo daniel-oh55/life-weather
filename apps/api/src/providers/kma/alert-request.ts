@@ -10,10 +10,15 @@
  * `기상청21_기상특보 조회서비스_오픈API활용가이드_260601` guide plus that live diagnostic; no other KMA
  * request module is changed by this addition.
  *
- * The caller supplies only the *varying* request fields — `fromTmFc`/`toTmFc` are required,
- * `areaCode`/`warningType`/`stnId` are optional filters. Pagination and format are fixed
- * internally (`pageNo=1`, `numOfRows=1000`, `dataType=JSON`), matching the fixed values every
- * other KMA request in this provider always sends.
+ * The caller supplies only the *varying* request fields — `fromTmFc`/`toTmFc`/`areaCode`/
+ * `warningType`/`stnId` are all optional filters. Per the official 260601 guide's request table,
+ * `fromTmFc`/`toTmFc` are documented `항목구분 = 0` (optional) with documented upstream defaults
+ * (omitted `fromTmFc` defaults to the current date's `00:00`, omitted `toTmFc` to the current
+ * date's `23:59`) — this module never synthesizes those defaults itself; an omitted date is simply
+ * left out of the query so the documented upstream default applies. `areaCode` (guide max size 10)
+ * and `stnId` (guide max size 5) are enforced with those length limits when present. Pagination and
+ * format are fixed internally (`pageNo=1`, `numOfRows=1000`, `dataType=JSON`), matching the fixed
+ * values every other KMA request in this provider always sends.
  *
  * Security: the service key is placed into the query with `URLSearchParams`, which percent-encodes
  * it exactly once. Neither the key, the built `URL`, nor the query string is ever logged or copied
@@ -39,18 +44,21 @@ function isSupportedWarningType(value: unknown): value is KmaAlertWarningType {
 }
 
 /**
- * A `getPwnCd` request. `fromTmFc`/`toTmFc` (official `YYYYMMDD`) are required; `areaCode`,
- * `warningType`, and `stnId` are optional filters that are simply omitted from the query when
- * absent. Pagination/format are fixed internally and cannot be overridden by the caller.
+ * A `getPwnCd` request. Every field is an optional filter that is simply omitted from the query
+ * when absent — an omitted `fromTmFc`/`toTmFc` lets the documented upstream default apply (this
+ * module never reads the system clock or synthesizes a date itself). Pagination/format are fixed
+ * internally and cannot be overridden by the caller.
  */
 export interface KmaAlertEventRequest {
-  /** Issuance-date window start, official `YYYYMMDD`. */
-  readonly fromTmFc: string;
-  /** Issuance-date window end, official `YYYYMMDD`. */
-  readonly toTmFc: string;
+  /** Issuance-date window start, official `YYYYMMDD`. Omitted → documented upstream default. */
+  readonly fromTmFc?: string;
+  /** Issuance-date window end, official `YYYYMMDD`. Omitted → documented upstream default. */
+  readonly toTmFc?: string;
+  /** Guide max size 10 when present. */
   readonly areaCode?: string;
   /** Documented spelling only — `warninType` is a guide typo and is never emitted. */
   readonly warningType?: KmaAlertWarningType;
+  /** Guide max size 5 when present. */
   readonly stnId?: string;
 }
 
@@ -113,11 +121,14 @@ function createNonObjectAlertRequestIssues(): KmaAlertRequestIssue[] {
  * with every field flagged `INVALID` in the fixed order below.
  *
  * For an object input, collects every problem in a fixed field order (`fromTmFc`, `toTmFc`,
- * `areaCode`, `warningType`, `stnId`). `fromTmFc`/`toTmFc` reuse the exact same `isCalendarDate`
- * predicate the forecast/current-observation boundaries use — no numeric coercion, no ordering
- * constraint between the two dates (no official evidence such a constraint exists, so none is
- * imposed here). `areaCode`/`stnId`, when present, must be a non-empty string (no further
- * character-class restriction is imposed — no official evidence supports one). `warningType`,
+ * `areaCode`, `warningType`, `stnId`). `fromTmFc`/`toTmFc`, when present, reuse the exact same
+ * `isCalendarDate` predicate the forecast/current-observation boundaries use — no numeric
+ * coercion, no ordering constraint between the two dates (no official evidence such a constraint
+ * exists, so none is imposed here); when absent, the request is valid and the documented upstream
+ * default applies (this validator never synthesizes a date). `areaCode`, when present, must be a
+ * non-empty string of at most 10 characters (the guide's documented max size; no further
+ * character-class restriction is imposed — no official evidence supports one). `stnId`, when
+ * present, must be a non-empty string of at most 5 characters (same rationale). `warningType`,
  * when present, must be one of {@link KMA_ALERT_WARNING_TYPES} exactly (a number, never a numeric
  * string). Every optional field may be `undefined` (omitted from the request entirely); an
  * explicit `null` is not treated the same as `undefined` and is rejected. The request object is
@@ -132,22 +143,33 @@ export function validateKmaAlertEventRequest(
 
   const issues: KmaAlertRequestIssue[] = [];
 
-  if (typeof input.fromTmFc !== 'string' || !isCalendarDate(input.fromTmFc)) {
+  if (
+    input.fromTmFc !== undefined &&
+    (typeof input.fromTmFc !== 'string' || !isCalendarDate(input.fromTmFc))
+  ) {
     issues.push({ field: 'fromTmFc', reason: 'INVALID' });
   }
-  if (typeof input.toTmFc !== 'string' || !isCalendarDate(input.toTmFc)) {
+  if (
+    input.toTmFc !== undefined &&
+    (typeof input.toTmFc !== 'string' || !isCalendarDate(input.toTmFc))
+  ) {
     issues.push({ field: 'toTmFc', reason: 'INVALID' });
   }
   if (
     input.areaCode !== undefined &&
-    (typeof input.areaCode !== 'string' || input.areaCode === '')
+    (typeof input.areaCode !== 'string' ||
+      input.areaCode === '' ||
+      input.areaCode.length > 10)
   ) {
     issues.push({ field: 'areaCode', reason: 'INVALID' });
   }
   if (input.warningType !== undefined && !isSupportedWarningType(input.warningType)) {
     issues.push({ field: 'warningType', reason: 'INVALID' });
   }
-  if (input.stnId !== undefined && (typeof input.stnId !== 'string' || input.stnId === '')) {
+  if (
+    input.stnId !== undefined &&
+    (typeof input.stnId !== 'string' || input.stnId === '' || input.stnId.length > 5)
+  ) {
     issues.push({ field: 'stnId', reason: 'INVALID' });
   }
 
@@ -162,10 +184,11 @@ export function validateKmaAlertEventRequest(
  * - The operation path is always {@link KMA_ALERT_OPERATION} — never built from caller input.
  * - `URL` + `URLSearchParams` build the query — never string concatenation.
  * - Parameters are appended in a fixed, deterministic order: `serviceKey`, `pageNo`, `numOfRows`,
- *   `dataType`, `fromTmFc`, `toTmFc`, then `areaCode`/`warningType`/`stnId` **only when present**
- *   on the request — an absent optional filter is omitted from the query entirely, never sent as
- *   an empty string. The documented `warningType` spelling is used; `warninType` (the guide's
- *   typo) is never emitted.
+ *   `dataType`, then `fromTmFc`/`toTmFc`/`areaCode`/`warningType`/`stnId` **only when present** on
+ *   the request, each still in that fixed relative position — an absent optional field (including
+ *   `fromTmFc`/`toTmFc`) is omitted from the query entirely, never sent as an empty string, so the
+ *   documented upstream default applies. The documented `warningType` spelling is used;
+ *   `warninType` (the guide's typo) is never emitted.
  * - `URLSearchParams` percent-encodes the decoded service key exactly once.
  */
 export function buildKmaAlertEventRequestUrl(
@@ -182,8 +205,12 @@ export function buildKmaAlertEventRequestUrl(
   url.searchParams.set('pageNo', String(KMA_ALERT_FIXED_PAGE_NO));
   url.searchParams.set('numOfRows', String(KMA_ALERT_FIXED_NUM_OF_ROWS));
   url.searchParams.set('dataType', KMA_ALERT_FIXED_DATA_TYPE);
-  url.searchParams.set('fromTmFc', request.fromTmFc);
-  url.searchParams.set('toTmFc', request.toTmFc);
+  if (request.fromTmFc !== undefined) {
+    url.searchParams.set('fromTmFc', request.fromTmFc);
+  }
+  if (request.toTmFc !== undefined) {
+    url.searchParams.set('toTmFc', request.toTmFc);
+  }
   if (request.areaCode !== undefined) {
     url.searchParams.set('areaCode', request.areaCode);
   }

@@ -63,20 +63,7 @@ describe('kmaAlertEventItemSchema — valid items', () => {
 });
 
 describe('kmaAlertEventItemSchema — required fields', () => {
-  const requiredFields = [
-    'stnId',
-    'tmFc',
-    'tmSeq',
-    'areaCode',
-    'areaName',
-    'warnVar',
-    'warnStress',
-    'command',
-    'startTime',
-    'endTime',
-    'allEndTime',
-    'cancel',
-  ] as const;
+  const requiredFields = ['stnId', 'tmFc', 'areaCode', 'areaName', 'allEndTime'] as const;
 
   it.each(requiredFields)('rejects an item missing %s', (field) => {
     const item: Record<string, unknown> = validAlertItem();
@@ -87,6 +74,84 @@ describe('kmaAlertEventItemSchema — required fields', () => {
   it.each(requiredFields)('rejects an explicit null for %s (no field here is nullable)', (field) => {
     const item: Record<string, unknown> = { ...validAlertItem(), [field]: null };
     expect(kmaAlertEventItemSchema.safeParse(item).success).toBe(false);
+  });
+});
+
+describe('kmaAlertEventItemSchema — guide-optional/conditional response fields', () => {
+  const optionalFields = [
+    'tmSeq',
+    'warnVar',
+    'warnStress',
+    'command',
+    'startTime',
+    'endTime',
+    'cancel',
+  ] as const;
+
+  it.each(optionalFields)('accepts an item with %s absent', (field) => {
+    const item: Record<string, unknown> = validAlertItem();
+    delete item[field];
+    expect(kmaAlertEventItemSchema.safeParse(item).success).toBe(true);
+  });
+
+  it.each(optionalFields)('rejects an explicit null for %s (absence, not null)', (field) => {
+    const item: Record<string, unknown> = { ...validAlertItem(), [field]: null };
+    expect(kmaAlertEventItemSchema.safeParse(item).success).toBe(false);
+  });
+
+  it('rejects a numeric-string tmSeq when present', () => {
+    const item = { ...validAlertItem(), tmSeq: '1' };
+    expect(kmaAlertEventItemSchema.safeParse(item).success).toBe(false);
+  });
+
+  it('rejects a string warnVar when present', () => {
+    const item = { ...validAlertItem(), warnVar: 'not-a-number' };
+    expect(kmaAlertEventItemSchema.safeParse(item).success).toBe(false);
+  });
+
+  it('rejects a numeric-string warnStress when present', () => {
+    const item = { ...validAlertItem(), warnStress: '2' };
+    expect(kmaAlertEventItemSchema.safeParse(item).success).toBe(false);
+  });
+
+  it('rejects a numeric command when present', () => {
+    const item = { ...validAlertItem(), command: 2 };
+    expect(kmaAlertEventItemSchema.safeParse(item).success).toBe(false);
+  });
+
+  it('rejects an empty-string cancel when present', () => {
+    const item = { ...validAlertItem(), cancel: '' };
+    expect(kmaAlertEventItemSchema.safeParse(item).success).toBe(false);
+  });
+
+  it('accepts a release-like item with startTime absent (announcement-only field per guide semantics)', () => {
+    const item: Record<string, unknown> = validAlertItem();
+    delete item.startTime;
+    expect(kmaAlertEventItemSchema.safeParse(item).success).toBe(true);
+  });
+
+  it('rejects a null startTime even though startTime may be absent', () => {
+    const item = { ...validAlertItem(), startTime: null };
+    expect(kmaAlertEventItemSchema.safeParse(item).success).toBe(false);
+  });
+
+  it('accepts an issue-like item with endTime absent (release-only field per guide semantics)', () => {
+    const item: Record<string, unknown> = validAlertItem();
+    delete item.endTime;
+    expect(kmaAlertEventItemSchema.safeParse(item).success).toBe(true);
+  });
+
+  it('rejects an empty-string endTime even though endTime may be absent', () => {
+    const item = { ...validAlertItem(), endTime: '' };
+    expect(kmaAlertEventItemSchema.safeParse(item).success).toBe(false);
+  });
+
+  it('accepts an item with every guide-optional field absent at once', () => {
+    const item: Record<string, unknown> = validAlertItem();
+    for (const field of optionalFields) {
+      delete item[field];
+    }
+    expect(kmaAlertEventItemSchema.safeParse(item).success).toBe(true);
   });
 });
 

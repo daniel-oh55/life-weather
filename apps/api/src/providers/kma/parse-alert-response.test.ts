@@ -155,9 +155,16 @@ describe('parseKmaAlertEventResponse — invalid response', () => {
 
   it('classifies a success body with an item missing a required field as INVALID_RESPONSE', () => {
     const response = validSuccessResponse();
-    delete (response.response.body.items.item[0] as Record<string, unknown>).warnVar;
+    delete (response.response.body.items.item[0] as Record<string, unknown>).areaCode;
     const result = parseKmaAlertEventResponse(response);
     expect(result.kind).toBe('INVALID_RESPONSE');
+  });
+
+  it('classifies a success body with an item missing a guide-optional field as SUCCESS_PAGE, not INVALID_RESPONSE', () => {
+    const response = validSuccessResponse();
+    delete (response.response.body.items.item[0] as Record<string, unknown>).warnVar;
+    const result = parseKmaAlertEventResponse(response);
+    expect(result.kind).toBe('SUCCESS_PAGE');
   });
 
   it('sanitized issues never include the raw offending value', () => {

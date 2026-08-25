@@ -63,7 +63,7 @@ describe('buildKmaAlertEventRequestUrl — required query parameters', () => {
     expect(url.searchParams.has('authKey')).toBe(false);
   });
 
-  it('appends the required parameters in a deterministic order', () => {
+  it('appends the required parameters, then both dates, in a deterministic order when both are present', () => {
     const keys = [...buildOrThrow(validRequest()).searchParams.keys()];
     expect(keys).toEqual([
       'serviceKey',
@@ -73,6 +73,34 @@ describe('buildKmaAlertEventRequestUrl — required query parameters', () => {
       'fromTmFc',
       'toTmFc',
     ]);
+  });
+});
+
+describe('buildKmaAlertEventRequestUrl — optional date filters', () => {
+  it('omits fromTmFc and toTmFc entirely when both are absent (never sent as empty string)', () => {
+    const params = buildOrThrow(validRequest({ fromTmFc: undefined, toTmFc: undefined })).searchParams;
+    expect(params.has('fromTmFc')).toBe(false);
+    expect(params.has('toTmFc')).toBe(false);
+  });
+
+  it('includes only fromTmFc when toTmFc is absent', () => {
+    const params = buildOrThrow(validRequest({ toTmFc: undefined })).searchParams;
+    expect(params.get('fromTmFc')).toBe('20260825');
+    expect(params.has('toTmFc')).toBe(false);
+  });
+
+  it('includes only toTmFc when fromTmFc is absent', () => {
+    const params = buildOrThrow(validRequest({ fromTmFc: undefined })).searchParams;
+    expect(params.has('fromTmFc')).toBe(false);
+    expect(params.get('toTmFc')).toBe('20260825');
+  });
+
+  it('a date-less request is still valid and issues no date params', () => {
+    const result = buildKmaAlertEventRequestUrl(
+      FAKE_KEY,
+      validRequest({ fromTmFc: undefined, toTmFc: undefined }),
+    );
+    expect(result.ok).toBe(true);
   });
 });
 
@@ -143,16 +171,38 @@ describe('buildKmaAlertEventRequestUrl — service key encoding', () => {
   });
 });
 
-describe('validateKmaAlertEventRequest — required date fields', () => {
-  it('accepts a valid request with only the required fields', () => {
+describe('validateKmaAlertEventRequest — optional date fields', () => {
+  it('accepts a valid request with only the required fields (both dates present)', () => {
     expect(validateKmaAlertEventRequest(validRequest()).ok).toBe(true);
   });
 
-  it('rejects a malformed fromTmFc', () => {
+  it('accepts a request with neither date supplied (documented upstream defaults apply)', () => {
+    const result = validateKmaAlertEventRequest(
+      validRequest({ fromTmFc: undefined, toTmFc: undefined }),
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts a request with only fromTmFc supplied', () => {
+    const result = validateKmaAlertEventRequest(validRequest({ toTmFc: undefined }));
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts a request with only toTmFc supplied', () => {
+    const result = validateKmaAlertEventRequest(validRequest({ fromTmFc: undefined }));
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts a request with both dates supplied', () => {
+    const result = validateKmaAlertEventRequest(validRequest());
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects a malformed fromTmFc when present', () => {
     expect(validateKmaAlertEventRequest(validRequest({ fromTmFc: '2026082' })).ok).toBe(false);
   });
 
-  it('rejects an impossible calendar date for toTmFc', () => {
+  it('rejects an impossible calendar date for toTmFc when present', () => {
     const result = validateKmaAlertEventRequest(validRequest({ toTmFc: '20260230' }));
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -167,11 +217,82 @@ describe('validateKmaAlertEventRequest — required date fields', () => {
     expect(result.ok).toBe(false);
   });
 
+  it('rejects an explicit null fromTmFc (not the same as omitted)', () => {
+    const result = validateKmaAlertEventRequest(
+      validRequest({ fromTmFc: null as unknown as string }),
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects an explicit null toTmFc (not the same as omitted)', () => {
+    const result = validateKmaAlertEventRequest(
+      validRequest({ toTmFc: null as unknown as string }),
+    );
+    expect(result.ok).toBe(false);
+  });
+
   it('does not require fromTmFc <= toTmFc (no official ordering evidence)', () => {
     const result = validateKmaAlertEventRequest(
       validRequest({ fromTmFc: '20260825', toTmFc: '20260101' }),
     );
     expect(result.ok).toBe(true);
+  });
+
+  it('does not synthesize a current-date default itself — omission is simply valid', () => {
+    const withoutDates = validateKmaAlertEventRequest(
+      validRequest({ fromTmFc: undefined, toTmFc: undefined }),
+    );
+    const built = buildKmaAlertEventRequestUrl(
+      FAKE_KEY,
+      validRequest({ fromTmFc: undefined, toTmFc: undefined }),
+    );
+    expect(withoutDates.ok).toBe(true);
+    expect(built.ok).toBe(true);
+    if (built.ok) {
+      expect(built.url.searchParams.has('fromTmFc')).toBe(false);
+      expect(built.url.searchParams.has('toTmFc')).toBe(false);
+    }
+  });
+});
+
+describe('validateKmaAlertEventRequest — areaCode/stnId size limits', () => {
+  it('accepts areaCode at the documented max size (10)', () => {
+    const result = validateKmaAlertEventRequest(validRequest({ areaCode: '1234567890' }));
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects areaCode over the documented max size (11)', () => {
+    const result = validateKmaAlertEventRequest(validRequest({ areaCode: '12345678901' }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues).toContainEqual({ field: 'areaCode', reason: 'INVALID' });
+    }
+  });
+
+  it('accepts stnId at the documented max size (5)', () => {
+    const result = validateKmaAlertEventRequest(validRequest({ stnId: '12345' }));
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects stnId over the documented max size (6)', () => {
+    const result = validateKmaAlertEventRequest(validRequest({ stnId: '123456' }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues).toContainEqual({ field: 'stnId', reason: 'INVALID' });
+    }
+  });
+
+  it('rejects an over-limit areaCode when building the URL (no fetch-worthy URL is produced)', () => {
+    const result = buildKmaAlertEventRequestUrl(
+      FAKE_KEY,
+      validRequest({ areaCode: '12345678901' }),
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects an over-limit stnId when building the URL (no fetch-worthy URL is produced)', () => {
+    const result = buildKmaAlertEventRequestUrl(FAKE_KEY, validRequest({ stnId: '123456' }));
+    expect(result.ok).toBe(false);
   });
 });
 

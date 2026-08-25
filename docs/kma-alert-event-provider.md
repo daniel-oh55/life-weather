@@ -40,7 +40,10 @@ error/invalid response 4-outcome 분류, 기존 KMA HTTP transport 정책을 재
 * `response.body.items` = OBJECT, `response.body.items.item` = ARRAY(항목 2개, `totalCount`와
   일치 — complete page).
 * `totalCount`/`pageNo`/`numOfRows` 모두 JSON `NUMBER` 타입.
-* item 별 관측된 JSON 타입(모든 필드 required, 어떤 필드도 `NULL` 변형이 관측되지 않음):
+* item 별 관측된 JSON 타입(관측된 2건 모두에서 모든 필드가 present였고, 어떤 필드도 `NULL`
+  변형이 관측되지 않음 — **단, 이 2건 evidence만으로 universal requiredness가 증명되지는
+  않습니다**: 아래 "공식 가이드 vs live JSON evidence" 절 및 `command=2` 해제 예시가 `startTime`을
+  생략하는 공식 문서 evidence 참고, present일 때의 JSON 타입만 이 표에서 확정합니다):
 
   | 필드 | 타입 |
   | --- | --- |
@@ -79,36 +82,47 @@ error/invalid response 4-outcome 분류, 기존 KMA HTTP transport 정책을 재
    `response.body`가 전혀 없는 것이 confirmed shape입니다 — provider 실패가 아닙니다.
 2. 요청 파라미터는 `warningType`을 사용하며 `warninType`은 절대 내보내지 않습니다.
 3. positive 성공 페이지는 `items.item` **ARRAY**로만 모델링합니다(단일 object 미확인).
-4. 위 표의 JSON 타입이 각 필드의 raw schema 타입이며, 어떤 필드도 nullable로 모델링하지
-   않습니다(관측된 `NULL` 변형 없음 — forecast의 `fcstValue`/current의 `obsrValue`와 다른 점).
+4. 위 표의 JSON 타입이 각 필드가 present일 때의 raw schema 타입이며, 어떤 필드도 nullable로
+   모델링하지 않습니다(관측된 `NULL` 변형 없음 — forecast의 `fcstValue`/current의 `obsrValue`와
+   다른 점). 이 2건 evidence는 타입만 확정하며, 어떤 필드가 항상 present여야 하는지는 별도로
+   공식 가이드의 request/response 표를 근거로 판단합니다 — `stnId`/`tmFc`/`areaCode`/`areaName`/
+   `allEndTime`은 required, `tmSeq`/`warnVar`/`warnStress`/`command`/`startTime`/`endTime`/
+   `cancel`은 공식 가이드가 optional/조건부로 문서화하므로 absence를 허용합니다(자세한 내용은
+   "Raw schema와 response parser 계약"의 "공식 가이드 vs live JSON evidence" 절 참고).
 
 ## Request 계약
 
-`KmaAlertEventRequest`(`apps/api/src/providers/kma/alert-request.ts`)는 다섯 필드를 가집니다.
+`KmaAlertEventRequest`(`apps/api/src/providers/kma/alert-request.ts`)는 다섯 필드를 가지며,
+**전부 optional 필터**입니다.
 
 ```ts
 interface KmaAlertEventRequest {
-  readonly fromTmFc: string; // YYYYMMDD, required
-  readonly toTmFc: string; // YYYYMMDD, required
-  readonly areaCode?: string;
+  readonly fromTmFc?: string; // YYYYMMDD, optional — 생략 시 문서화된 upstream 기본값
+  readonly toTmFc?: string; // YYYYMMDD, optional — 생략 시 문서화된 upstream 기본값
+  readonly areaCode?: string; // 공식 가이드 max size 10
   readonly warningType?: KmaAlertWarningType; // 1 | 2 | ... | 13 (문서화된 값만)
-  readonly stnId?: string;
+  readonly stnId?: string; // 공식 가이드 max size 5
 }
 ```
 
 * `validateKmaAlertEventRequest(input: unknown)`은 non-object 입력에서도 total하며 throw하지
   않습니다 — forecast/current request validator와 동일한 totality 정책. 고정 필드 순서는
   `fromTmFc → toTmFc → areaCode → warningType → stnId`입니다.
-* `fromTmFc`/`toTmFc`는 `validation.ts`의 `isCalendarDate`를 forecast/current와 그대로
-  공유합니다. 두 날짜 사이의 순서 제약(`fromTmFc <= toTmFc`)은 공식 evidence가 없으므로 강제하지
-  않습니다.
-* `areaCode`/`stnId`는 present일 때 non-empty string만 요구합니다 — 공식 문자 클래스 spec을
-  확인하지 못했으므로 추가 정규식/enum은 강제하지 않습니다(`category`의 `[A-Z0-9]+`처럼 근거가
-  있는 경우와 다름).
+* `fromTmFc`/`toTmFc`는 공식 260601 가이드 request 표에 `항목구분 = 0`(optional)으로 문서화되어
+  있고, 생략 시 각각 "현재 날짜 00:00"/"현재 날짜 23:59"가 문서화된 upstream 기본값입니다. 이
+  모듈은 그 기본값을 **절대 합성하지 않습니다** — `fromTmFc`/`toTmFc`가 `undefined`이면 유효한
+  요청이며 쿼리에서 해당 파라미터가 완전히 생략되어 upstream이 자신의 문서화된 기본값을 적용하도록
+  둡니다. present일 때는 `validation.ts`의 `isCalendarDate`를 forecast/current와 그대로
+  공유합니다(coercion 없음). 두 날짜 사이의 순서 제약(`fromTmFc <= toTmFc`)은 공식 evidence가
+  없으므로 강제하지 않습니다. 명시적 `null`은 `undefined`(생략)와 다르게 취급되어 거부됩니다.
+* `areaCode`는 present일 때 non-empty string이며 공식 가이드가 문서화한 max size **10**을
+  초과할 수 없습니다. `stnId`는 present일 때 non-empty string이며 공식 가이드가 문서화한 max
+  size **5**를 초과할 수 없습니다 — 그 외 문자 클래스 spec은 확인하지 못했으므로 추가
+  정규식/enum은 강제하지 않습니다(`category`의 `[A-Z0-9]+`처럼 근거가 있는 경우와 다름).
 * `warningType`은 present일 때 공식 260601 가이드가 문서화한 값만 허용합니다:
   `KMA_ALERT_WARNING_TYPES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13]`. 숫자 문자열 coercion은 없습니다.
-* optional 필드는 `undefined`(생략)만 허용하며, 명시적 `null`은 `undefined`와 다르게 취급되어
-  거부됩니다.
+* 모든 optional 필드는 `undefined`(생략)만 허용하며, 명시적 `null`은 `undefined`와 다르게
+  취급되어 거부됩니다.
 * URL operation은 caller 입력이 아니라 고정 `KMA_ALERT_OPERATION = 'getPwnCd'`이고, base URL도
   이 서비스 전용 `KMA_ALERT_BASE_URL = 'https://apis.data.go.kr/1360000/WthrWrnInfoService'`입니다
   — forecast/current의 `VilageFcstInfoService_2.0`과 공유하지 않습니다.
@@ -120,10 +134,10 @@ interface KmaAlertEventRequest {
   추정한 것이 아닙니다. `ServiceKey`(대문자)가 이 operation에서 동작하는지는 테스트하지
   않았습니다(확인된 것만 사용).
 * `URLSearchParams`로 정확히 한 번 encode됩니다. 파라미터는 고정 순서
-  `serviceKey → pageNo → numOfRows → dataType → fromTmFc → toTmFc`로 추가되고, 이어서 present인
-  optional 필터만 `areaCode → warningType → stnId` 순으로 추가됩니다 — absent 필터는 빈 문자열로
-  보내지 않고 쿼리에서 완전히 생략됩니다. URL·query·service key·invalid raw value는 오류에 절대
-  포함하지 않습니다.
+  `serviceKey → pageNo → numOfRows → dataType → fromTmFc → toTmFc → areaCode → warningType →
+  stnId`로 추가되되, `fromTmFc`/`toTmFc`를 포함한 모든 optional 필드는 **present일 때만** 그
+  고정 위치에 추가됩니다 — absent 필드(생략된 날짜 포함)는 빈 문자열로 보내지 않고 쿼리에서
+  완전히 생략됩니다. URL·query·service key·invalid raw value는 오류에 절대 포함하지 않습니다.
 
 ## Raw schema와 response parser 계약
 
@@ -161,14 +175,51 @@ interface KmaAlertEventRequest {
 }
 ```
 
-(위 JSON은 필드 shape 설명을 위한 synthetic 예시이며, 실제 live 응답 값이 아닙니다.)
+(위 JSON은 필드 shape 설명을 위한 synthetic 예시이며, 실제 live 응답 값이 아닙니다. 이 예시는
+observed 2건 positive 샘플이 모든 필드를 포함했던 것을 보여줄 뿐이며, 아래 optionality 정책이
+설명하듯 `tmSeq`/`warnVar`/`warnStress`/`command`/`startTime`/`endTime`/`cancel`이 **항상**
+present임을 의미하지 않습니다 — 예를 들어 발표(command=1) 이벤트는 `endTime` 없이, 해제
+(command=2) 이벤트는 `startTime` 없이 올 수 있습니다.)
 
-* `z.coerce`를 쓰지 않습니다. `tmFc`/`tmSeq`/`warnVar`/`warnStress`/`startTime`/`endTime`/
-  `allEndTime`은 확인된 `NUMBER`이므로 `z.number().int()`로, `stnId`/`areaCode`/`areaName`/
-  `command`/`cancel`은 확인된 `STRING`이므로 non-empty `z.string()`으로 모델링합니다. **어떤
-  필드도 nullable이 아닙니다** — live 진단의 field-type matrix가 모든 관측 item에서 단일하고
-  일관된 타입만 보였고 `NULL` 변형이 없었기 때문에, forecast의 `fcstValue`/current의 `obsrValue`가
-  받는 방어적 `.nullable()` 허용을 이 필드들에는 추가하지 않았습니다.
+### 공식 가이드 vs live JSON evidence
+
+두 근거는 서로 다른 것을 확정하며, 이 provider는 둘을 함께 사용합니다.
+
+**공식 260601 가이드 (optionality의 근거):**
+
+* Request: `fromTmFc`/`toTmFc`는 `항목구분 = 0`(optional, 문서화된 기본값 존재).
+  `areaCode`(max size 10)/`stnId`(max size 5)도 `항목구분 = 0`.
+* Response: `tmSeq`/`warnVar`/`warnStress`/`command`/`cancel`은 `항목구분 = 0`(optional).
+  `startTime`은 조건부(발표발효시각, **특보발표시에만 제공**), `endTime`은 조건부(해제발효시각,
+  **특보해제시에만 제공**) — 가이드의 `command=2`(해제) 예시 자체가 `startTime`을 생략합니다.
+  `stnId`/`tmFc`/`areaCode`/`areaName`/`allEndTime`은 required로 남습니다.
+
+**Live JSON evidence (observed positive 2건, strict type의 근거 — optionality의 근거 아님):**
+
+* 관측된 두 positive row는 이 문서 상단 표의 JSON 타입(NUMBER/STRING)으로 각 필드값을
+  직렬화했습니다. 어떤 필드도 `NULL`로 관측되지 않았습니다.
+* 이 evidence는 **field가 present일 때의 타입**만 확정하며, universal requiredness나
+  `NULL`/empty-string 같은 다른 직렬화 변형의 존재/부재를 확정하지 않습니다 — 두 row 모두 우연히
+  모든 필드를 가진 것일 수 있습니다.
+
+**구현 정책 (두 근거의 결합):**
+
+* 공식 가이드가 optional/conditional로 문서화한 필드는 **absence**를 허용합니다.
+* present일 때는 live evidence가 확인한 strict JSON 타입만 허용합니다.
+* `null`/empty-string 같은 미확인 대안 직렬화는 추가하지 않습니다(evidence 없음).
+* `allEndTime`은 required NUMBER로 유지됩니다.
+* 단일-item `items.item`의 object 직렬화는 여전히 독립적으로 관측되지 않았습니다.
+
+* `z.coerce`를 쓰지 않습니다. `tmFc`/`allEndTime`은 required `NUMBER`이므로 `z.number().int()`로,
+  `stnId`/`areaCode`/`areaName`은 required `STRING`이므로 non-empty `z.string()`으로 모델링합니다.
+  `tmSeq`/`warnVar`/`warnStress`/`startTime`/`endTime`은 optional `NUMBER`(`z.number().int()
+  .optional()`), `command`/`cancel`은 optional `STRING`(non-empty `z.string().optional()`)으로
+  모델링합니다 — present일 때는 여전히 strict type이 강제되고, `null`이나 빈 문자열/coercion은
+  허용되지 않습니다. **어떤 필드도 nullable이 아닙니다** — live 진단의 field-type matrix가 모든
+  관측 item에서 단일하고 일관된 타입만 보였고 `NULL` 변형이 없었기 때문에, forecast의
+  `fcstValue`/current의 `obsrValue`가 받는 방어적 `.nullable()` 허용을 이 필드들에는 추가하지
+  않았습니다. optionality(`.optional()`)와 nullable은 별개 축입니다 — absence는 공식 가이드
+  근거로 허용하되, 값이 present인데 `null`인 경우는 여전히 거부합니다.
 * `response.header`와 성공 코드(`KMA_SUCCESS_RESULT_CODE`)는 `raw-schema.ts`의
   `kmaResponseHeaderSchema`/`kmaResponseEnvelopeSchema`를 **그대로** import해 재사용합니다 —
   header 판정은 세 KMA 경계(forecast/current/alert) 모두 항상 일치합니다.
@@ -233,9 +284,13 @@ forecast/current-observation provider와 **동일한** `KmaForecastProviderOptio
      필드를 echo하지 않으므로 `RESPONSE_MISMATCH`는 이 두 필드에만 적용됩니다) → `INCOMPLETE_PAGE`
      거부(`totalCount > items.length`, 자동 재페이지네이션 없음) → 성공.
 
-성공 결과(`KmaAlertEventProviderSuccess`)는 요청 identity(`fromTmFc`/`toTmFc`, 그리고 생략된
-optional 필터는 `null`로)와 `totalCount`, 검증된 `events`(field validated 그대로, 어떤 grouping도
-하지 않음 — category grouping 개념 자체가 이 operation에는 없습니다)를 담습니다. 이 provider에는
+성공 결과(`KmaAlertEventProviderSuccess`)는 요청 identity(`fromTmFc`/`toTmFc`를 포함한 모든
+optional 필터 — 생략된 필드는 `null`로)와 `totalCount`, 검증된 `events`(field validated 그대로,
+어떤 grouping도 하지 않음 — category grouping 개념 자체가 이 operation에는 없습니다)를 담습니다.
+`fromTmFc`/`toTmFc`도 이제 optional이므로 `KmaAlertEventProviderSuccess.fromTmFc`/`toTmFc`의
+타입은 `string | null`입니다 — `toAlertEventSuccess`는 `request.fromTmFc ?? null`/
+`request.toTmFc ?? null`을 사용하며, 생략된 날짜를 현재 날짜 등으로 **합성하지 않습니다**. 이는
+호출자가 upstream의 문서화된 기본값에 의존했다는 사실을 그대로 보존합니다. 이 provider에는
 forecast/current의 `DUPLICATE_CATEGORY` 오류가 없습니다 — event record는 응답 순서 그대로
 1:1로 반환되며 dedupe/합치기를 하지 않습니다.
 

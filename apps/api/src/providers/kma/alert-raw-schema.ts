@@ -20,11 +20,20 @@
  *
  * Type discipline (identical policy to the forecast/current boundaries): no `z.coerce`; a numeric
  * field observed as `NUMBER` in the live diagnostic is never accepted as a string and vice versa;
- * unknown extra keys are dropped by Zod's default object strip; a missing required field is a hard
- * failure. Unlike `fcstValue`/`obsrValue`, **no field here is modeled as nullable** — the live
+ * unknown extra keys are dropped by Zod's default object strip; a required field's absence is a
+ * hard failure. Unlike `fcstValue`/`obsrValue`, **no field here is modeled as nullable** — the live
  * diagnostic's per-item field-type matrix showed a single consistent JSON type for every field on
  * every observed item, with no `NULL` variant, so no defensive `.nullable()` allowance is added
- * without evidence.
+ * without evidence. That is a distinct axis from *optionality*: per the official
+ * `기상청21_기상특보 조회서비스_오픈API활용가이드_260601` guide's response table, `tmSeq`/`warnVar`/
+ * `warnStress`/`command`/`cancel` are documented `항목구분 = 0` (optional), and `startTime`/
+ * `endTime` are documented conditional (`startTime`: 발표발효시각, 특보발표시에만 제공;
+ * `endTime`: 해제발효시각, 특보해제시에만 제공— the guide's own `command=2` release example omits
+ * `startTime`). Those seven fields are therefore modeled `.optional()` (absence allowed, strict
+ * evidenced type required when present); `stnId`/`tmFc`/`areaCode`/`areaName`/`allEndTime` remain
+ * required per the guide's response table and the live diagnostic. No `command`-dependent semantic
+ * rule (e.g. `command === '2' => startTime forbidden`) is encoded — this module does not interpret
+ * alert lifecycle semantics (see the module doc in `provider.ts`).
  */
 
 import { z } from 'zod';
@@ -58,24 +67,27 @@ const kmaAlertString = z.string().min(1);
 const kmaAlertInteger = z.number().int();
 
 /**
- * One `getPwnCd` alert-event item. Every field is required and non-null (see the module doc for
- * why no field is modeled nullable here, unlike `fcstValue`/`obsrValue`). Unknown extra keys are
- * stripped by Zod's default. Field set and JSON types come directly from the live diagnostic's
- * per-item type matrix — not from the XML-centric guide examples alone.
+ * One `getPwnCd` alert-event item. `stnId`/`tmFc`/`areaCode`/`areaName`/`allEndTime` are required
+ * per the official guide's response table and the live diagnostic. `tmSeq`/`warnVar`/`warnStress`/
+ * `command`/`startTime`/`endTime`/`cancel` are guide-documented optional/conditional and may be
+ * **absent** — but when present, still require the exact evidenced strict type (no `null`, no
+ * empty-string, no coercion; see the module doc). Unknown extra keys are stripped by Zod's default.
+ * Field set and JSON types come from the official guide's response table plus the live
+ * diagnostic's per-item type matrix — not from the XML-centric guide examples alone.
  */
 export const kmaAlertEventItemSchema = z.object({
   stnId: kmaAlertString,
   tmFc: kmaAlertInteger,
-  tmSeq: kmaAlertInteger,
+  tmSeq: kmaAlertInteger.optional(),
   areaCode: kmaAlertString,
   areaName: kmaAlertString,
-  warnVar: kmaAlertInteger,
-  warnStress: kmaAlertInteger,
-  command: kmaAlertString,
-  startTime: kmaAlertInteger,
-  endTime: kmaAlertInteger,
+  warnVar: kmaAlertInteger.optional(),
+  warnStress: kmaAlertInteger.optional(),
+  command: kmaAlertString.optional(),
+  startTime: kmaAlertInteger.optional(),
+  endTime: kmaAlertInteger.optional(),
   allEndTime: kmaAlertInteger,
-  cancel: kmaAlertString,
+  cancel: kmaAlertString.optional(),
 });
 
 export type KmaAlertEventItem = z.infer<typeof kmaAlertEventItemSchema>;
