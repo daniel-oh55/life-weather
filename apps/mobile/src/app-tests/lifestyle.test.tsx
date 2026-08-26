@@ -20,12 +20,16 @@ const MockPressable = vi.hoisted(() => function MockPressable(): null {
 const MockScrollView = vi.hoisted(() => function MockScrollView(): null {
   return null;
 });
+const MockActivityIndicator = vi.hoisted(() => function MockActivityIndicator(): null {
+  return null;
+});
 
 vi.mock('react-native', () => ({
   View: MockView,
   Text: MockText,
   Pressable: MockPressable,
   ScrollView: MockScrollView,
+  ActivityIndicator: MockActivityIndicator,
   StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
 }));
 
@@ -205,6 +209,17 @@ function fourCards(): readonly MobileLifestyleCard[] {
   ];
 }
 
+/** The screen's own static header/intro copy, present in every state. */
+const SCREEN_CHROME = ['생활날씨', '오늘 생활에 필요한 준비를 항목별로 확인하세요.'];
+
+/** Long, sentence-joined policy copy used to prove the screen never truncates or rewrites it. */
+const LONG_REASON =
+  '오전 9시부터 낮 12시 사이 강수확률이 70%까지 오르고, 오후에도 시간당 2mm 안팎의 비가 이어질 것으로 보입니다. 기온은 18도 내외로 유지되지만 바람이 다소 강해 체감온도는 더 낮게 느껴질 수 있습니다.';
+const LONG_RECOMMENDATION =
+  '외출 전에 우산을 반드시 챙기고, 바람이 강한 시간대에는 접이식보다 장우산이 안전합니다. 신발과 바지 밑단이 젖기 쉬우니 방수 소재를 고르는 편이 좋습니다.';
+const LONG_ADDITIONAL =
+  '아침과 저녁의 기온 차가 커서 얇은 겉옷을 하나 더 준비하면 하루 종일 편하게 지낼 수 있습니다.';
+
 interface ElementLike {
   readonly type: unknown;
   readonly props: Record<string, unknown>;
@@ -231,6 +246,17 @@ function texts(root: unknown): string[] {
   walk(root, (element) => {
     if (element.type === MockText && typeof element.props.children === 'string') {
       collected.push(element.props.children);
+    }
+  });
+  return collected;
+}
+
+/** Every rendered `Text` element whose sole child is exactly `value`. */
+function textElements(root: unknown, value: string): ElementLike[] {
+  const collected: ElementLike[] = [];
+  walk(root, (element) => {
+    if (element.type === MockText && element.props.children === value) {
+      collected.push(element);
     }
   });
   return collected;
@@ -342,21 +368,59 @@ describe('import and invocation boundaries', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Screen-owned header. The `lifestyle` route sets `headerShown: false` (see
+// `tabs-layout.test.tsx`), so this header is the screen's own and must not be duplicated.
+// ---------------------------------------------------------------------------
+
+describe('screen-owned header', () => {
+  it('26. renders "생활날씨" exactly once, as an accessibility header, in every state', async () => {
+    for (const snapshot of [
+      notStartedSnapshot(),
+      loadingSnapshot(),
+      selectionLoadingSnapshot(),
+      emptySnapshot(),
+      savedLocationErrorSnapshot(),
+      readySnapshot([savedLocationRecord('a', 0)], 'a'),
+    ]) {
+      useMobileSavedLocationsMock.mockReturnValue(snapshot);
+      useMobileWeatherQueryMock.mockReturnValue(successQuery('a', successResponse('a')));
+      const render = await loadScreen();
+
+      const element = render();
+
+      expect(texts(element).filter((text) => text === '생활날씨')).toHaveLength(1);
+      expect(textElements(element, '생활날씨')[0].props.accessibilityRole).toBe('header');
+    }
+  });
+
+  it('27. shows the selected saved location beside the title only once READY', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(loadingSnapshot());
+    useMobileWeatherQueryMock.mockReturnValue(idleQuery());
+    let render = await loadScreen();
+    expect(texts(render())).not.toContain('Synthetic a');
+
+    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
+    render = await loadScreen();
+    expect(texts(render())).toContain('Synthetic a');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // saved-location preparation states.
 // ---------------------------------------------------------------------------
 
 describe('saved-location preparation states', () => {
   it.each([
-    ['NOT_STARTED', notStartedSnapshot()],
-    ['LOADING', loadingSnapshot()],
-    ['SELECTION_LOADING', selectionLoadingSnapshot()],
-  ] as const)('6. shows the preparing copy for %s with no controls', async (_name, snapshot) => {
+    ['NOT_STARTED', notStartedSnapshot(), '저장된 지역을 불러오는 중입니다.'],
+    ['LOADING', loadingSnapshot(), '저장된 지역을 불러오는 중입니다.'],
+    ['SELECTION_LOADING', selectionLoadingSnapshot(), '선택 지역을 준비하는 중입니다.'],
+  ] as const)('6. shows the preparing copy for %s with no controls', async (_name, snapshot, copy) => {
     useMobileSavedLocationsMock.mockReturnValue(snapshot);
     const render = await loadScreen();
 
     const element = render();
 
-    expect(texts(element)).toEqual(['생활날씨', '생활날씨를 준비하고 있습니다.']);
+    expect(texts(element)).toEqual([...SCREEN_CHROME, copy]);
     expect(pressables(element)).toHaveLength(0);
   });
 });
@@ -372,7 +436,12 @@ describe('EMPTY', () => {
 
     const element = render();
 
-    expect(texts(element)).toEqual(['생활날씨', '저장된 지역이 없습니다.', '지역 추가']);
+    expect(texts(element)).toEqual([
+      ...SCREEN_CHROME,
+      '저장된 지역이 없습니다.',
+      '지역을 추가하면 생활날씨를 볼 수 있어요.',
+      '지역 추가',
+    ]);
     const button = pressableByLabel(element, '지역 추가');
     expect(button.props.accessibilityRole).toBe('button');
 
@@ -394,7 +463,11 @@ describe('saved-location ERROR', () => {
     const element = render();
     const rendered = texts(element).join('\n');
 
-    expect(texts(element)).toEqual(['생활날씨', '저장된 지역을 불러오지 못했습니다.', '다시 시도']);
+    expect(texts(element)).toEqual([
+      ...SCREEN_CHROME,
+      '저장된 지역을 불러오지 못했습니다.',
+      '다시 시도',
+    ]);
     expect(rendered).not.toContain('STORAGE_READ_FAILED');
     expect(rendered).not.toContain('SAVED_LOCATIONS');
 
@@ -416,7 +489,7 @@ describe('READY with missing selected record', () => {
     const render = await loadScreen();
 
     const rendered = texts(render());
-    expect(rendered).toEqual(['생활날씨', '생활날씨를 준비하고 있습니다.']);
+    expect(rendered).toEqual([...SCREEN_CHROME, '생활날씨를 준비하고 있습니다.']);
     expect(rendered.join('\n')).not.toContain('missing-id');
   });
 });
@@ -511,38 +584,117 @@ describe('READY + SUCCESS', () => {
     expect(titleIndices).toEqual([...titleIndices].sort((a, b) => a - b));
   });
 
-  it('16. shows each card\'s title/status/reason/recommendation', async () => {
+  it('16. shows each card\'s status/reason/action under the product labels, with no developer prefix', async () => {
     useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
     useMobileWeatherQueryMock.mockReturnValue(successQuery('a', successResponse('a')));
     const render = await loadScreen();
 
     const rendered = texts(render());
 
-    expect(rendered).toContain('우산');
-    expect(rendered).toContain('상태: 필요 낮음');
-    expect(rendered).toContain('이유: 우산 이유');
-    expect(rendered).toContain('행동: 우산 행동');
+    for (const cardFixture of fourCards()) {
+      expect(rendered).toContain(cardFixture.title);
+      expect(rendered).toContain(cardFixture.statusLabel);
+      expect(rendered).toContain(cardFixture.reason);
+      expect(rendered).toContain(cardFixture.recommendation);
+    }
+
+    // The reason/action labels are the screen's own static copy, rendered once per card.
+    expect(rendered.filter((text) => text === '왜 이렇게 판단했나요')).toHaveLength(4);
+    expect(rendered.filter((text) => text === '이렇게 해보세요')).toHaveLength(4);
+
+    // No developer-style prefix is glued onto the engine's own strings any more.
+    const joined = rendered.join('\n');
+    expect(joined).not.toContain('상태:');
+    expect(joined).not.toContain('이유:');
+    expect(joined).not.toContain('행동:');
   });
 
-  it('17. hides the additional-guidance label for cards whose additionalRecommendation is null', async () => {
-    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
-    useMobileWeatherQueryMock.mockReturnValue(successQuery('a', successResponse('a')));
-    const render = await loadScreen();
-
-    // Only the OUTFIT card in the fixture has a non-null additionalRecommendation.
-    const additionalLines = texts(render()).filter((text) => text.startsWith('추가 안내:'));
-
-    expect(additionalLines).toEqual(['추가 안내: 겉옷을 준비하세요.']);
-  });
-
-  it('18. shows "추가 안내" when additionalRecommendation is non-null', async () => {
+  it('17. renders no additional-guidance section for cards whose additionalRecommendation is null', async () => {
     useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
     useMobileWeatherQueryMock.mockReturnValue(successQuery('a', successResponse('a')));
     const render = await loadScreen();
 
     const rendered = texts(render());
 
-    expect(rendered).toContain('추가 안내: 겉옷을 준비하세요.');
+    // Only the OUTFIT card in the fixture has a non-null additionalRecommendation, so the label
+    // and its body each appear exactly once across all four cards — nothing is fabricated for the
+    // three null cards.
+    expect(rendered.filter((text) => text === '추가 안내')).toHaveLength(1);
+    expect(rendered.filter((text) => text === '겉옷을 준비하세요.')).toHaveLength(1);
+  });
+
+  it('18. shows the "추가 안내" label and the exact additionalRecommendation when it is non-null', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
+    useMobileWeatherQueryMock.mockReturnValue(successQuery('a', successResponse('a')));
+    const render = await loadScreen();
+
+    const rendered = texts(render());
+
+    expect(rendered).toContain('추가 안내');
+    expect(rendered).toContain('겉옷을 준비하세요.');
+  });
+
+  it('23. renders long policy copy verbatim and never truncates it', async () => {
+    createMobileLifestyleOverviewMock.mockReturnValue([
+      card({
+        id: 'UMBRELLA',
+        title: '우산',
+        statusLabel: '지금 필요',
+        reason: LONG_REASON,
+        recommendation: LONG_RECOMMENDATION,
+        additionalRecommendation: LONG_ADDITIONAL,
+      }),
+    ]);
+    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
+    useMobileWeatherQueryMock.mockReturnValue(successQuery('a', successResponse('a')));
+    const render = await loadScreen();
+
+    const element = render();
+    const rendered = texts(element);
+
+    // Exact, whole strings — not a prefix, a summary, or an ellipsis-joined fragment.
+    expect(rendered).toContain(LONG_REASON);
+    expect(rendered).toContain(LONG_RECOMMENDATION);
+    expect(rendered).toContain(LONG_ADDITIONAL);
+
+    // ...and no line clamp is applied to any of the three policy strings, so RN wraps them
+    // instead of cutting them off.
+    for (const policyText of [LONG_REASON, LONG_RECOMMENDATION, LONG_ADDITIONAL]) {
+      const elements = textElements(element, policyText);
+      expect(elements).toHaveLength(1);
+      expect(elements[0].props.numberOfLines).toBeUndefined();
+      expect(elements[0].props.ellipsizeMode).toBeUndefined();
+    }
+  });
+
+  it('24. renders the exhaustive category glyph alongside — never instead of — each textual title', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
+    useMobileWeatherQueryMock.mockReturnValue(successQuery('a', successResponse('a')));
+    const render = await loadScreen();
+
+    const rendered = texts(render());
+
+    for (const glyph of ['☂️', '👕', '😷', '🧺']) {
+      expect(rendered).toContain(glyph);
+    }
+    for (const title of ['우산', '옷차림', '마스크', '빨래']) {
+      expect(rendered).toContain(title);
+    }
+  });
+
+  it('25. keeps a "판단 보류" card visible rather than hiding or reinterpreting it', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
+    useMobileWeatherQueryMock.mockReturnValue(successQuery('a', successResponse('a')));
+    const render = await loadScreen();
+
+    const rendered = texts(render());
+
+    // The MASK fixture is the 판단 보류 one: its title, status and full copy are all still there.
+    expect(rendered).toContain('마스크');
+    expect(rendered).toContain('판단 보류');
+    expect(rendered).toContain('마스크 이유');
+    expect(rendered).toContain('마스크 행동');
+    expect(rendered.join('\n')).not.toContain('생활정보 없음');
   });
 
   it('19. shows the selected location name in every READY weather state', async () => {
