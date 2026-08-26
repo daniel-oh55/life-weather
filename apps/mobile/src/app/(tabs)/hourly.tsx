@@ -147,7 +147,7 @@ function windDirectionLabel(degrees: number): string {
 // horizontal ScrollView moves them together.
 // ---------------------------------------------------------------------------
 
-const LABEL_RAIL_WIDTH = 60;
+const LABEL_RAIL_WIDTH = 68;
 const COLUMN_WIDTH = 72;
 
 const DATE_ROW_HEIGHT = 32;
@@ -504,6 +504,9 @@ function renderTimeline(hourly: readonly HourlyForecast[], timeZone: string) {
           accessibilityLabel="시간별 예보 비교표입니다. 좌우로 넘기면 다음 시간을 볼 수 있습니다."
           style={styles.timelineViewport}
           contentContainerStyle={styles.timelineScrollContent}
+          snapToInterval={COLUMN_WIDTH}
+          snapToAlignment="start"
+          decelerationRate="fast"
         >
           <View style={styles.timelineContent}>
             {renderDateBandRow(runs)}
@@ -759,6 +762,7 @@ const styles = StyleSheet.create({
   },
   timelineViewport: {
     flex: 1,
+    overflow: 'hidden',
   },
   timelineScrollContent: {
     flexGrow: 1,

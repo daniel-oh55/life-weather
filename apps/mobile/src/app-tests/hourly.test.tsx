@@ -1122,6 +1122,45 @@ describe('horizontal timeline axis', () => {
 });
 
 // ---------------------------------------------------------------------------
+// horizontal scroll settles on an hourly-column boundary, never an arbitrary offset.
+// ---------------------------------------------------------------------------
+
+describe('horizontal scroll column snapping', () => {
+  function timelineResponse() {
+    return successResponse([
+      hourlyEntry({ forecastAt: '2026-08-05T05:00:00Z', temperatureCelsius: 28 }),
+      hourlyEntry({ forecastAt: '2026-08-05T06:00:00Z', temperatureCelsius: 29 }),
+      hourlyEntry({ forecastAt: '2026-08-05T07:00:00Z', temperatureCelsius: 30 }),
+    ]);
+  }
+
+  it('snaps the single timeline ScrollView to the hourly-column width, starting at the column edge', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(
+      readySnapshot([savedLocationRecord('a', 0, 'Asia/Seoul')], 'a'),
+    );
+    useMobileWeatherQueryMock.mockReturnValue(successQuery('a', timelineResponse()));
+    const render = await loadScreen();
+
+    const timeline = timelineScrollView(render());
+
+    // The hourly-column width used for every other timeline row (date band, time, weather,
+    // temperature, detail cells) is 72px; the snap interval must match it exactly.
+    expect(timeline.props.snapToInterval).toBe(72);
+    expect(timeline.props.snapToAlignment).toBe('start');
+  });
+
+  it('introduces no second horizontal ScrollView while adding snapping', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(
+      readySnapshot([savedLocationRecord('a', 0, 'Asia/Seoul')], 'a'),
+    );
+    useMobileWeatherQueryMock.mockReturnValue(successQuery('a', timelineResponse()));
+    const render = await loadScreen();
+
+    expect(horizontalScrollViews(render())).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // contiguous local-date bands across the continuous timeline.
 // ---------------------------------------------------------------------------
 
