@@ -863,8 +863,8 @@
   saved-location store/persistence, dependency는 변경하지 않았고, 실제 provider 호출과 배포는
   수행하지 않았습니다. Owner의 로컬 synthetic `/weather` 서버 기반 visual checkpoint(~412×915)는
   **완료(PASS)** — 실제 live API 호출 없음.
-- **PR #91**(현재 **OPEN Draft**, `feat/pr-91-hourly-visual-layout`, base
-  `main@081dea04b68452370faf5dea38f77abcfd498617`)는 모바일 Hourly(`시간별`) 화면을 기존
+- **PR #91**(**MERGED**, new main `7fd40464613e0f766bd10fa9b3a74db12c6ef272`)는 모바일
+  Hourly(`시간별`) 화면을 기존
   수직 텍스트 나열 레이아웃에서 제품 수준 시간별 타임라인으로 교체합니다 —
   `apps/mobile/src/app/(tabs)/hourly.tsx`와 `(tabs)/_layout.tsx`의 hourly route
   `headerShown: false`만 대상으로 한 presentation 전용 작업입니다. 화면이 소유하는
@@ -882,7 +882,38 @@
   dependency는 변경하지 않았고, 실제 provider 호출과 배포는 수행하지 않았습니다. Owner의 로컬
   synthetic `/weather` 서버 기반 visual checkpoint(~412×915)는 **완료(PASS)** — 선택 저장 지역
   timezone 기준 자정 경계 날짜 그룹핑(`8월 25일 (화)` 23:00 종료 → `8월 26일 (수)` 00:00 시작)을
-  시각적으로 확인했으며, 실제 live API 호출은 없습니다. PR은 Owner Ready gate 전까지 계속 OPEN
-  Draft로 유지됩니다.
+  시각적으로 확인했으며, 실제 live API 호출은 없습니다.
+- **PR #92**(현재 **OPEN Draft**, `feat/pr-92-lifestyle-visual-layout`, base
+  `main@7fd40464613e0f766bd10fa9b3a74db12c6ef272`)는 모바일 Lifestyle(`생활날씨`) 화면을 기존
+  `상태 / 이유 / 행동` 개발자용 텍스트 나열에서 제품 수준 상세 생활 가이드로 교체합니다 —
+  `apps/mobile/src/app/(tabs)/lifestyle.tsx`와 `(tabs)/_layout.tsx`의 lifestyle route
+  `headerShown: false`만 대상으로 한 presentation 전용 작업입니다. 화면이 소유하는
+  header(`생활날씨` + READY일 때 선택 저장 지역 표시)/정적 안내 문구/1열 상세 카드 4개 순서로
+  재구성했고, 각 카드는 카드 header(카테고리 글리프 + 텍스트 제목 + compact status pill) →
+  `왜 이렇게 판단했나요`(reason) → `이렇게 해보세요`(recommendation) → non-null일 때만 나타나는
+  `추가 안내`(additionalRecommendation)의 시각적 위계를 따릅니다. 카드는 기존
+  `createMobileLifestyleOverview(weatherQuery.data)`가 반환하는 고정 순서(우산/옷차림/마스크/빨래)
+  그대로 렌더링하며, lifestyle-engine의 `statusLabel`·`reason`·`recommendation`·
+  `additionalRecommendation` 문자열은 잘라내거나 요약·재작성하지 않고 그대로 출력합니다
+  (`numberOfLines` 미사용). 카드 수준에서 status를 다시 분류하지 않고 한국어 status 텍스트로
+  색을 유추하지 않으므로 pill은 단일 중립 스타일을 유지하며, `판단 보류` 카드도 숨기지 않습니다.
+  기존 saved-location(`NOT_STARTED`/`LOADING`/`SELECTION_LOADING`/`EMPTY`/`READY`/`ERROR`)과
+  weather-query(`IDLE`/`LOADING`/`SUCCESS`/`ERROR`, 네 가지 고정 오류 문구, 명시적 재시도,
+  `지역 추가` 네비게이션) 상태 처리와 raw kind/message/URL/requestId/좌표/provider 비노출 정책은
+  그대로 보존됩니다. `packages/lifestyle-engine`,
+  `apps/mobile/src/lifestyle/create-mobile-lifestyle-overview.ts`의 동작,
+  `packages/contracts`, `packages/weather-core`, `apps/api`,
+  weather-query/saved-location store·persistence, dependency·env·native config는 변경하지
+  않았고, 실제 provider 호출과 배포는 수행하지 않았습니다. Owner의 로컬 synthetic `/weather`
+  서버 기반 visual checkpoint(~412×915)는 **완료(PASS)** — 화면 소유 header(중복 Tabs header
+  없음), presenter 고정 순서(우산 → 옷차림 → 마스크 → 빨래) 4개 카드 위계,
+  `왜 이렇게 판단했나요`/`이렇게 해보세요` 구분, 긴 한국어 정책 문구의 자연스러운 줄바꿈
+  (시각적 잘림·고정 높이 clipping 없음), 마지막 빨래 카드가 고정 하단 탭 바 위로 완전히
+  스크롤되는 bottom scroll safety를 시각적으로 확인했습니다. 이 checkpoint에 사용된 synthetic
+  응답은 non-null `additionalRecommendation`을 만들지 않았으므로 optional `추가 안내` 블록은
+  이번 checkpoint에서 시각적으로 직접 확인되지 않았습니다 — 조건부 렌더링(non-null일 때만 노출,
+  문구 원문 보존, null 카드에서 안내 미생성)은 기존 test suite가 이미 검증하므로 non-blocking
+  입니다. 실제 live KMA/AirKorea/production API 호출은 없었고, PR은 Owner Ready gate 전까지 계속
+  OPEN Draft로 유지됩니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
