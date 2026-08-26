@@ -883,8 +883,8 @@
   synthetic `/weather` 서버 기반 visual checkpoint(~412×915)는 **완료(PASS)** — 선택 저장 지역
   timezone 기준 자정 경계 날짜 그룹핑(`8월 25일 (화)` 23:00 종료 → `8월 26일 (수)` 00:00 시작)을
   시각적으로 확인했으며, 실제 live API 호출은 없습니다.
-- **PR #92**(현재 **OPEN Draft**, `feat/pr-92-lifestyle-visual-layout`, base
-  `main@7fd40464613e0f766bd10fa9b3a74db12c6ef272`)는 모바일 Lifestyle(`생활날씨`) 화면을 기존
+- **PR #92**(**MERGED**, new main `aba871b3a8105c5eee2635722ca12e5201a16f25`)는 모바일
+  Lifestyle(`생활날씨`) 화면을 기존
   `상태 / 이유 / 행동` 개발자용 텍스트 나열에서 제품 수준 상세 생활 가이드로 교체합니다 —
   `apps/mobile/src/app/(tabs)/lifestyle.tsx`와 `(tabs)/_layout.tsx`의 lifestyle route
   `headerShown: false`만 대상으로 한 presentation 전용 작업입니다. 화면이 소유하는
@@ -913,7 +913,47 @@
   응답은 non-null `additionalRecommendation`을 만들지 않았으므로 optional `추가 안내` 블록은
   이번 checkpoint에서 시각적으로 직접 확인되지 않았습니다 — 조건부 렌더링(non-null일 때만 노출,
   문구 원문 보존, null 카드에서 안내 미생성)은 기존 test suite가 이미 검증하므로 non-blocking
-  입니다. 실제 live KMA/AirKorea/production API 호출은 없었고, PR은 Owner Ready gate 전까지 계속
-  OPEN Draft로 유지됩니다.
+  입니다. 실제 live KMA/AirKorea/production API 호출은 없었습니다. Owner Ready gate 이후
+  merge되어 현재 main에 포함되어 있습니다.
+- **PR #93**(현재 **OPEN Draft**, `feat/pr-93-hourly-horizontal-timeline`, base
+  `main@aba871b3a8105c5eee2635722ca12e5201a16f25`)는 모바일 Hourly(`시간별`) 화면의 성공 상태를
+  세로 카드 나열에서 가로 스크롤 시간축 비교표로 교체합니다 —
+  `apps/mobile/src/app/(tabs)/hourly.tsx`만 대상으로 한 presentation 전용 작업입니다. 화면이
+  소유하는 기존 header(`시간별` + READY일 때 선택 저장 지역 표시) 아래에 하나의 timeline
+  surface를 렌더링하며, 왼쪽에 고정된 row-label rail(`날짜`/`시간`/`날씨`/`기온`/`체감`/
+  `강수확률`/`강수량`/`적설량`/`습도`/`풍속`/`풍향`)과 오른쪽에 **단일** horizontal
+  `ScrollView`를 두어 모든 시간 종속 row가 하나의 동기화된 가로 축에서 함께 이동합니다(행별
+  개별 가로 스크롤 없음). 날짜 band와 시각은 모두 선택 저장 지역의 timezone 기준이며(기기
+  timezone·UTC·system clock 아님) 기존 `Intl.DateTimeFormat`/`formatToParts` helper 의미를
+  유지합니다. 날짜 band는 원본 응답 순서를 보존한 연속(contiguous) 로컬 날짜 run 단위로 폭을
+  차지하므로 자정 경계에서 새 band가 시작되고, 정렬·중복 제거·`오늘`/`내일` 라벨은 사용하지
+  않습니다. `기온` row는 숫자 텍스트와 함께 React Native primitive View만으로 그린 연결
+  polyline(시간별 column 중심에 정렬된 점 + 인접 점 사이 직선 segment)을 함께 보여주며, scale은
+  실제 `temperatureCelsius` 최소·최대에서만 계산합니다(feels-like 미사용, 보간·평활 없음, 동일
+  온도는 안정적인 중간 높이, 단일 항목은 segment 없이 점 1개, 음수 온도도 유한 좌표). chart는
+  보조 표현이고 모든 온도는 텍스트로도 항상 노출되며 graph layer 자체는 접근성 트리에서
+  제외됩니다. 고정 표에서는 cell을 제거할 수 없으므로 optional 값 정책이 바뀌었습니다 — non-null은
+  실제 값, 숫자 `0`은 `0%`/`0mm`/`0cm`/`0m/s`/`0°`로 그대로 노출, `null`은 값을 지어내지 않고
+  중립 미제공 marker `—`로 표시하며 row label은 항상 유지합니다. `풍향`은 원본 degree를 그대로
+  보여주면서 presentation 전용 8방위 한국어 label(`북`/`북동`/`동`/`남동`/`남`/`남서`/`서`/
+  `북서`)을 함께 표기합니다. 기존 saved-location(`NOT_STARTED`/`LOADING`/`SELECTION_LOADING`/
+  `EMPTY`/`READY`/`ERROR`)과 weather-query(`IDLE`/`LOADING`/`SUCCESS`/`ERROR`, 네 가지 고정 오류
+  문구, 두 종류의 명시적 재시도, `지역 추가` 네비게이션, selected-location 방어적 처리, 빈 hourly
+  SUCCESS)와 raw kind/message/URL/requestId/좌표/provider 비노출 정책은 그대로 보존됩니다. Today
+  (`오늘`) 탭의 기존 compact 시간별 미리보기와 `(tabs)/_layout.tsx`는 변경하지 않았습니다.
+  `packages/contracts`, `packages/weather-core`, `packages/lifestyle-engine`, `apps/api`,
+  weather-query/saved-location store·lifecycle·persistence, dependency·env·native config는
+  변경하지 않았고 새 dependency(chart/SVG 라이브러리 포함)도 추가하지 않았습니다. 실제 provider
+  호출과 배포는 수행하지 않았습니다. Owner의 로컬 synthetic `/weather` 서버 기반 visual
+  checkpoint(~412×915, 자정을 넘는 확장 synthetic 데이터)는 **완료**되었고 결과는 **PASS**입니다 —
+  고정 label rail, 연결 온도선, 시간별 column 정렬, 자정 날짜 경계 전환, `473e1df`의 label-rail
+  폭 보정(`강수확률` 한 줄 표시)이 모두 확인되었습니다. 이 checkpoint는 Expo Web에서만
+  수행되었으며, Expo Web 특성상 가로 스크롤이 임의 offset에서 멈춰 고정 label rail 오른쪽에 이전
+  column의 일부가 겹쳐 보이는 현상이 있었습니다 — 따라서 `snapToInterval`/`snapToAlignment`
+  기반 column 경계 스냅은 이 checkpoint로 독립 검증되지 않았습니다(production 코드는 여전히
+  단일 horizontal `ScrollView`에 `snapToInterval=72`/`snapToAlignment="start"`/
+  `decelerationRate="fast"`를 유지). 네이티브 Android 스냅 동작 확인은 이후 native QA 항목으로
+  남습니다. 실제 live API는 사용되지 않았습니다. PR은 Owner Ready gate 전까지 계속 OPEN Draft로
+  유지됩니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
