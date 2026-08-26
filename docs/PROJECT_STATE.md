@@ -880,6 +880,9 @@
   `null` 비노출·`0` 값 노출 정책은 그대로 보존됩니다. `packages/contracts`,
   `packages/weather-core`, `apps/api`, weather-query/saved-location store·persistence,
   dependency는 변경하지 않았고, 실제 provider 호출과 배포는 수행하지 않았습니다. Owner의 로컬
-  synthetic `/weather` 서버 기반 visual checkpoint(~412×915)는 **보류(pending)** 상태입니다.
+  synthetic `/weather` 서버 기반 visual checkpoint(~412×915)는 **완료(PASS)** — 선택 저장 지역
+  timezone 기준 자정 경계 날짜 그룹핑(`8월 25일 (화)` 23:00 종료 → `8월 26일 (수)` 00:00 시작)을
+  시각적으로 확인했으며, 실제 live API 호출은 없습니다. PR은 Owner Ready gate 전까지 계속 OPEN
+  Draft로 유지됩니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
