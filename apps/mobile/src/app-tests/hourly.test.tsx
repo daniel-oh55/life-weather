@@ -264,6 +264,92 @@ function press(element: ElementLike): void {
   (element.props.onPress as () => void)();
 }
 
+function scrollViews(root: unknown): ElementLike[] {
+  const collected: ElementLike[] = [];
+  walk(root, (element) => {
+    if (element.type === MockScrollView) {
+      collected.push(element);
+    }
+  });
+  return collected;
+}
+
+function horizontalScrollViews(root: unknown): ElementLike[] {
+  return scrollViews(root).filter((element) => element.props.horizontal === true);
+}
+
+/** The single timeline scroll surface, asserted here so every caller shares one axis. */
+function timelineScrollView(root: unknown): ElementLike {
+  const horizontal = horizontalScrollViews(root);
+  if (horizontal.length !== 1) {
+    throw new Error(`expected exactly one horizontal ScrollView, saw ${horizontal.length}`);
+  }
+  return horizontal[0];
+}
+
+/**
+ * Merges a React Native `style` prop (object, array, or nested arrays) into one flat record, the
+ * same way the platform resolves it, so tests can inspect real rendered geometry.
+ */
+function flattenStyle(style: unknown): Record<string, unknown> {
+  const flat: Record<string, unknown> = {};
+  function visit(value: unknown): void {
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (typeof value === 'object' && value !== null) {
+      Object.assign(flat, value as Record<string, unknown>);
+    }
+  }
+  visit(style);
+  return flat;
+}
+
+/**
+ * Absolutely-positioned Views carrying a rotation: the temperature polyline's connecting segments.
+ * The chart's own fill layer and its round points carry no `transform`, so they are excluded.
+ */
+function chartSegments(root: unknown): Record<string, unknown>[] {
+  const collected: Record<string, unknown>[] = [];
+  walk(root, (element) => {
+    if (element.type !== MockView) {
+      return;
+    }
+    const style = flattenStyle(element.props.style);
+    if (style.position === 'absolute' && Array.isArray(style.transform)) {
+      collected.push(style);
+    }
+  });
+  return collected;
+}
+
+/** Absolutely-positioned round Views with no rotation: the temperature polyline's data points. */
+function chartPoints(root: unknown): Record<string, unknown>[] {
+  const collected: Record<string, unknown>[] = [];
+  walk(root, (element) => {
+    if (element.type !== MockView) {
+      return;
+    }
+    const style = flattenStyle(element.props.style);
+    if (
+      style.position === 'absolute' &&
+      style.transform === undefined &&
+      typeof style.borderRadius === 'number' &&
+      style.width === style.height
+    ) {
+      collected.push(style);
+    }
+  });
+  return collected;
+}
+
+function rotationDegrees(style: Record<string, unknown>): number {
+  const transform = style.transform as { rotate?: string }[];
+  const rotate = transform[0]?.rotate ?? '';
+  return Number.parseFloat(rotate.replace('deg', ''));
+}
+
 async function loadScreen() {
   const { default: HourlyScreen } = await import('../app/(tabs)/hourly');
   return function render() {
@@ -637,14 +723,14 @@ describe('hourly content', () => {
     expect(texts(render())).toContain('-3°');
   });
 
-  it('shows every optional field, including a zero value, when not null', async () => {
+  it('shows every optional value in its own fixed row, including a zero, when not null', async () => {
     useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
     useMobileWeatherQueryMock.mockReturnValue(
       successQuery(
         'a',
         successResponse([
           hourlyEntry({
-            feelsLikeCelsius: 19,
+            feelsLikeCelsius: 0,
             precipitationProbabilityPercent: 0,
             precipitationAmountMillimeters: 0,
             snowfallAmountCentimeters: 0,
@@ -659,16 +745,52 @@ describe('hourly content', () => {
 
     const rendered = texts(render());
 
-    expect(rendered).toContain('체감 19°');
-    expect(rendered).toContain('강수 0%');
-    expect(rendered).toContain('강수량 0mm');
-    expect(rendered).toContain('적설 0cm');
-    expect(rendered).toContain('습도 0%');
-    expect(rendered).toContain('바람 0m/s');
-    expect(rendered).toContain('풍향 0°');
+    expect(rendered).toContain('0°');
+    expect(rendered).toContain('0%');
+    expect(rendered).toContain('0mm');
+    expect(rendered).toContain('0cm');
+    expect(rendered).toContain('0m/s');
+    expect(rendered).toContain('북');
+    expect(rendered.filter((text) => text === '0%')).toHaveLength(2);
+    expect(rendered).not.toContain('—');
   });
 
-  it('hides every optional field label when it is null', async () => {
+  it('renders a neutral unavailable marker, never a fabricated value, for every null optional', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
+    useMobileWeatherQueryMock.mockReturnValue(
+      successQuery(
+        'a',
+        successResponse([
+          hourlyEntry({
+            temperatureCelsius: 7,
+            feelsLikeCelsius: null,
+            precipitationProbabilityPercent: null,
+            precipitationAmountMillimeters: null,
+            snowfallAmountCentimeters: null,
+            humidityPercent: null,
+            windSpeedMetersPerSecond: null,
+            windDirectionDegrees: null,
+          }),
+        ]),
+      ),
+    );
+    const render = await loadScreen();
+
+    const rendered = texts(render());
+
+    // One marker per optional row: 체감, 강수확률, 강수량, 적설량, 습도, 풍속, 풍향.
+    expect(rendered.filter((text) => text === '—')).toHaveLength(7);
+    // A null must never be shown as a zero, and never as a bare unit.
+    expect(rendered).not.toContain('0%');
+    expect(rendered).not.toContain('0mm');
+    expect(rendered).not.toContain('0cm');
+    expect(rendered).not.toContain('0m/s');
+    expect(rendered).not.toContain('0°');
+    // The required temperature is unaffected.
+    expect(rendered).toContain('7°');
+  });
+
+  it('keeps every row label visible even when the whole column is null', async () => {
     useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
     useMobileWeatherQueryMock.mockReturnValue(
       successQuery(
@@ -688,15 +810,28 @@ describe('hourly content', () => {
     );
     const render = await loadScreen();
 
-    const rendered = texts(render()).join('\n');
+    const rendered = texts(render());
 
-    expect(rendered).not.toContain('체감');
-    expect(rendered).not.toContain('강수 ');
-    expect(rendered).not.toContain('강수량');
-    expect(rendered).not.toContain('적설');
-    expect(rendered).not.toContain('습도');
-    expect(rendered).not.toContain('바람');
-    expect(rendered).not.toContain('풍향');
+    for (const label of ['체감', '강수확률', '강수량', '적설량', '습도', '풍속', '풍향']) {
+      expect(rendered).toContain(label);
+    }
+  });
+
+  it('keeps column alignment by rendering a marker cell rather than omitting the null entry', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
+    const withValue = hourlyEntry({ forecastAt: '2026-08-05T05:00:00Z', humidityPercent: 41 });
+    const withoutValue = hourlyEntry({ forecastAt: '2026-08-05T06:00:00Z', humidityPercent: null });
+    useMobileWeatherQueryMock.mockReturnValue(
+      successQuery('a', successResponse([withValue, withoutValue])),
+    );
+    const render = await loadScreen();
+
+    const rendered = texts(render());
+
+    expect(rendered).toContain('41%');
+    // Exactly one marker, in the humidity row: no other optional field is null in this fixture.
+    expect(rendered.filter((text) => text === '—')).toHaveLength(1);
+    expect(rendered.indexOf('—')).toBeGreaterThan(rendered.indexOf('41%'));
   });
 });
 
@@ -829,5 +964,503 @@ describe('no raw internal detail leaks', () => {
     expect(rendered).not.toContain('KMA');
     expect(rendered).not.toContain('nx');
     expect(rendered).not.toContain('ny');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// one shared horizontal timeline axis and the fixed left label rail.
+// ---------------------------------------------------------------------------
+
+describe('horizontal timeline axis', () => {
+  function timelineResponse() {
+    return successResponse([
+      hourlyEntry({ forecastAt: '2026-08-05T05:00:00Z', temperatureCelsius: 28 }),
+      hourlyEntry({ forecastAt: '2026-08-05T06:00:00Z', temperatureCelsius: 29 }),
+      hourlyEntry({ forecastAt: '2026-08-05T07:00:00Z', temperatureCelsius: 30 }),
+    ]);
+  }
+
+  it('keeps the outer vertical page scroll and adds exactly one horizontal timeline scroll', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(
+      readySnapshot([savedLocationRecord('a', 0, 'Asia/Seoul')], 'a'),
+    );
+    useMobileWeatherQueryMock.mockReturnValue(successQuery('a', timelineResponse()));
+    const render = await loadScreen();
+
+    const element = render();
+    const all = scrollViews(element);
+
+    expect(all).toHaveLength(2);
+    expect(horizontalScrollViews(element)).toHaveLength(1);
+    // The remaining one is the vertical page scroll, which must not be horizontal.
+    expect(all.filter((view) => view.props.horizontal !== true)).toHaveLength(1);
+  });
+
+  it('places every time-dependent row under that single horizontal scroll surface', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(
+      readySnapshot([savedLocationRecord('a', 0, 'Asia/Seoul')], 'a'),
+    );
+    useMobileWeatherQueryMock.mockReturnValue(successQuery('a', timelineResponse()));
+    const render = await loadScreen();
+
+    const inside = texts(timelineScrollView(render()));
+
+    // date band, times, condition labels, temperatures and every detail cell move together.
+    expect(inside).toContain('8월 5일 (수)');
+    expect(inside).toContain('14:00');
+    expect(inside).toContain('15:00');
+    expect(inside).toContain('16:00');
+    expect(inside).toContain('맑음');
+    expect(inside).toContain('28°');
+    expect(inside).toContain('29°');
+    expect(inside).toContain('30°');
+    expect(inside).toContain('10%');
+    expect(inside).toContain('0mm');
+    expect(inside).toContain('0cm');
+    expect(inside).toContain('55%');
+    expect(inside).toContain('2.4m/s');
+    expect(inside).toContain('180°');
+    expect(inside).toContain('남');
+  });
+
+  it('renders the whole temperature graph inside the same horizontal scroll surface', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(
+      readySnapshot([savedLocationRecord('a', 0, 'Asia/Seoul')], 'a'),
+    );
+    useMobileWeatherQueryMock.mockReturnValue(successQuery('a', timelineResponse()));
+    const render = await loadScreen();
+
+    const element = render();
+    const timeline = timelineScrollView(element);
+
+    expect(chartPoints(timeline)).toHaveLength(3);
+    expect(chartPoints(timeline)).toHaveLength(chartPoints(element).length);
+    expect(chartSegments(timeline)).toHaveLength(chartSegments(element).length);
+  });
+
+  it('renders every fixed row label outside the horizontal scroll surface', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(
+      readySnapshot([savedLocationRecord('a', 0, 'Asia/Seoul')], 'a'),
+    );
+    useMobileWeatherQueryMock.mockReturnValue(successQuery('a', timelineResponse()));
+    const render = await loadScreen();
+
+    const element = render();
+    const rendered = texts(element);
+    const inside = texts(timelineScrollView(element));
+
+    for (const label of [
+      '날짜',
+      '시간',
+      '날씨',
+      '기온',
+      '체감',
+      '강수확률',
+      '강수량',
+      '적설량',
+      '습도',
+      '풍속',
+      '풍향',
+    ]) {
+      expect(rendered).toContain(label);
+      expect(inside).not.toContain(label);
+    }
+  });
+
+  it('keeps the screen title and selected location outside the horizontal scroll surface', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(
+      readySnapshot([savedLocationRecord('a', 0, 'Asia/Seoul')], 'a'),
+    );
+    useMobileWeatherQueryMock.mockReturnValue(successQuery('a', timelineResponse()));
+    const render = await loadScreen();
+
+    const inside = texts(timelineScrollView(render()));
+
+    expect(inside).not.toContain('시간별');
+    expect(inside).not.toContain('Synthetic a');
+  });
+
+  it('describes the timeline as a horizontally scrollable comparison for assistive technology', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(
+      readySnapshot([savedLocationRecord('a', 0, 'Asia/Seoul')], 'a'),
+    );
+    useMobileWeatherQueryMock.mockReturnValue(successQuery('a', timelineResponse()));
+    const render = await loadScreen();
+
+    const label = timelineScrollView(render()).props.accessibilityLabel;
+
+    expect(typeof label).toBe('string');
+    expect((label as string).length).toBeGreaterThan(0);
+  });
+
+  it('adds no horizontal scroll surface outside the successful non-empty hourly state', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(
+      readySnapshot([savedLocationRecord('a', 0, 'Asia/Seoul')], 'a'),
+    );
+    useMobileWeatherQueryMock.mockReturnValue(successQuery('a', successResponse([])));
+    const render = await loadScreen();
+
+    expect(horizontalScrollViews(render())).toHaveLength(0);
+  });
+
+  it('preserves source array order across the hourly columns', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(
+      readySnapshot([savedLocationRecord('a', 0, 'Asia/Seoul')], 'a'),
+    );
+    // Deliberately out of chronological order: the screen must not sort.
+    const later = hourlyEntry({ forecastAt: '2026-08-05T07:00:00Z', temperatureCelsius: 30 });
+    const earlier = hourlyEntry({ forecastAt: '2026-08-05T05:00:00Z', temperatureCelsius: 28 });
+    useMobileWeatherQueryMock.mockReturnValue(successQuery('a', successResponse([later, earlier])));
+    const render = await loadScreen();
+
+    const inside = texts(timelineScrollView(render()));
+
+    expect(inside.indexOf('16:00')).toBeGreaterThan(-1);
+    expect(inside.indexOf('14:00')).toBeGreaterThan(inside.indexOf('16:00'));
+    expect(inside.indexOf('28°')).toBeGreaterThan(inside.indexOf('30°'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// contiguous local-date bands across the continuous timeline.
+// ---------------------------------------------------------------------------
+
+describe('contiguous local-date bands', () => {
+  it('starts a new date band at local midnight in the selected location timezone', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(
+      readySnapshot([savedLocationRecord('a', 0, 'Asia/Seoul')], 'a'),
+    );
+    // KST (UTC+9): 13:00Z -> 22:00, 14:00Z -> 23:00, 15:00Z -> 00:00 (next day), 16:00Z -> 01:00.
+    useMobileWeatherQueryMock.mockReturnValue(
+      successQuery(
+        'a',
+        successResponse([
+          hourlyEntry({ forecastAt: '2026-08-05T13:00:00Z' }),
+          hourlyEntry({ forecastAt: '2026-08-05T14:00:00Z' }),
+          hourlyEntry({ forecastAt: '2026-08-05T15:00:00Z' }),
+          hourlyEntry({ forecastAt: '2026-08-05T16:00:00Z' }),
+        ]),
+      ),
+    );
+    const render = await loadScreen();
+
+    const element = render();
+    const inside = texts(timelineScrollView(element));
+
+    expect(headers(element)).toEqual(['시간별', '8월 5일 (수)', '8월 6일 (목)']);
+    // The band order follows the timeline: the first day's hours, then the next day's.
+    expect(inside.indexOf('8월 5일 (수)')).toBeLessThan(inside.indexOf('8월 6일 (목)'));
+    expect(inside.indexOf('22:00')).toBeLessThan(inside.indexOf('23:00'));
+    expect(inside.indexOf('23:00')).toBeLessThan(inside.indexOf('00:00'));
+    expect(inside.indexOf('00:00')).toBeLessThan(inside.indexOf('01:00'));
+  });
+
+  it('spans one band across every contiguous hour sharing a local date', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(
+      readySnapshot([savedLocationRecord('a', 0, 'Asia/Seoul')], 'a'),
+    );
+    useMobileWeatherQueryMock.mockReturnValue(
+      successQuery(
+        'a',
+        successResponse([
+          hourlyEntry({ forecastAt: '2026-08-05T13:00:00Z' }),
+          hourlyEntry({ forecastAt: '2026-08-05T14:00:00Z' }),
+          hourlyEntry({ forecastAt: '2026-08-05T15:00:00Z' }),
+        ]),
+      ),
+    );
+    const render = await loadScreen();
+
+    const rendered = texts(render());
+
+    expect(rendered.filter((text) => text === '8월 5일 (수)')).toHaveLength(1);
+    expect(rendered.filter((text) => text === '8월 6일 (목)')).toHaveLength(1);
+  });
+
+  it('opens a fresh band when a local date reappears after another day (no dedupe)', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(
+      readySnapshot([savedLocationRecord('a', 0, 'Asia/Seoul')], 'a'),
+    );
+    useMobileWeatherQueryMock.mockReturnValue(
+      successQuery(
+        'a',
+        successResponse([
+          hourlyEntry({ forecastAt: '2026-08-05T05:00:00Z' }),
+          hourlyEntry({ forecastAt: '2026-08-06T05:00:00Z' }),
+          hourlyEntry({ forecastAt: '2026-08-05T06:00:00Z' }),
+        ]),
+      ),
+    );
+    const render = await loadScreen();
+
+    expect(headers(render())).toEqual(['시간별', '8월 5일 (수)', '8월 6일 (목)', '8월 5일 (수)']);
+  });
+
+  it('never labels a band 오늘 or 내일', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(
+      readySnapshot([savedLocationRecord('a', 0, 'Asia/Seoul')], 'a'),
+    );
+    useMobileWeatherQueryMock.mockReturnValue(
+      successQuery('a', successResponse([hourlyEntry({ forecastAt: '2026-08-05T05:00:00Z' })])),
+    );
+    const render = await loadScreen();
+
+    const rendered = texts(render()).join('\n');
+
+    expect(rendered).not.toContain('오늘');
+    expect(rendered).not.toContain('내일');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// the temperature polyline: real rendered points and connecting segments.
+// ---------------------------------------------------------------------------
+
+describe('temperature polyline', () => {
+  async function renderTemperatures(temperatures: readonly number[]) {
+    useMobileSavedLocationsMock.mockReturnValue(
+      readySnapshot([savedLocationRecord('a', 0, 'Asia/Seoul')], 'a'),
+    );
+    useMobileWeatherQueryMock.mockReturnValue(
+      successQuery(
+        'a',
+        successResponse(
+          temperatures.map((temperatureCelsius, index) =>
+            hourlyEntry({
+              forecastAt: `2026-08-05T0${index}:00:00Z`,
+              temperatureCelsius,
+            }),
+          ),
+        ),
+      ),
+    );
+    const render = await loadScreen();
+    return render();
+  }
+
+  it('draws one point per hour and one segment per adjacent pair', async () => {
+    const element = await renderTemperatures([10, 20, 15]);
+
+    expect(chartPoints(element)).toHaveLength(3);
+    expect(chartSegments(element)).toHaveLength(2);
+  });
+
+  it('keeps every temperature readable as text as well as on the line', async () => {
+    const element = await renderTemperatures([10, 20, 15]);
+
+    const rendered = texts(element);
+    expect(rendered).toContain('10°');
+    expect(rendered).toContain('20°');
+    expect(rendered).toContain('15°');
+  });
+
+  it('places warmer temperatures visually higher than cooler ones', async () => {
+    const element = await renderTemperatures([10, 20, 15]);
+
+    const tops = chartPoints(element).map((style) => style.top as number);
+
+    // A smaller `top` is higher on screen: 20° above 15°, and 15° above 10°.
+    expect(tops[1]).toBeLessThan(tops[2]);
+    expect(tops[2]).toBeLessThan(tops[0]);
+  });
+
+  it('advances point X positions in hourly input order', async () => {
+    const element = await renderTemperatures([10, 20, 15]);
+
+    const lefts = chartPoints(element).map((style) => style.left as number);
+
+    expect(lefts[0]).toBeLessThan(lefts[1]);
+    expect(lefts[1]).toBeLessThan(lefts[2]);
+  });
+
+  it('produces finite segment geometry', async () => {
+    const element = await renderTemperatures([10, 20, 15]);
+
+    for (const segment of chartSegments(element)) {
+      expect(Number.isFinite(segment.left as number)).toBe(true);
+      expect(Number.isFinite(segment.top as number)).toBe(true);
+      expect(Number.isFinite(segment.width as number)).toBe(true);
+      expect(segment.width as number).toBeGreaterThan(0);
+      expect(Number.isFinite(rotationDegrees(segment))).toBe(true);
+    }
+  });
+
+  it('connects a rising then falling series with opposite segment slopes', async () => {
+    const element = await renderTemperatures([10, 20, 15]);
+
+    const [rising, falling] = chartSegments(element).map(rotationDegrees);
+
+    // Screen Y grows downward, so a rising temperature rotates negative and a fall positive.
+    expect(rising).toBeLessThan(0);
+    expect(falling).toBeGreaterThan(0);
+  });
+
+  it('draws equal temperatures as a stable flat line with finite geometry', async () => {
+    const element = await renderTemperatures([18, 18, 18]);
+
+    const points = chartPoints(element);
+    const segments = chartSegments(element);
+
+    expect(points).toHaveLength(3);
+    expect(segments).toHaveLength(2);
+    expect(new Set(points.map((style) => style.top)).size).toBe(1);
+    for (const style of points) {
+      expect(Number.isFinite(style.top as number)).toBe(true);
+    }
+    for (const segment of segments) {
+      expect(rotationDegrees(segment)).toBe(0);
+      expect(Number.isFinite(segment.width as number)).toBe(true);
+    }
+  });
+
+  it('draws a single hourly entry as one point with no connecting segment', async () => {
+    const element = await renderTemperatures([12]);
+
+    expect(chartPoints(element)).toHaveLength(1);
+    expect(chartSegments(element)).toHaveLength(0);
+    expect(Number.isFinite(chartPoints(element)[0].top as number)).toBe(true);
+    expect(texts(element)).toContain('12°');
+  });
+
+  it('places negative temperatures at finite positions', async () => {
+    const element = await renderTemperatures([-8, -1, -8]);
+
+    const points = chartPoints(element);
+
+    expect(points).toHaveLength(3);
+    for (const style of points) {
+      expect(Number.isFinite(style.top as number)).toBe(true);
+      expect(Number.isFinite(style.left as number)).toBe(true);
+    }
+    // -1° is warmer than -8°, so it sits higher.
+    expect(points[1].top as number).toBeLessThan(points[0].top as number);
+    expect(texts(element)).toContain('-8°');
+    expect(texts(element)).toContain('-1°');
+  });
+
+  it('scales the line from temperature alone, never from the feels-like value', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(
+      readySnapshot([savedLocationRecord('a', 0, 'Asia/Seoul')], 'a'),
+    );
+    useMobileWeatherQueryMock.mockReturnValue(
+      successQuery(
+        'a',
+        successResponse([
+          hourlyEntry({
+            forecastAt: '2026-08-05T05:00:00Z',
+            temperatureCelsius: 10,
+            feelsLikeCelsius: 40,
+          }),
+          hourlyEntry({
+            forecastAt: '2026-08-05T06:00:00Z',
+            temperatureCelsius: 20,
+            feelsLikeCelsius: 40,
+          }),
+        ]),
+      ),
+    );
+    const render = await loadScreen();
+
+    const points = chartPoints(render());
+
+    // Exactly two points — no extra point for feels-like — spanning the full plot band.
+    expect(points).toHaveLength(2);
+    expect(points[1].top as number).toBeLessThan(points[0].top as number);
+  });
+
+  it('classifies points and segments distinctly (non-vacuity control)', () => {
+    const pointOnly = {
+      type: MockView,
+      props: { style: { position: 'absolute', left: 10, top: 20, width: 8, height: 8, borderRadius: 4 } },
+    };
+    const segmentOnly = {
+      type: MockView,
+      props: {
+        style: {
+          position: 'absolute',
+          left: 4,
+          top: 6,
+          width: 40,
+          height: 2,
+          borderRadius: 1,
+          transform: [{ rotate: '-12deg' }],
+        },
+      },
+    };
+    const chartLayerOnly = {
+      type: MockView,
+      props: { style: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 } },
+    };
+
+    expect(chartPoints(pointOnly)).toHaveLength(1);
+    expect(chartSegments(pointOnly)).toHaveLength(0);
+    expect(chartPoints(segmentOnly)).toHaveLength(0);
+    expect(chartSegments(segmentOnly)).toHaveLength(1);
+    expect(chartPoints(chartLayerOnly)).toHaveLength(0);
+    expect(chartSegments(chartLayerOnly)).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// wind direction: Korean 8-sector label with the source degrees preserved.
+// ---------------------------------------------------------------------------
+
+describe('wind direction presentation', () => {
+  async function renderWindDirection(windDirectionDegrees: number | null) {
+    useMobileSavedLocationsMock.mockReturnValue(
+      readySnapshot([savedLocationRecord('a', 0, 'Asia/Seoul')], 'a'),
+    );
+    useMobileWeatherQueryMock.mockReturnValue(
+      successQuery('a', successResponse([hourlyEntry({ windDirectionDegrees })])),
+    );
+    const render = await loadScreen();
+    return texts(render());
+  }
+
+  it.each([
+    [0, '북'],
+    [45, '북동'],
+    [90, '동'],
+    [135, '남동'],
+    [180, '남'],
+    [220, '남서'],
+    [270, '서'],
+    [315, '북서'],
+    [360, '북'],
+  ] as const)('shows %d° as "%s" while keeping the degrees visible', async (degrees, label) => {
+    const rendered = await renderWindDirection(degrees);
+
+    expect(rendered).toContain(label);
+    expect(rendered).toContain(`${degrees}°`);
+  });
+
+  it.each([
+    [22.4, '북'],
+    [22.5, '북동'],
+    [67.4, '북동'],
+    [67.5, '동'],
+    [112.5, '남동'],
+    [157.5, '남'],
+    [202.5, '남서'],
+    [247.5, '서'],
+    [292.5, '북서'],
+    [337.4, '북서'],
+    [337.5, '북'],
+  ] as const)('rounds the sector boundary %d° to "%s"', async (degrees, label) => {
+    const rendered = await renderWindDirection(degrees);
+
+    expect(rendered).toContain(label);
+    expect(rendered).toContain(`${degrees}°`);
+  });
+
+  it('shows the unavailable marker and no compass label when the bearing is null', async () => {
+    const rendered = await renderWindDirection(null);
+
+    expect(rendered).toContain('—');
+    for (const label of ['북동', '동', '남동', '남서', '서', '북서']) {
+      expect(rendered).not.toContain(label);
+    }
+    // The row label itself stays.
+    expect(rendered).toContain('풍향');
   });
 });
