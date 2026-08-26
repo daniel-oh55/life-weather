@@ -1,8 +1,9 @@
 import type { HourlyForecast, WeatherCondition } from '@life-weather/contracts';
 import { useRouter } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { mobileSavedLocationApplicationStore } from '../../locations/mobile-saved-location-application-production';
+import type { SavedLocationApplicationSnapshot } from '../../locations/mobile-saved-location-application-store';
 import { useMobileSavedLocations } from '../../locations/use-mobile-saved-locations';
 import { mobileWeatherQueryStore } from '../../weather-query/mobile-weather-query-production';
 import type { MobileWeatherQueryErrorPresentation } from '../../weather-query/mobile-weather-query-store';
@@ -22,6 +23,20 @@ const CONDITION_LABELS: Record<WeatherCondition, string> = {
   UNKNOWN: '상태 미확인',
 };
 
+/** Exhaustive, provider-neutral glyph per shared `WeatherCondition` value. No icon dependency. */
+const CONDITION_EMOJI: Record<WeatherCondition, string> = {
+  CLEAR: '☀️',
+  PARTLY_CLOUDY: '🌤️',
+  CLOUDY: '☁️',
+  RAIN: '🌧️',
+  SNOW: '🌨️',
+  SLEET: '🌧️❄️',
+  SHOWER: '🌦️',
+  THUNDERSTORM: '⛈️',
+  FOG: '🌫️',
+  UNKNOWN: '❓',
+};
+
 /** Fixed, safe copy per weather-query error presentation. No raw kind/message/URL/id. */
 function describeWeatherError(presentation: MobileWeatherQueryErrorPresentation): string {
   switch (presentation) {
@@ -36,70 +51,156 @@ function describeWeatherError(presentation: MobileWeatherQueryErrorPresentation)
   }
 }
 
+/** Fixed loading copy for the saved-location boundary's three non-terminal states. */
+function describeSavedLocationsLoading(
+  status: Extract<
+    SavedLocationApplicationSnapshot['status'],
+    'NOT_STARTED' | 'LOADING' | 'SELECTION_LOADING'
+  >,
+): string {
+  return status === 'SELECTION_LOADING'
+    ? '선택 지역을 준비하는 중입니다.'
+    : '저장된 지역을 불러오는 중입니다.';
+}
+
 function datePart(parts: readonly Intl.DateTimeFormatPart[], type: Intl.DateTimeFormatPart['type']): string {
   return parts.find((part) => part.type === type)?.value ?? '';
 }
 
 /**
- * Format an ISO `forecastAt` in the given saved location's own timezone — never the device's —
- * as e.g. "8월 5일 (수) 14:00". Falls back to the raw ISO string on any formatter failure (an
- * unexpected/invalid timezone) rather than crashing the screen.
+ * Deterministic local calendar-date key (`YYYY-MM-DD`) for `forecastAt` in `timeZone`, computed
+ * independently of any display text, or `null` if the formatter fails (e.g. an invalid timezone).
  */
-function formatForecastAt(forecastAt: string, timeZone: string): string {
+function localDateKey(forecastAt: string, timeZone: string): string | null {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date(forecastAt));
+    const year = datePart(parts, 'year');
+    const month = datePart(parts, 'month');
+    const day = datePart(parts, 'day');
+    return year !== '' && month !== '' && day !== '' ? `${year}-${month}-${day}` : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Local calendar-date heading, e.g. "8월 25일 (화)". Falls back to the raw ISO string on failure. */
+function localDateLabel(forecastAt: string, timeZone: string): string {
   try {
     const parts = new Intl.DateTimeFormat('ko-KR', {
       timeZone,
       month: 'numeric',
       day: 'numeric',
       weekday: 'short',
-      hour: 'numeric',
-      minute: '2-digit',
-      hourCycle: 'h23',
     }).formatToParts(new Date(forecastAt));
-
     const month = datePart(parts, 'month');
     const day = datePart(parts, 'day');
     const weekday = datePart(parts, 'weekday');
-    const hour = datePart(parts, 'hour');
-    const minute = datePart(parts, 'minute');
-
-    return `${month}월 ${day}일 (${weekday}) ${hour}:${minute}`;
+    return month !== '' && day !== '' && weekday !== '' ? `${month}월 ${day}일 (${weekday})` : forecastAt;
   } catch {
     return forecastAt;
   }
 }
 
+/** Local `HH:mm`. Falls back to the raw ISO string on failure. */
+function localTime(forecastAt: string, timeZone: string): string {
+  try {
+    return new Intl.DateTimeFormat('ko-KR', {
+      timeZone,
+      hour: 'numeric',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).format(new Date(forecastAt));
+  } catch {
+    return forecastAt;
+  }
+}
+
+interface HourlyDateGroup {
+  readonly dateKey: string;
+  readonly dateLabel: string;
+  readonly entries: readonly { readonly item: HourlyForecast; readonly index: number }[];
+}
+
 /**
- * One hourly row, in contract order: forecast time, condition, temperature, then only the
- * optional fields that are not `null` (a `0` value is always shown; only `null` is hidden).
+ * Groups hourly entries by calendar date in `timeZone`, preserving the original contract order
+ * both across and within groups (no sort/dedupe). The date key is computed independently of the
+ * display label so a label-formatting quirk never affects grouping. If the timezone is invalid,
+ * each entry falls back to its own group (keyed by index) instead of crashing or silently
+ * merging distinct days.
  */
-function renderHourlyRow(item: HourlyForecast, index: number, timeZone: string) {
+function groupHourlyByLocalDate(hourly: readonly HourlyForecast[], timeZone: string): HourlyDateGroup[] {
+  const groups: { dateKey: string; dateLabel: string; entries: { item: HourlyForecast; index: number }[] }[] = [];
+  const groupIndexByKey = new Map<string, number>();
+
+  hourly.forEach((item, index) => {
+    const key = localDateKey(item.forecastAt, timeZone) ?? `__unresolved_${index}`;
+    let groupIndex = groupIndexByKey.get(key);
+    if (groupIndex === undefined) {
+      groupIndex = groups.length;
+      groupIndexByKey.set(key, groupIndex);
+      groups.push({ dateKey: key, dateLabel: localDateLabel(item.forecastAt, timeZone), entries: [] });
+    }
+    groups[groupIndex].entries.push({ item, index });
+  });
+
+  return groups;
+}
+
+/** Optional detail-pill texts for one hourly entry, in a fixed order. `null` is omitted, `0` is shown. */
+function hourlyDetailTexts(item: HourlyForecast): string[] {
+  const details: string[] = [];
+  if (item.feelsLikeCelsius !== null) details.push(`체감 ${item.feelsLikeCelsius}°`);
+  if (item.precipitationProbabilityPercent !== null) details.push(`강수 ${item.precipitationProbabilityPercent}%`);
+  if (item.precipitationAmountMillimeters !== null) details.push(`강수량 ${item.precipitationAmountMillimeters}mm`);
+  if (item.snowfallAmountCentimeters !== null) details.push(`적설 ${item.snowfallAmountCentimeters}cm`);
+  if (item.humidityPercent !== null) details.push(`습도 ${item.humidityPercent}%`);
+  if (item.windSpeedMetersPerSecond !== null) details.push(`바람 ${item.windSpeedMetersPerSecond}m/s`);
+  if (item.windDirectionDegrees !== null) details.push(`풍향 ${item.windDirectionDegrees}°`);
+  return details;
+}
+
+/** One compact hourly card: time / condition / temperature top row, then optional detail pills. */
+function renderHourlyCard(entry: { item: HourlyForecast; index: number }, timeZone: string) {
+  const { item, index } = entry;
+  const details = hourlyDetailTexts(item);
+
   return (
-    <View key={`${item.forecastAt}-${index}`} style={styles.hourlyRow}>
-      <Text style={styles.hourlyTime}>{formatForecastAt(item.forecastAt, timeZone)}</Text>
-      <Text style={styles.hourlyCondition}>{CONDITION_LABELS[item.condition]}</Text>
-      <Text style={styles.hourlyTemperature}>{`${item.temperatureCelsius}°C`}</Text>
-      {item.feelsLikeCelsius !== null ? (
-        <Text style={styles.hourlyDetail}>{`체감 ${item.feelsLikeCelsius}°C`}</Text>
+    <View key={`${item.forecastAt}-${index}`} style={styles.hourlyCard}>
+      <View style={styles.hourlyCardTopRow}>
+        <Text style={styles.hourlyCardTime}>{localTime(item.forecastAt, timeZone)}</Text>
+        <View style={styles.hourlyCardConditionGroup}>
+          <Text style={styles.hourlyCardGlyph}>{CONDITION_EMOJI[item.condition]}</Text>
+          <Text style={styles.hourlyCardConditionLabel} numberOfLines={1}>
+            {CONDITION_LABELS[item.condition]}
+          </Text>
+        </View>
+        <Text style={styles.hourlyCardTemperature}>{`${item.temperatureCelsius}°`}</Text>
+      </View>
+      {details.length > 0 ? (
+        <View style={styles.hourlyDetailRow}>
+          {details.map((detail) => (
+            <View key={detail} style={styles.hourlyDetailPill}>
+              <Text style={styles.hourlyDetailPillText}>{detail}</Text>
+            </View>
+          ))}
+        </View>
       ) : null}
-      {item.precipitationProbabilityPercent !== null ? (
-        <Text style={styles.hourlyDetail}>{`강수확률 ${item.precipitationProbabilityPercent}%`}</Text>
-      ) : null}
-      {item.precipitationAmountMillimeters !== null ? (
-        <Text style={styles.hourlyDetail}>{`강수량 ${item.precipitationAmountMillimeters}mm`}</Text>
-      ) : null}
-      {item.snowfallAmountCentimeters !== null ? (
-        <Text style={styles.hourlyDetail}>{`적설 ${item.snowfallAmountCentimeters}cm`}</Text>
-      ) : null}
-      {item.humidityPercent !== null ? (
-        <Text style={styles.hourlyDetail}>{`습도 ${item.humidityPercent}%`}</Text>
-      ) : null}
-      {item.windSpeedMetersPerSecond !== null ? (
-        <Text style={styles.hourlyDetail}>{`풍속 ${item.windSpeedMetersPerSecond}m/s`}</Text>
-      ) : null}
-      {item.windDirectionDegrees !== null ? (
-        <Text style={styles.hourlyDetail}>{`풍향 ${item.windDirectionDegrees}°`}</Text>
-      ) : null}
+    </View>
+  );
+}
+
+function renderDateGroup(group: HourlyDateGroup, timeZone: string) {
+  return (
+    <View key={group.dateKey} style={styles.dateGroup}>
+      <Text accessibilityRole="header" style={styles.dateGroupHeading}>
+        {group.dateLabel}
+      </Text>
+      <View style={styles.dateGroupCards}>{group.entries.map((entry) => renderHourlyCard(entry, timeZone))}</View>
     </View>
   );
 }
@@ -129,142 +230,266 @@ export default function HourlyScreen() {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text accessibilityRole="header" style={styles.title}>
-        시간별 날씨
-      </Text>
-
-      {savedLocations.status === 'NOT_STARTED' ||
-      savedLocations.status === 'LOADING' ||
-      savedLocations.status === 'SELECTION_LOADING' ? (
-        <Text style={styles.text}>시간별 날씨를 준비하고 있습니다.</Text>
-      ) : null}
-
-      {savedLocations.status === 'EMPTY' ? (
-        <View style={styles.section}>
-          <Text style={styles.text}>저장된 지역이 없습니다.</Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="지역 추가"
-            onPress={handleAddLocation}
-            style={styles.button}
-          >
-            <Text style={styles.buttonLabel}>지역 추가</Text>
-          </Pressable>
+    <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent}>
+      <View style={styles.page}>
+        <View style={styles.header}>
+          <Text accessibilityRole="header" style={styles.headerTitle}>
+            시간별
+          </Text>
+          {savedLocations.status === 'READY' && selectedLocation !== null ? (
+            <Text style={styles.headerLocation} numberOfLines={1}>
+              {selectedLocation.displayName}
+            </Text>
+          ) : null}
         </View>
-      ) : null}
 
-      {savedLocations.status === 'ERROR' ? (
-        <View style={styles.section}>
-          <Text style={styles.text}>저장된 지역을 불러오지 못했습니다.</Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="저장 지역 다시 불러오기"
-            onPress={handleSavedLocationsRetry}
-            style={styles.button}
-          >
-            <Text style={styles.buttonLabel}>다시 시도</Text>
-          </Pressable>
-        </View>
-      ) : null}
+        {savedLocations.status === 'NOT_STARTED' ||
+        savedLocations.status === 'LOADING' ||
+        savedLocations.status === 'SELECTION_LOADING' ? (
+          <View style={[styles.card, styles.cardCentered]}>
+            <ActivityIndicator />
+            <Text style={styles.cardBody}>{describeSavedLocationsLoading(savedLocations.status)}</Text>
+          </View>
+        ) : null}
 
-      {savedLocations.status === 'READY' ? (
-        selectedLocation === null ? (
-          <Text style={styles.text}>시간별 날씨를 준비하고 있습니다.</Text>
-        ) : (
-          <View style={styles.section}>
-            <Text style={styles.locationName}>{selectedLocation.displayName}</Text>
+        {savedLocations.status === 'ERROR' ? (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>저장된 지역을 불러오지 못했습니다.</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="저장 지역 다시 불러오기"
+              onPress={handleSavedLocationsRetry}
+              style={styles.secondaryButton}
+            >
+              <Text style={styles.secondaryButtonLabel}>다시 시도</Text>
+            </Pressable>
+          </View>
+        ) : null}
 
-            {weatherQuery.status === 'IDLE' ? (
-              <Text style={styles.text}>시간별 날씨를 준비하고 있습니다.</Text>
-            ) : null}
+        {savedLocations.status === 'EMPTY' ? (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>저장된 지역이 없습니다.</Text>
+            <Text style={styles.cardBody}>지역을 추가하면 시간별 날씨를 볼 수 있어요.</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="지역 추가"
+              onPress={handleAddLocation}
+              style={styles.primaryButton}
+            >
+              <Text style={styles.primaryButtonLabel}>지역 추가</Text>
+            </Pressable>
+          </View>
+        ) : null}
 
-            {weatherQuery.status === 'LOADING' ? (
-              <Text style={styles.text}>선택한 지역의 시간별 날씨를 불러오는 중입니다.</Text>
+        {savedLocations.status === 'READY' && selectedLocation === null ? (
+          <View style={[styles.card, styles.cardCentered]}>
+            <ActivityIndicator />
+            <Text style={styles.cardBody}>시간별 날씨를 준비하고 있습니다.</Text>
+          </View>
+        ) : null}
+
+        {savedLocations.status === 'READY' && selectedLocation !== null ? (
+          <>
+            {weatherQuery.status === 'IDLE' || weatherQuery.status === 'LOADING' ? (
+              <View style={[styles.card, styles.cardCentered]}>
+                <ActivityIndicator />
+                <Text style={styles.cardBody}>선택한 지역의 시간별 날씨를 불러오는 중입니다.</Text>
+              </View>
             ) : null}
 
             {weatherQuery.status === 'ERROR' ? (
-              <View style={styles.section}>
-                <Text style={styles.text}>{describeWeatherError(weatherQuery.presentation)}</Text>
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>{describeWeatherError(weatherQuery.presentation)}</Text>
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="시간별 날씨 다시 시도"
                   onPress={handleWeatherRetry}
-                  style={styles.button}
+                  style={styles.secondaryButton}
                 >
-                  <Text style={styles.buttonLabel}>다시 시도</Text>
+                  <Text style={styles.secondaryButtonLabel}>다시 시도</Text>
                 </Pressable>
               </View>
             ) : null}
 
             {weatherQuery.status === 'SUCCESS' ? (
-              <View style={styles.section}>
-                {weatherQuery.data.data.hourly.length === 0 ? (
-                  <Text style={styles.text}>표시할 시간별 예보가 없습니다.</Text>
-                ) : (
-                  weatherQuery.data.data.hourly.map((item, index) =>
-                    renderHourlyRow(item, index, selectedLocation.timezone),
-                  )
-                )}
-              </View>
+              weatherQuery.data.data.hourly.length === 0 ? (
+                <View style={styles.card}>
+                  <Text style={styles.cardBody}>표시할 시간별 예보가 없습니다.</Text>
+                </View>
+              ) : (
+                <View style={styles.section}>
+                  {groupHourlyByLocalDate(weatherQuery.data.data.hourly, selectedLocation.timezone).map((group) =>
+                    renderDateGroup(group, selectedLocation.timezone),
+                  )}
+                </View>
+              )
             ) : null}
-          </View>
-        )
-      ) : null}
+          </>
+        ) : null}
+      </View>
     </ScrollView>
   );
 }
 
+const PAGE_BACKGROUND = '#EEF2F7';
+const CARD_BACKGROUND = '#FFFFFF';
+const TEXT_PRIMARY = '#16202B';
+const TEXT_SECONDARY = '#5B6472';
+const BORDER_COLOR = '#E1E7EF';
+const ACCENT_COLOR = '#2F6FED';
+const PILL_BACKGROUND = '#EEF2F7';
+const PILL_TEXT = '#33404E';
+
 const styles = StyleSheet.create({
-  container: {
+  screen: {
+    flex: 1,
+    backgroundColor: PAGE_BACKGROUND,
+  },
+  scrollContent: {
     flexGrow: 1,
+    alignItems: 'center',
+    paddingTop: 20,
+    paddingBottom: 96,
+  },
+  page: {
+    width: '100%',
+    maxWidth: 480,
+    paddingHorizontal: 18,
     gap: 16,
-    padding: 16,
   },
-  title: {
-    fontSize: 20,
-    fontWeight: '600',
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
-  text: {
-    fontSize: 16,
+  headerTitle: {
+    fontSize: 26,
+    fontWeight: '700',
+    color: TEXT_PRIMARY,
   },
-  locationName: {
-    fontSize: 18,
-    fontWeight: '600',
+  headerLocation: {
+    fontSize: 15,
+    color: TEXT_SECONDARY,
     flexShrink: 1,
-    flexWrap: 'wrap',
+    marginLeft: 12,
   },
-  section: {
-    gap: 12,
+  card: {
+    backgroundColor: CARD_BACKGROUND,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: BORDER_COLOR,
+    padding: 16,
+    gap: 10,
   },
-  button: {
+  cardCentered: {
+    alignItems: 'center',
+  },
+  cardTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: TEXT_PRIMARY,
+  },
+  cardBody: {
+    fontSize: 14,
+    color: TEXT_SECONDARY,
+  },
+  primaryButton: {
     minHeight: 48,
-    minWidth: 48,
-    alignSelf: 'flex-start',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 16,
+    backgroundColor: ACCENT_COLOR,
+    borderRadius: 10,
+    paddingHorizontal: 20,
+    alignSelf: 'flex-start',
   },
-  buttonLabel: {
-    fontSize: 16,
-  },
-  hourlyRow: {
-    gap: 4,
-    paddingVertical: 8,
-  },
-  hourlyTime: {
-    fontSize: 16,
+  primaryButtonLabel: {
+    fontSize: 15,
+    color: '#FFFFFF',
     fontWeight: '600',
   },
-  hourlyCondition: {
-    fontSize: 16,
+  secondaryButton: {
+    minHeight: 48,
+    minWidth: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: ACCENT_COLOR,
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    alignSelf: 'flex-start',
   },
-  hourlyTemperature: {
-    fontSize: 16,
-  },
-  hourlyDetail: {
+  secondaryButtonLabel: {
     fontSize: 14,
+    color: ACCENT_COLOR,
+    fontWeight: '600',
+  },
+  section: {
+    gap: 20,
+  },
+  dateGroup: {
+    gap: 10,
+  },
+  dateGroupHeading: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: TEXT_PRIMARY,
+  },
+  dateGroupCards: {
+    gap: 10,
+  },
+  hourlyCard: {
+    backgroundColor: CARD_BACKGROUND,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: BORDER_COLOR,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    gap: 8,
+  },
+  hourlyCardTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  hourlyCardTime: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: TEXT_PRIMARY,
+    minWidth: 48,
+  },
+  hourlyCardConditionGroup: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  hourlyCardGlyph: {
+    fontSize: 18,
+  },
+  hourlyCardConditionLabel: {
     flexShrink: 1,
+    fontSize: 14,
+    color: TEXT_SECONDARY,
+  },
+  hourlyCardTemperature: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: TEXT_PRIMARY,
+  },
+  hourlyDetailRow: {
+    flexDirection: 'row',
     flexWrap: 'wrap',
+    gap: 6,
+  },
+  hourlyDetailPill: {
+    backgroundColor: PILL_BACKGROUND,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  hourlyDetailPillText: {
+    fontSize: 12,
+    color: PILL_TEXT,
+    fontWeight: '600',
   },
 });

@@ -853,17 +853,36 @@
   [kma-alert-event-provider.md](./kma-alert-event-provider.md) 참고. 이 PR은 provider boundary만
   추가했으므로, `WeatherAlert[]` 정규화·활성-특보 folding과 `POST /weather` alert 연결은 이 PR
   이후에도 여전히 미구현입니다.
-- **PR #90**(현재 **OPEN Draft**, `feat/pr-90-today-visual-layout`, base
-  `main@dd2a006eb4def094f6fc5c391f464ca280073a8b`)는 모바일 Today(`오늘`) 화면을 기존
-  중앙정렬 debug 스타일 레이아웃에서 첫 제품 수준 visual layout으로 교체합니다 —
-  `apps/mobile/src/app/(tabs)/index.tsx`만 대상으로 하는 presentation 전용 작업입니다. 스크롤
+- **PR #90**(**MERGED**, main `081dea04b68452370faf5dea38f77abcfd498617`)는 모바일 Today(`오늘`)
+  화면을 기존 중앙정렬 debug 스타일 레이아웃에서 첫 제품 수준 visual layout으로 교체했습니다 —
+  `apps/mobile/src/app/(tabs)/index.tsx`만 대상으로 한 presentation 전용 작업입니다. 스크롤
   가능한 header(선택 저장 지역 표시)/현재 날씨 hero(AirKorea 대기질 pill 포함)/기존 4개
   `생활 한눈에` 카드/제한된 `시간별` 미리보기/`저장 지역` 관리 섹션 순서로 재구성했고, 기존
   저장 지역 추가·선택·삭제·재시도 동작과 모든 loading/empty/error 상태는 그대로 보존됩니다.
   `packages/contracts`, `packages/lifestyle-engine`, `packages/weather-core`, `apps/api`,
   saved-location store/persistence, dependency는 변경하지 않았고, 실제 provider 호출과 배포는
   수행하지 않았습니다. Owner의 로컬 synthetic `/weather` 서버 기반 visual checkpoint(~412×915)는
-  **완료(PASS)** — 실제 live API 호출 없음. PR은 Owner Ready gate까지 여전히 **OPEN Draft**로
-  유지됩니다.
+  **완료(PASS)** — 실제 live API 호출 없음.
+- **PR #91**(현재 **OPEN Draft**, `feat/pr-91-hourly-visual-layout`, base
+  `main@081dea04b68452370faf5dea38f77abcfd498617`)는 모바일 Hourly(`시간별`) 화면을 기존
+  수직 텍스트 나열 레이아웃에서 제품 수준 시간별 타임라인으로 교체합니다 —
+  `apps/mobile/src/app/(tabs)/hourly.tsx`와 `(tabs)/_layout.tsx`의 hourly route
+  `headerShown: false`만 대상으로 한 presentation 전용 작업입니다. 화면이 소유하는
+  header(`시간별` + READY일 때 선택 저장 지역 표시)/선택 저장 지역의 timezone(기기 timezone
+  아님) 기준 로컬 캘린더 날짜 그룹 heading(`8월 25일 (화)` 형식, `오늘`/`내일` 라벨 없음)/
+  compact 시간별 카드(시각·조건 글리프+한국어 라벨·온도 상단 행, optional 필드 pill 하단 행)
+  순서로 재구성했습니다. 날짜 그룹핑과 시간 표기 모두 새 화면-local
+  `Intl.DateTimeFormat`/`formatToParts` 기반 helper(`localDateKey`/`localDateLabel`/
+  `localTime`/`groupHourlyByLocalDate`)로 구현했고, 원본 contract 순서는 그룹 간·그룹 내 모두
+  보존하며, 날짜 key는 표시 텍스트와 독립적으로 계산합니다. 기존 saved-location
+  (`NOT_STARTED`/`LOADING`/`SELECTION_LOADING`/`EMPTY`/`READY`/`ERROR`)과 weather-query
+  (`IDLE`/`LOADING`/`SUCCESS`/`ERROR`, 네 가지 고정 오류 문구, 명시적 재시도) 상태 처리와
+  `null` 비노출·`0` 값 노출 정책은 그대로 보존됩니다. `packages/contracts`,
+  `packages/weather-core`, `apps/api`, weather-query/saved-location store·persistence,
+  dependency는 변경하지 않았고, 실제 provider 호출과 배포는 수행하지 않았습니다. Owner의 로컬
+  synthetic `/weather` 서버 기반 visual checkpoint(~412×915)는 **완료(PASS)** — 선택 저장 지역
+  timezone 기준 자정 경계 날짜 그룹핑(`8월 25일 (화)` 23:00 종료 → `8월 26일 (수)` 00:00 시작)을
+  시각적으로 확인했으며, 실제 live API 호출은 없습니다. PR은 Owner Ready gate 전까지 계속 OPEN
+  Draft로 유지됩니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
