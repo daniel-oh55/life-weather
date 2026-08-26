@@ -905,7 +905,15 @@
   `packages/contracts`, `packages/weather-core`, `apps/api`,
   weather-query/saved-location store·persistence, dependency·env·native config는 변경하지
   않았고, 실제 provider 호출과 배포는 수행하지 않았습니다. Owner의 로컬 synthetic `/weather`
-  서버 기반 visual checkpoint(~412×915)는 **대기 중**이며, PR은 Owner Ready gate 전까지 계속
+  서버 기반 visual checkpoint(~412×915)는 **완료(PASS)** — 화면 소유 header(중복 Tabs header
+  없음), presenter 고정 순서(우산 → 옷차림 → 마스크 → 빨래) 4개 카드 위계,
+  `왜 이렇게 판단했나요`/`이렇게 해보세요` 구분, 긴 한국어 정책 문구의 자연스러운 줄바꿈
+  (시각적 잘림·고정 높이 clipping 없음), 마지막 빨래 카드가 고정 하단 탭 바 위로 완전히
+  스크롤되는 bottom scroll safety를 시각적으로 확인했습니다. 이 checkpoint에 사용된 synthetic
+  응답은 non-null `additionalRecommendation`을 만들지 않았으므로 optional `추가 안내` 블록은
+  이번 checkpoint에서 시각적으로 직접 확인되지 않았습니다 — 조건부 렌더링(non-null일 때만 노출,
+  문구 원문 보존, null 카드에서 안내 미생성)은 기존 test suite가 이미 검증하므로 non-blocking
+  입니다. 실제 live KMA/AirKorea/production API 호출은 없었고, PR은 Owner Ready gate 전까지 계속
   OPEN Draft로 유지됩니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
