@@ -945,7 +945,15 @@
   weather-query/saved-location store·lifecycle·persistence, dependency·env·native config는
   변경하지 않았고 새 dependency(chart/SVG 라이브러리 포함)도 추가하지 않았습니다. 실제 provider
   호출과 배포는 수행하지 않았습니다. Owner의 로컬 synthetic `/weather` 서버 기반 visual
-  checkpoint(~412×915, 자정을 넘는 확장 synthetic 데이터)는 **미완료(pending)** 이며, PR은 Owner
-  Ready gate 전까지 계속 OPEN Draft로 유지됩니다.
+  checkpoint(~412×915, 자정을 넘는 확장 synthetic 데이터)는 **완료**되었고 결과는 **PASS**입니다 —
+  고정 label rail, 연결 온도선, 시간별 column 정렬, 자정 날짜 경계 전환, `473e1df`의 label-rail
+  폭 보정(`강수확률` 한 줄 표시)이 모두 확인되었습니다. 이 checkpoint는 Expo Web에서만
+  수행되었으며, Expo Web 특성상 가로 스크롤이 임의 offset에서 멈춰 고정 label rail 오른쪽에 이전
+  column의 일부가 겹쳐 보이는 현상이 있었습니다 — 따라서 `snapToInterval`/`snapToAlignment`
+  기반 column 경계 스냅은 이 checkpoint로 독립 검증되지 않았습니다(production 코드는 여전히
+  단일 horizontal `ScrollView`에 `snapToInterval=72`/`snapToAlignment="start"`/
+  `decelerationRate="fast"`를 유지). 네이티브 Android 스냅 동작 확인은 이후 native QA 항목으로
+  남습니다. 실제 live API는 사용되지 않았습니다. PR은 Owner Ready gate 전까지 계속 OPEN Draft로
+  유지됩니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
