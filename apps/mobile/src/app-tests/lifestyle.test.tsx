@@ -46,6 +46,22 @@ vi.mock('expo-router', () => ({
 }));
 
 // ---------------------------------------------------------------------------
+// The shared saved-location switcher is replaced with a marker component. The region button, its
+// bottom sheet, and the select/delete/add mutations behind them are that component's own contract
+// (covered by `../components/saved-location-switcher.test.tsx`); what this screen still owns — and
+// what is asserted below — is that it renders exactly one switcher and hands it the same exact
+// snapshot it hands `useMobileWeatherQuery`.
+// ---------------------------------------------------------------------------
+
+const MockSavedLocationSwitcher = vi.hoisted(() => function MockSavedLocationSwitcher(): null {
+  return null;
+});
+
+vi.mock('../components/saved-location-switcher', () => ({
+  SavedLocationSwitcher: MockSavedLocationSwitcher,
+}));
+
+// ---------------------------------------------------------------------------
 // Both read-only hooks and the presenter are replaced with call-recording mocks: this screen
 // owns only presentation of whatever each mock returns, never their own contracts.
 // ---------------------------------------------------------------------------
@@ -286,6 +302,27 @@ function press(element: ElementLike): void {
   (element.props.onPress as () => void)();
 }
 
+/** Every shared saved-location switcher the screen rendered, in render order. */
+function switchers(root: unknown): ElementLike[] {
+  const collected: ElementLike[] = [];
+  walk(root, (element) => {
+    if (element.type === MockSavedLocationSwitcher) {
+      collected.push(element);
+    }
+  });
+  return collected;
+}
+
+/**
+ * Asserts the screen delegates its region control to exactly one shared switcher, and passes that
+ * switcher the *exact* saved-location snapshot reference (never a copy, and never a re-read).
+ */
+function expectSingleSwitcher(root: unknown, snapshot: unknown): void {
+  const rendered = switchers(root);
+  expect(rendered).toHaveLength(1);
+  expect(rendered[0]?.props.savedLocations).toBe(snapshot);
+}
+
 async function loadScreen() {
   const { default: LifestyleScreen } = await import('../app/(tabs)/lifestyle');
   return function render() {
@@ -393,15 +430,36 @@ describe('screen-owned header', () => {
     }
   });
 
-  it('27. shows the selected saved location beside the title only once READY', async () => {
-    useMobileSavedLocationsMock.mockReturnValue(loadingSnapshot());
-    useMobileWeatherQueryMock.mockReturnValue(idleQuery());
-    let render = await loadScreen();
-    expect(texts(render())).not.toContain('Synthetic a');
+  it('27. places exactly one shared saved-location switcher beside the title, in every state', async () => {
+    for (const snapshot of [
+      loadingSnapshot(),
+      emptySnapshot(),
+      savedLocationErrorSnapshot(),
+      readySnapshot([savedLocationRecord('a', 0)], 'a'),
+    ]) {
+      useMobileSavedLocationsMock.mockReturnValue(snapshot);
+      useMobileWeatherQueryMock.mockReturnValue(idleQuery());
+      const render = await loadScreen();
 
-    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
-    render = await loadScreen();
-    expect(texts(render())).toContain('Synthetic a');
+      const element = render();
+      expectSingleSwitcher(element, snapshot);
+      // The region name itself belongs to the switcher now — never to this screen's own Text.
+      expect(texts(element)).not.toContain('Synthetic a');
+    }
+  });
+
+  it('28. passes the switcher the same exact snapshot it passes useMobileWeatherQuery', async () => {
+    const snapshot = readySnapshot([savedLocationRecord('a', 0)], 'a');
+    useMobileSavedLocationsMock.mockReturnValue(snapshot);
+    useMobileWeatherQueryMock.mockReturnValue(idleQuery());
+    const render = await loadScreen();
+
+    const element = render();
+
+    expect(useMobileWeatherQueryMock).toHaveBeenCalledWith(snapshot);
+    expect(switchers(element)[0]?.props.savedLocations).toBe(
+      useMobileWeatherQueryMock.mock.calls[0]?.[0],
+    );
   });
 });
 
@@ -499,24 +557,26 @@ describe('READY with missing selected record', () => {
 // ---------------------------------------------------------------------------
 
 describe('READY + weather query states', () => {
-  it('10. shows the preparing copy and the selected location name while the weather query is IDLE', async () => {
-    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
+  it('10. shows the preparing copy and keeps the region switcher while the weather query is IDLE', async () => {
+    const snapshot = readySnapshot([savedLocationRecord('a', 0)], 'a');
+    useMobileSavedLocationsMock.mockReturnValue(snapshot);
     useMobileWeatherQueryMock.mockReturnValue(idleQuery());
     const render = await loadScreen();
 
-    const rendered = texts(render());
-    expect(rendered).toContain('생활날씨를 준비하고 있습니다.');
-    expect(rendered).toContain('Synthetic a');
+    const element = render();
+    expect(texts(element)).toContain('생활날씨를 준비하고 있습니다.');
+    expectSingleSwitcher(element, snapshot);
   });
 
-  it('11. shows the loading copy and the selected location name while the weather query is LOADING', async () => {
-    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
+  it('11. shows the loading copy and keeps the region switcher while the weather query is LOADING', async () => {
+    const snapshot = readySnapshot([savedLocationRecord('a', 0)], 'a');
+    useMobileSavedLocationsMock.mockReturnValue(snapshot);
     useMobileWeatherQueryMock.mockReturnValue(loadingQuery('a'));
     const render = await loadScreen();
 
-    const rendered = texts(render());
-    expect(rendered).toContain('선택한 지역의 생활날씨를 불러오는 중입니다.');
-    expect(rendered).toContain('Synthetic a');
+    const element = render();
+    expect(texts(element)).toContain('선택한 지역의 생활날씨를 불러오는 중입니다.');
+    expectSingleSwitcher(element, snapshot);
   });
 });
 
@@ -530,8 +590,9 @@ describe('READY + weather ERROR', () => {
     ['NETWORK', '날씨 정보를 불러오지 못했습니다. 네트워크 연결을 확인해 주세요.'],
     ['API', '날씨 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.'],
     ['INVALID_RESPONSE', '날씨 정보를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.'],
-  ] as const)('12. shows the fixed %s copy with the selected location name, a retry control, and no raw detail', async (presentation, copy) => {
-    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
+  ] as const)('12. shows the fixed %s copy with the region switcher, a retry control, and no raw detail', async (presentation, copy) => {
+    const snapshot = readySnapshot([savedLocationRecord('a', 0)], 'a');
+    useMobileSavedLocationsMock.mockReturnValue(snapshot);
     useMobileWeatherQueryMock.mockReturnValue(errorQuery('a', presentation));
     const render = await loadScreen();
 
@@ -539,7 +600,7 @@ describe('READY + weather ERROR', () => {
     const rendered = texts(element).join('\n');
 
     expect(rendered).toContain(copy);
-    expect(rendered).toContain('Synthetic a');
+    expectSingleSwitcher(element, snapshot);
     expect(rendered).not.toContain(presentation);
     expect(pressableByLabel(element, '생활날씨 다시 시도')).toBeDefined();
   });
@@ -697,23 +758,26 @@ describe('READY + SUCCESS', () => {
     expect(rendered.join('\n')).not.toContain('생활정보 없음');
   });
 
-  it('19. shows the selected location name in every READY weather state', async () => {
-    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
+  it('19. keeps the region switcher in every READY weather state', async () => {
+    const snapshot = readySnapshot([savedLocationRecord('a', 0)], 'a');
+    useMobileSavedLocationsMock.mockReturnValue(snapshot);
     for (const query of [idleQuery(), loadingQuery('a'), successQuery('a', successResponse('a'))]) {
       useMobileWeatherQueryMock.mockReturnValue(query);
       const render = await loadScreen();
-      expect(texts(render())).toContain('Synthetic a');
+      expectSingleSwitcher(render(), snapshot);
     }
   });
 
-  it('20. shows the selected display name exactly once on SUCCESS', async () => {
-    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
+  it('20. renders exactly one region switcher and no display-name text of its own on SUCCESS', async () => {
+    const snapshot = readySnapshot([savedLocationRecord('a', 0)], 'a');
+    useMobileSavedLocationsMock.mockReturnValue(snapshot);
     useMobileWeatherQueryMock.mockReturnValue(successQuery('a', successResponse('a')));
     const render = await loadScreen();
 
-    const rendered = texts(render());
+    const element = render();
 
-    expect(rendered.filter((text) => text === 'Synthetic a')).toHaveLength(1);
+    expectSingleSwitcher(element, snapshot);
+    expect(texts(element).filter((text) => text === 'Synthetic a')).toHaveLength(0);
   });
 
   it('21. never renders requestId, url, coordinates, grid, or provider/source/reasonCode/policyVersion', async () => {

@@ -85,6 +85,22 @@ vi.mock('expo-router', () => ({
 }));
 
 // ---------------------------------------------------------------------------
+// The shared saved-location switcher is replaced with a marker component. The region button, its
+// bottom sheet, and the select/delete/add mutations behind them are that component's own contract
+// (covered by `../components/saved-location-switcher.test.tsx`); what this screen still owns — and
+// what is asserted below — is that it renders exactly one switcher and hands it the same exact
+// snapshot it hands `useMobileWeatherQuery`.
+// ---------------------------------------------------------------------------
+
+const MockSavedLocationSwitcher = vi.hoisted(() => function MockSavedLocationSwitcher(): null {
+  return null;
+});
+
+vi.mock('../components/saved-location-switcher', () => ({
+  SavedLocationSwitcher: MockSavedLocationSwitcher,
+}));
+
+// ---------------------------------------------------------------------------
 // The weather-query React hook is replaced with a call-recording mock so `HomeScreen` can be
 // invoked as a plain function without ever running the hook's real `useEffect` (there is no real
 // renderer/dispatcher in this Node-based setup). The production weather-query store is replaced
@@ -204,6 +220,27 @@ function press(element: ElementLike): void {
   (element.props.onPress as () => void)();
 }
 
+/** Every shared saved-location switcher the screen rendered, in render order. */
+function switchers(root: unknown): ElementLike[] {
+  const collected: ElementLike[] = [];
+  walk(root, (element) => {
+    if (element.type === MockSavedLocationSwitcher) {
+      collected.push(element);
+    }
+  });
+  return collected;
+}
+
+/**
+ * Asserts the screen delegates its region control to exactly one shared switcher, and passes that
+ * switcher the *exact* saved-location snapshot reference (never a copy, and never a re-read).
+ */
+function expectSingleSwitcher(root: unknown, snapshot: unknown): void {
+  const rendered = switchers(root);
+  expect(rendered).toHaveLength(1);
+  expect(rendered[0]?.props.savedLocations).toBe(snapshot);
+}
+
 /** Let every pending microtask — and therefore any settled mutation — run to completion. */
 async function flush(): Promise<void> {
   await new Promise((resolve) => {
@@ -288,6 +325,40 @@ describe('header', () => {
 
     expect(texts(render())).toContain('오늘');
   });
+
+  it('places exactly one shared saved-location switcher beside the title, in every state', async () => {
+    const render = await loadScreen();
+    const { mobileSavedLocationApplicationStore } = await import(
+      '../locations/mobile-saved-location-application-production'
+    );
+
+    expectSingleSwitcher(render(), mobileSavedLocationApplicationStore.getSnapshot());
+
+    mockStoredEnvelope('a', 'b');
+    await hydrateAndInitialize();
+    expectSingleSwitcher(render(), mobileSavedLocationApplicationStore.getSnapshot());
+  });
+
+  it('passes the switcher the same exact snapshot it passes useMobileWeatherQuery', async () => {
+    mockStoredEnvelope('a', 'b');
+    const render = await loadScreen();
+
+    await hydrateAndInitialize();
+    const element = render();
+
+    const passedToWeatherQuery = useMobileWeatherQueryMock.mock.calls.at(-1)?.[0];
+    expect(passedToWeatherQuery).toBeDefined();
+    expect(switchers(element)[0]?.props.savedLocations).toBe(passedToWeatherQuery);
+  });
+
+  it('renders no selected-region name of its own, at any level of the screen', async () => {
+    mockStoredEnvelope('a', 'b');
+    const render = await loadScreen();
+
+    await hydrateAndInitialize();
+
+    expect(texts(render()).some((text) => text.startsWith('Synthetic '))).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -347,23 +418,37 @@ describe('saved-location states', () => {
     expect(pressables(element)[0]?.props.disabled).toBe(false);
   });
 
-  it('shows the selected saved location in the header and every row with its controls when READY', async () => {
+  it('delegates READY saved-location management to the shared switcher, with no bottom section of its own', async () => {
     mockStoredEnvelope('a', 'b', 'c');
     const render = await loadScreen();
+    const { mobileSavedLocationApplicationStore } = await import(
+      '../locations/mobile-saved-location-application-production'
+    );
 
     await hydrateAndInitialize();
     const element = render();
+    const rendered = texts(element);
 
-    // 'a' is sortOrder 0, so it resolves as the fallback selection.
-    expect(texts(element)).toContain('Synthetic a');
-    expect(texts(element)).toContain('저장 지역');
-    expect(texts(element)).toEqual(
-      expect.arrayContaining(['Synthetic a', 'Synthetic b', 'Synthetic c', '지역 추가']),
+    // The old READY-only "저장 지역" card — rows, 선택/선택됨, 삭제, and its own 지역 추가 — is gone;
+    // exactly one switcher, holding the real committed snapshot, owns those actions now.
+    expectSingleSwitcher(element, mobileSavedLocationApplicationStore.getSnapshot());
+    expect(rendered).not.toContain('저장 지역');
+    expect(rendered).not.toContain('지역 추가');
+    expect(rendered).not.toContain('선택');
+    expect(rendered).not.toContain('선택됨');
+    expect(rendered).not.toContain('삭제');
+    expect(
+      pressables(element).map((pressable) => pressable.props.accessibilityLabel),
+    ).not.toEqual(expect.arrayContaining(['Synthetic a 선택됨', 'Synthetic b 선택']));
+  });
+
+  it('never dispatches select or remove itself once the shared switcher owns them', async () => {
+    const source = await import('node:fs/promises').then((fs) =>
+      fs.readFile(new URL('../app/(tabs)/index.tsx', import.meta.url), 'utf-8'),
     );
-    expect(pressableByLabel(element, 'Synthetic a 선택됨').props.disabled).toBe(true);
-    expect(pressableByLabel(element, 'Synthetic b 선택').props.disabled).toBe(false);
-    expect(pressableByLabel(element, 'Synthetic c 선택').props.disabled).toBe(false);
-    expect(pressableByLabel(element, 'Synthetic a 삭제')).toBeDefined();
+
+    expect(source).not.toContain('.select(');
+    expect(source).not.toContain('.remove(');
   });
 
   it('renders the error card with a retry control and no raw error detail', async () => {
@@ -424,17 +509,7 @@ describe('"지역 추가" entry point', () => {
     expect(routerMock.back).toHaveBeenCalledTimes(0);
   });
 
-  it('navigates to /locations when pressed from the READY 저장 지역 card', async () => {
-    mockStoredEnvelope('a');
-    const render = await loadScreen();
-
-    await hydrateAndInitialize();
-    press(pressableByLabel(render(), '지역 추가'));
-
-    expect(routerMock.push).toHaveBeenCalledWith('/locations');
-  });
-
-  it('does not appear outside EMPTY/READY', async () => {
+  it('does not appear outside EMPTY — READY region management belongs to the switcher', async () => {
     asyncStorageMock.getItem.mockRejectedValue(new Error('synthetic storage failure'));
     const render = await loadScreen();
 
@@ -445,6 +520,12 @@ describe('"지역 추가" entry point', () => {
     );
     await mobileSavedLocationHydrationStore.hydrate();
     expect(() => pressableByLabel(render(), '지역 추가')).toThrow();
+
+    vi.resetModules();
+    mockStoredEnvelope('a');
+    const readyRender = await loadScreen();
+    await hydrateAndInitialize();
+    expect(() => pressableByLabel(readyRender(), '지역 추가')).toThrow();
   });
 });
 
@@ -481,166 +562,10 @@ describe('saved-location retry', () => {
     await flush();
     await mobileSavedLocationApplicationStore.initializeSelectedLocation();
 
-    expect(texts(render())).toContain('Synthetic a');
-    expect(pressableByLabel(render(), 'Synthetic a 선택됨')).toBeDefined();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// selecting a saved location.
-// ---------------------------------------------------------------------------
-
-describe('select', () => {
-  it('persists the selection and moves the "선택됨" indicator', async () => {
-    mockStoredEnvelope('a', 'b');
-    const render = await loadScreen();
-
-    await hydrateAndInitialize();
-    press(pressableByLabel(render(), 'Synthetic b 선택'));
-    await flush();
-
-    const element = render();
-    expect(pressableByLabel(element, 'Synthetic b 선택됨').props.disabled).toBe(true);
-    expect(pressableByLabel(element, 'Synthetic a 선택').props.disabled).toBe(false);
-    expect(asyncStorageMock.setItem).toHaveBeenCalledTimes(1);
-    const [key, value] = asyncStorageMock.setItem.mock.calls[0] as [string, string];
-    expect(key).toBe(SELECTED_KEY);
-    expect(JSON.parse(value)).toEqual({ version: 1, selectedLocationId: 'b' });
-  });
-
-  it('disables every select and delete control while a write is in flight', async () => {
-    mockStoredEnvelope('a', 'b');
-    let resolveSetItem: () => void = () => {};
-    asyncStorageMock.setItem.mockImplementation(
-      () =>
-        new Promise<void>((resolve) => {
-          resolveSetItem = () => resolve();
-        }),
-    );
-
-    const render = await loadScreen();
-    await hydrateAndInitialize();
-    press(pressableByLabel(render(), 'Synthetic b 선택'));
-
-    const during = render();
-    const savedLocationButtons = pressables(during).filter((pressable) =>
-      ['Synthetic a 선택', 'Synthetic b 선택됨', 'Synthetic a 삭제', 'Synthetic b 삭제'].includes(
-        pressable.props.accessibilityLabel as string,
-      ),
-    );
-    expect(savedLocationButtons.length).toBeGreaterThan(0);
-    expect(savedLocationButtons.every((pressable) => pressable.props.disabled === true)).toBe(true);
-
-    resolveSetItem();
-    await flush();
-  });
-
-  it('shows generic copy when the selection write fails and keeps the prior selection', async () => {
-    mockStoredEnvelope('a', 'b');
-    asyncStorageMock.setItem.mockRejectedValue(new Error('synthetic native write failure'));
-
-    const render = await loadScreen();
-    await hydrateAndInitialize();
-    press(pressableByLabel(render(), 'Synthetic b 선택'));
-    await flush();
-
-    const element = render();
-    const rendered = texts(element).join('\n');
-    expect(rendered).toContain('저장 지역 변경을 저장하지 못했습니다.');
-    expect(rendered).not.toContain('STORAGE_WRITE_FAILED');
-    expect(rendered).not.toContain('synthetic native write failure');
-    expect(pressableByLabel(element, 'Synthetic a 선택됨')).toBeDefined();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// deleting a saved location.
-// ---------------------------------------------------------------------------
-
-describe('delete', () => {
-  it('persists the removal and re-renders the real remaining collection', async () => {
-    mockStoredEnvelope('a', 'b', 'c');
-    const render = await loadScreen();
-
-    await hydrateAndInitialize();
-    press(pressableByLabel(render(), 'Synthetic b 삭제'));
-    await flush();
-
-    const element = render();
-    expect(texts(element)).toEqual(
-      expect.arrayContaining(['Synthetic a', 'Synthetic c']),
-    );
-    expect(texts(element)).not.toContain('Synthetic b');
-  });
-
-  it('moves the selected indicator to the documented fallback when the selected location is deleted', async () => {
-    mockStoredEnvelope('a', 'b', 'c');
-    const render = await loadScreen();
-
-    await hydrateAndInitialize();
-    // 'a' is selected by fallback; deleting it should move selection to 'b' (same post-delete index).
-    press(pressableByLabel(render(), 'Synthetic a 삭제'));
-    await flush();
-
-    const element = render();
-    expect(pressableByLabel(element, 'Synthetic b 선택됨')).toBeDefined();
-    expect(pressableByLabel(element, 'Synthetic c 선택').props.disabled).toBe(false);
-  });
-
-  it('shows the empty state (with only "지역 추가") after the last saved location is deleted, without removeItem', async () => {
-    mockStoredEnvelope('a');
-    const render = await loadScreen();
-
-    await hydrateAndInitialize();
-    press(pressableByLabel(render(), 'Synthetic a 삭제'));
-    await flush();
-
-    const element = render();
-    expect(texts(element)).toContain('저장된 지역이 없습니다.');
-    expect(pressables(element).map((pressable) => pressable.props.accessibilityLabel)).toEqual([
-      '지역 추가',
-    ]);
-    expect(asyncStorageMock.removeItem).toHaveBeenCalledTimes(0);
-  });
-
-  it('shows generic copy when the write fails and keeps the collection unchanged', async () => {
-    mockStoredEnvelope('a', 'b');
-    asyncStorageMock.setItem.mockRejectedValue(new Error('synthetic native write failure'));
-
-    const render = await loadScreen();
-    await hydrateAndInitialize();
-    press(pressableByLabel(render(), 'Synthetic b 삭제'));
-    await flush();
-
-    const element = render();
-    const rendered = texts(element).join('\n');
-
-    expect(rendered).toContain('저장 지역 변경을 저장하지 못했습니다.');
-    expect(rendered).not.toContain('STORAGE_WRITE_FAILED');
-    expect(rendered).not.toContain('synthetic native write failure');
-    expect(rendered).not.toContain(SAVED_KEY);
-    expect(rendered).not.toContain('37.5');
-    expect(rendered).not.toContain('127');
-  });
-
-  it('does not use isCurrent as the selected indicator', async () => {
-    // A GPS-current record that is not the resolved selectedLocationId must not show "선택됨".
-    const currentButNotSelected = { ...storedRecord('a', 0), isCurrent: true };
-    const selected = storedRecord('b', 1);
-    asyncStorageMock.getItem.mockImplementation(async (key: string) =>
-      key === SAVED_KEY
-        ? JSON.stringify({ version: 1, locations: [currentButNotSelected, selected] })
-        : key === SELECTED_KEY
-          ? JSON.stringify({ version: 1, selectedLocationId: 'b' })
-          : null,
-    );
-
-    const render = await loadScreen();
-    await hydrateAndInitialize();
-    const element = render();
-
-    expect(pressableByLabel(element, 'Synthetic a 선택').props.disabled).toBe(false);
-    expect(pressableByLabel(element, 'Synthetic b 선택됨')).toBeDefined();
+    const recovered = mobileSavedLocationApplicationStore.getSnapshot();
+    expect(recovered.status).toBe('READY');
+    expect(texts(render())).not.toContain('저장된 지역을 불러오지 못했습니다.');
+    expectSingleSwitcher(render(), recovered);
   });
 });
 
@@ -902,7 +827,7 @@ describe('weather hero', () => {
     expect(rendered).not.toContain(presentation);
   });
 
-  it('calls the production store\'s retry exactly once per press and keeps saved-location management usable', async () => {
+  it('calls the production store\'s retry exactly once per press and keeps the region switcher usable', async () => {
     mockStoredEnvelope('a', 'b');
     useMobileWeatherQueryMock.mockReturnValue({
       status: 'ERROR',
@@ -911,16 +836,16 @@ describe('weather hero', () => {
     });
 
     const render = await loadScreen();
+    const { mobileSavedLocationApplicationStore } = await import(
+      '../locations/mobile-saved-location-application-production'
+    );
     await hydrateAndInitialize();
-    let element = render();
-    press(pressableByLabel(element, '날씨 다시 시도'));
+    press(pressableByLabel(render(), '날씨 다시 시도'));
 
     expect(mobileWeatherQueryStoreMock.retry).toHaveBeenCalledTimes(1);
 
-    // Saved-location controls remain reachable despite the weather error.
-    element = render();
-    expect(pressableByLabel(element, 'Synthetic b 선택').props.disabled).toBe(false);
-    expect(pressableByLabel(element, 'Synthetic a 삭제')).toBeDefined();
+    // Region switching remains reachable despite the weather error.
+    expectSingleSwitcher(render(), mobileSavedLocationApplicationStore.getSnapshot());
   });
 
   it('does not render weather content outside READY, even if the query mock reports SUCCESS', async () => {

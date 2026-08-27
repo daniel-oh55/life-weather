@@ -32,7 +32,10 @@ export default function SettingsScreen() {
           지역
         </Text>
         <Text style={styles.text}>새 지역은 지역 검색 화면에서 추가할 수 있습니다.</Text>
-        <Text style={styles.text}>지역 선택과 삭제는 오늘 화면에서 할 수 있습니다.</Text>
+        <Text style={styles.text}>
+          저장한 지역의 선택과 삭제는 오늘, 시간별, 생활날씨, 상세기상 화면 상단의 지역 버튼에서 할 수
+          있습니다.
+        </Text>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="지역 추가"

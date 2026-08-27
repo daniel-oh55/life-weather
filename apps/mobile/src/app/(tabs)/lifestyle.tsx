@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { SavedLocationSwitcher } from '../../components/saved-location-switcher';
 import {
   createMobileLifestyleOverview,
   type MobileLifestyleCard,
@@ -127,11 +128,7 @@ export default function LifestyleScreen() {
           <Text accessibilityRole="header" style={styles.headerTitle}>
             생활날씨
           </Text>
-          {savedLocations.status === 'READY' && selectedLocation !== null ? (
-            <Text style={styles.headerLocation} numberOfLines={1}>
-              {selectedLocation.displayName}
-            </Text>
-          ) : null}
+          <SavedLocationSwitcher savedLocations={savedLocations} />
         </View>
 
         <Text style={styles.intro}>오늘 생활에 필요한 준비를 항목별로 확인하세요.</Text>
@@ -260,12 +257,6 @@ const styles = StyleSheet.create({
     fontSize: 26,
     fontWeight: '700',
     color: TEXT_PRIMARY,
-  },
-  headerLocation: {
-    fontSize: 15,
-    color: TEXT_SECONDARY,
-    flexShrink: 1,
-    marginLeft: 12,
   },
   intro: {
     fontSize: 14,

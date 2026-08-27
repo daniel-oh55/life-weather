@@ -195,7 +195,12 @@ describe('region section', () => {
     const rendered = texts(render());
 
     expect(rendered).toContain('새 지역은 지역 검색 화면에서 추가할 수 있습니다.');
-    expect(rendered).toContain('지역 선택과 삭제는 오늘 화면에서 할 수 있습니다.');
+    // Selection/removal moved out of Today and into the shared top-right region button on every
+    // weather screen, so this line must point there rather than at the old Today-only card.
+    expect(rendered).toContain(
+      '저장한 지역의 선택과 삭제는 오늘, 시간별, 생활날씨, 상세기상 화면 상단의 지역 버튼에서 할 수 있습니다.',
+    );
+    expect(rendered.some((text) => text.includes('오늘 화면에서 할 수 있습니다'))).toBe(false);
   });
 
   it('renders an accessible "지역 추가" button', async () => {

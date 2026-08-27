@@ -954,8 +954,7 @@
   `decelerationRate="fast"`를 유지). 네이티브 Android 스냅 동작 확인은 이후 native QA 항목으로
   남습니다. 실제 live API는 사용되지 않았습니다. Owner Ready gate 이후 merge되어 현재 main에
   포함되어 있습니다.
-- **PR #94**(현재 **OPEN Draft**, `feat/pr-94-details-visual-layout`, base
-  `main@5b4cf8323d73ea3e2fbc177565c80393a207d151`)는 모바일 Details(`상세기상`) 화면을 기존
+- **PR #94**(**MERGED**, new main `c5e7e2ae431927ae139fe984d62a8f91d12a6dc1`)는 모바일 Details(`상세기상`) 화면을 기존
   개발자용 텍스트 나열 레이아웃에서 제품 수준 상세기상 화면으로 교체합니다 —
   `apps/mobile/src/app/(tabs)/details.tsx`와 `(tabs)/_layout.tsx`의 details route
   `headerShown: false`만 대상으로 한 presentation 전용 작업입니다. 화면이 소유하는
@@ -986,7 +985,34 @@
   검증되지 않았습니다 — alert card title/severityLabel/typeLabel/issuedAtLabel/optional
   effectiveAtLabel·expiresAtLabel/areasLabel/optional description/presenter 값 보존/nullable
   optional 필드 생략/alert-first 순서는 기존 test suite가 이미 검증하므로 non-blocking입니다.
-  실제 live KMA/AirKorea/production API 호출은 없었습니다. PR은 Owner Ready gate 전까지 계속 OPEN
-  Draft로 유지됩니다.
+  실제 live KMA/AirKorea/production API 호출은 없었습니다. Owner Ready gate 이후 merge되어 현재
+  main에 포함되어 있습니다.
+- **PR #95**(현재 **OPEN Draft**, `feat/pr-95-saved-location-switcher`, base
+  `main@c5e7e2ae431927ae139fe984d62a8f91d12a6dc1`)는 저장 지역 전환·추가를 네 개의 주요 날씨
+  화면 어디에서나 할 수 있도록 공용 우상단 지역 선택기를 추가합니다 — 새 presentation 컴포넌트
+  `apps/mobile/src/components/saved-location-switcher.tsx`와 네 화면(`(tabs)/index.tsx`,
+  `hourly.tsx`, `lifestyle.tsx`, `details.tsx`)의 header 우측, 그리고 Settings의 지역 안내 문구만
+  대상으로 한 UI 작업입니다. 각 화면의 기존 좌측 title은 유지한 채 기존의 수동적인 선택 지역
+  텍스트를 `중구 ▾` 형태의 pressable 버튼으로 교체했고, 버튼을 누르면 React Native 내장 `Modal`
+  기반 bottom-sheet 형태의 세로 목록(`지역 선택` header, 닫기 컨트롤, backdrop 및 Android
+  `onRequestClose` 닫기)이 열립니다. 목록은 snapshot의 기존 배열 순서를 그대로 렌더링하고(정렬·
+  중복 제거·재정렬 없음), 선택된 행은 체크 표시와 `accessibilityState.selected`로 표시하며 중복
+  select를 발행하지 않습니다. 다른 지역 선택은 기존 `select(locationId)`, 삭제는 기존
+  `remove(locationId)`만 호출하고, `+ 지역 추가`는 sheet를 닫은 뒤 기존 `/locations` 화면으로
+  이동합니다. 성공한 select만 sheet를 닫고, 실패 시에는 error kind를 노출하지 않는 고정 문구
+  (`지역을 변경하지 못했습니다.` / `지역을 삭제하지 못했습니다.`)만 표시하며 자동 재시도는 하지
+  않습니다. `writeStatus === 'SAVING'`일 때는 select/삭제/지역 추가 컨트롤이 비활성화됩니다.
+  컴포넌트는 화면이 이미 읽어 `useMobileWeatherQuery`에 넘기는 **바로 그 snapshot**을 prop으로
+  받으므로 header를 위한 두 번째 store 구독이 생기지 않습니다. Today 화면의 기존 READY 전용 하단
+  `저장 지역` 관리 섹션(선택/선택됨·삭제·지역 추가)과 그에 딸린 로컬 write-failure 상태는
+  중복이므로 제거했고, EMPTY 상태의 `지역 추가` CTA와 hero·`생활 한눈에`·시간별 preview·weather
+  오류 동작은 그대로입니다. Settings의 `지역 선택과 삭제는 오늘 화면에서 할 수 있습니다.` 문구는
+  네 날씨 화면 상단의 지역 버튼을 가리키도록 수정했습니다. saved-location application store,
+  persistence, hydration, selected-location 초기화, `useMobileSavedLocations`, weather-query
+  lifecycle(`(tabs)/_layout.tsx`), `/locations` 검색·추가 계약, contracts, `weather-core`,
+  `lifestyle-engine`, `apps/api`, dependency·lockfile·env·native config는 변경하지 않았습니다.
+  실제 provider 호출, 배포, native build, 실제 위치 요청은 수행하지 않았습니다. Owner의 로컬
+  synthetic `/weather` 서버 기반 visual checkpoint(~412×915, 저장 지역 2개 이상)는 **미완료**이며,
+  PR은 Owner Ready gate 전까지 계속 OPEN Draft로 유지됩니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.

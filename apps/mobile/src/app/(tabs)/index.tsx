@@ -4,10 +4,10 @@ import type {
   AirQualityGrade,
   WeatherCondition,
 } from '@life-weather/contracts';
-import { useState } from 'react';
 import { useRouter } from 'expo-router';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { SavedLocationSwitcher } from '../../components/saved-location-switcher';
 import {
   createMobileLifestyleOverview,
   type MobileLifestyleCard,
@@ -236,9 +236,6 @@ export default function HomeScreen() {
   const router = useRouter();
   const savedLocations = useMobileSavedLocations();
   const weatherQuery = useMobileWeatherQuery(savedLocations);
-  // Whether the *last* dispatched mutation failed. Kept local to the screen rather than in the
-  // store's snapshot: it is presentation state for one generic message, not shared app state.
-  const [writeFailed, setWriteFailed] = useState(false);
 
   const isSaving = savedLocations.writeStatus === 'SAVING';
   const selectedLocation =
@@ -260,18 +257,6 @@ export default function HomeScreen() {
     void mobileSavedLocationApplicationStore.retryInitialization();
   }
 
-  async function handleSelect(locationId: string): Promise<void> {
-    setWriteFailed(false);
-    const result = await mobileSavedLocationApplicationStore.select(locationId);
-    setWriteFailed(!result.ok);
-  }
-
-  async function handleRemove(locationId: string): Promise<void> {
-    setWriteFailed(false);
-    const result = await mobileSavedLocationApplicationStore.remove(locationId);
-    setWriteFailed(!result.ok);
-  }
-
   function handleAddLocation(): void {
     router.push('/locations');
   }
@@ -283,11 +268,7 @@ export default function HomeScreen() {
           <Text accessibilityRole="header" style={styles.headerTitle}>
             오늘
           </Text>
-          {selectedLocation !== null ? (
-            <Text style={styles.headerLocation} numberOfLines={1}>
-              {selectedLocation.displayName}
-            </Text>
-          ) : null}
+          <SavedLocationSwitcher savedLocations={savedLocations} />
         </View>
 
         {savedLocations.status === 'NOT_STARTED' ||
@@ -369,65 +350,6 @@ export default function HomeScreen() {
           </>
         ) : null}
 
-        {savedLocations.status === 'READY' ? (
-          <View style={styles.section}>
-            <Text accessibilityRole="header" style={styles.sectionTitle}>
-              저장 지역
-            </Text>
-            <View style={styles.card}>
-              {savedLocations.locations.map((location) => {
-                const isSelected = location.id === savedLocations.selectedLocationId;
-                const selectDisabled = isSelected || isSaving;
-                return (
-                  <View key={location.id} style={styles.locationRow}>
-                    <Text style={styles.locationRowLabel} numberOfLines={1}>
-                      {location.displayName}
-                    </Text>
-                    <View style={styles.locationRowActions}>
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={
-                          isSelected ? `${location.displayName} 선택됨` : `${location.displayName} 선택`
-                        }
-                        accessibilityState={{ selected: isSelected, disabled: selectDisabled }}
-                        disabled={selectDisabled}
-                        onPress={() => {
-                          void handleSelect(location.id);
-                        }}
-                        style={styles.smallButton}
-                      >
-                        <Text style={styles.smallButtonLabel}>{isSelected ? '선택됨' : '선택'}</Text>
-                      </Pressable>
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`${location.displayName} 삭제`}
-                        disabled={isSaving}
-                        onPress={() => {
-                          void handleRemove(location.id);
-                        }}
-                        style={styles.smallButton}
-                      >
-                        <Text style={styles.smallButtonLabel}>삭제</Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                );
-              })}
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="지역 추가"
-                disabled={isSaving}
-                onPress={handleAddLocation}
-                style={styles.secondaryButton}
-              >
-                <Text style={styles.secondaryButtonLabel}>지역 추가</Text>
-              </Pressable>
-            </View>
-            {writeFailed ? (
-              <Text style={styles.errorText}>저장 지역 변경을 저장하지 못했습니다.</Text>
-            ) : null}
-          </View>
-        ) : null}
       </View>
     </ScrollView>
   );
@@ -443,7 +365,6 @@ const BORDER_COLOR = '#E1E7EF';
 const ACCENT_COLOR = '#2F6FED';
 const PILL_BACKGROUND = '#EEF2F7';
 const PILL_TEXT = '#33404E';
-const ERROR_COLOR = '#B3261E';
 
 const styles = StyleSheet.create({
   screen: {
@@ -471,12 +392,6 @@ const styles = StyleSheet.create({
     fontSize: 26,
     fontWeight: '700',
     color: TEXT_PRIMARY,
-  },
-  headerLocation: {
-    fontSize: 15,
-    color: TEXT_SECONDARY,
-    flexShrink: 1,
-    marginLeft: 12,
   },
   card: {
     backgroundColor: CARD_BACKGROUND,
@@ -527,10 +442,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: ACCENT_COLOR,
     fontWeight: '600',
-  },
-  errorText: {
-    fontSize: 13,
-    color: ERROR_COLOR,
   },
   hero: {
     backgroundColor: HERO_BACKGROUND,
@@ -679,35 +590,5 @@ const styles = StyleSheet.create({
   hourlyPreviewDetail: {
     fontSize: 11,
     color: ACCENT_COLOR,
-  },
-  locationRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-    paddingVertical: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: BORDER_COLOR,
-  },
-  locationRowLabel: {
-    flexShrink: 1,
-    fontSize: 15,
-    color: TEXT_PRIMARY,
-  },
-  locationRowActions: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  smallButton: {
-    minHeight: 48,
-    minWidth: 48,
-    paddingHorizontal: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  smallButtonLabel: {
-    fontSize: 14,
-    color: ACCENT_COLOR,
-    fontWeight: '600',
   },
 });
