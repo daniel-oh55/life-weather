@@ -80,7 +80,7 @@ describe('(tabs) layout', () => {
     expect(optionsByName.get('index')).toMatchObject({ title: '오늘', headerShown: false });
     expect(optionsByName.get('hourly')).toMatchObject({ title: '시간별', headerShown: false });
     expect(optionsByName.get('lifestyle')).toMatchObject({ title: '생활날씨', headerShown: false });
-    expect(optionsByName.get('details')).toMatchObject({ title: '상세기상' });
+    expect(optionsByName.get('details')).toMatchObject({ title: '상세기상', headerShown: false });
     expect(optionsByName.get('settings')).toMatchObject({ title: '설정' });
   });
 

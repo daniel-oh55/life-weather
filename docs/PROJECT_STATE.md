@@ -915,8 +915,7 @@
   문구 원문 보존, null 카드에서 안내 미생성)은 기존 test suite가 이미 검증하므로 non-blocking
   입니다. 실제 live KMA/AirKorea/production API 호출은 없었습니다. Owner Ready gate 이후
   merge되어 현재 main에 포함되어 있습니다.
-- **PR #93**(현재 **OPEN Draft**, `feat/pr-93-hourly-horizontal-timeline`, base
-  `main@aba871b3a8105c5eee2635722ca12e5201a16f25`)는 모바일 Hourly(`시간별`) 화면의 성공 상태를
+- **PR #93**(**MERGED**, new main `5b4cf8323d73ea3e2fbc177565c80393a207d151`)는 모바일 Hourly(`시간별`) 화면의 성공 상태를
   세로 카드 나열에서 가로 스크롤 시간축 비교표로 교체합니다 —
   `apps/mobile/src/app/(tabs)/hourly.tsx`만 대상으로 한 presentation 전용 작업입니다. 화면이
   소유하는 기존 header(`시간별` + READY일 때 선택 저장 지역 표시) 아래에 하나의 timeline
@@ -953,7 +952,41 @@
   기반 column 경계 스냅은 이 checkpoint로 독립 검증되지 않았습니다(production 코드는 여전히
   단일 horizontal `ScrollView`에 `snapToInterval=72`/`snapToAlignment="start"`/
   `decelerationRate="fast"`를 유지). 네이티브 Android 스냅 동작 확인은 이후 native QA 항목으로
-  남습니다. 실제 live API는 사용되지 않았습니다. PR은 Owner Ready gate 전까지 계속 OPEN Draft로
-  유지됩니다.
+  남습니다. 실제 live API는 사용되지 않았습니다. Owner Ready gate 이후 merge되어 현재 main에
+  포함되어 있습니다.
+- **PR #94**(현재 **OPEN Draft**, `feat/pr-94-details-visual-layout`, base
+  `main@5b4cf8323d73ea3e2fbc177565c80393a207d151`)는 모바일 Details(`상세기상`) 화면을 기존
+  개발자용 텍스트 나열 레이아웃에서 제품 수준 상세기상 화면으로 교체합니다 —
+  `apps/mobile/src/app/(tabs)/details.tsx`와 `(tabs)/_layout.tsx`의 details route
+  `headerShown: false`만 대상으로 한 presentation 전용 작업입니다. 화면이 소유하는
+  header(`상세기상` + READY일 때 선택 저장 지역 표시) 아래에 기존 `기상특보` → `현재 관측`
+  alert-first 순서를 그대로 유지하며, 각 section을 카드 기반 제품 UI로 재구성했습니다. 기상특보는
+  UNAVAILABLE/NONE 각각 기존 presenter 고정 문구를 별도의 calm 정보 카드로, AVAILABLE은 카드
+  header(글리프 + title(header semantics) + severity pill) → typeLabel → 시간 정보(발표, 발효/종료는
+  non-null일 때만) → 대상 지역 → 상세 안내(non-null일 때만)의 위계로 표시하며, 기존 `등급:`/`종류:`
+  developer-style prefix는 제거하고 presenter 값은 그대로 보존합니다(sort/filter/dedupe 없음).
+  현재 관측은 UNAVAILABLE 정보 카드 또는 conditionLabel/temperatureLabel 중심 hero(관측 시각은
+  보조 텍스트) + 6개 optional detail id의 글리프 있는 2열 grid(응답 순서 그대로, `0`은 항상 노출,
+  `null`은 항상 생략)로 재구성했습니다. `createMobileWeatherDetails`(alert/current 매핑 정책)와
+  saved-location(`NOT_STARTED`/`LOADING`/`SELECTION_LOADING`/`EMPTY`/`READY`/`ERROR`),
+  weather-query(`IDLE`/`LOADING`/`SUCCESS`/`ERROR`, 네 가지 고정 오류 문구, 명시적 재시도, `지역
+  추가` 네비게이션) 상태 처리와 raw kind/message/URL/requestId/좌표/provider 비노출 정책은 그대로
+  보존됩니다. `packages/contracts`, `packages/weather-core`, `packages/lifestyle-engine`,
+  `apps/api`, weather-query/saved-location store·lifecycle·persistence,
+  `create-mobile-weather-details.ts`의 동작, dependency·env·native config는 변경하지 않았고 새
+  dependency도 추가하지 않았습니다. 실제 provider 호출과 배포는 수행하지 않았습니다. Owner의 로컬
+  synthetic `/weather` 서버 기반 visual checkpoint(~412×915)는 **완료**되었고 결과는 **PASS**입니다 — 화면이 소유하는 커스텀
+  header(중복 Tabs header 없음), `기상특보` → `현재 관측` alert-first 위계, ALERTS UNAVAILABLE의
+  calm 정보 카드(`특보 없음`/`안전` 등 성공 해석으로 오인되지 않는 문구), condition → temperature →
+  observation time 순서의 현재 관측 hero(온도 시각적 우세, 관측 시각은 보조 텍스트), 6개 항목의
+  자연스러운 2열 detail grid, 긴/일반 한국어 텍스트 가독성, 값이 0인 강수량(`0mm`)의 노출, 고정
+  하단 탭 바 위로 완전히 스크롤되는 마지막 detail content, Today/Hourly/Lifestyle과 일관된 시각
+  언어가 모두 확인되었습니다. 이 checkpoint에 사용된 synthetic 응답은 ALERTS UNAVAILABLE을
+  반환했으므로 AVAILABLE alert 카드의 시각적 레이아웃은 이번 checkpoint에서 화면으로 직접
+  검증되지 않았습니다 — alert card title/severityLabel/typeLabel/issuedAtLabel/optional
+  effectiveAtLabel·expiresAtLabel/areasLabel/optional description/presenter 값 보존/nullable
+  optional 필드 생략/alert-first 순서는 기존 test suite가 이미 검증하므로 non-blocking입니다.
+  실제 live KMA/AirKorea/production API 호출은 없었습니다. PR은 Owner Ready gate 전까지 계속 OPEN
+  Draft로 유지됩니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
