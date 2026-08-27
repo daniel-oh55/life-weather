@@ -18,12 +18,16 @@ const MockPressable = vi.hoisted(() => function MockPressable(): null {
 const MockScrollView = vi.hoisted(() => function MockScrollView(): null {
   return null;
 });
+const MockActivityIndicator = vi.hoisted(() => function MockActivityIndicator(): null {
+  return null;
+});
 
 vi.mock('react-native', () => ({
   View: MockView,
   Text: MockText,
   Pressable: MockPressable,
   ScrollView: MockScrollView,
+  ActivityIndicator: MockActivityIndicator,
   StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
 }));
 
@@ -398,16 +402,16 @@ describe('layout', () => {
 
 describe('saved-location preparation states', () => {
   it.each([
-    ['NOT_STARTED', notStartedSnapshot()],
-    ['LOADING', loadingSnapshot()],
-    ['SELECTION_LOADING', selectionLoadingSnapshot()],
-  ] as const)('shows the preparing copy for %s with no controls', async (_name, snapshot) => {
+    ['NOT_STARTED', notStartedSnapshot(), '저장된 지역을 불러오는 중입니다.'],
+    ['LOADING', loadingSnapshot(), '저장된 지역을 불러오는 중입니다.'],
+    ['SELECTION_LOADING', selectionLoadingSnapshot(), '선택 지역을 준비하는 중입니다.'],
+  ] as const)('shows the preparing copy for %s with no controls', async (_name, snapshot, copy) => {
     useMobileSavedLocationsMock.mockReturnValue(snapshot);
     const render = await loadScreen();
 
     const element = render();
 
-    expect(texts(element)).toEqual(['상세기상', '상세기상을 준비하고 있습니다.']);
+    expect(texts(element)).toEqual(['상세기상', copy]);
     expect(pressables(element)).toHaveLength(0);
   });
 });
@@ -423,7 +427,12 @@ describe('EMPTY', () => {
 
     const element = render();
 
-    expect(texts(element)).toEqual(['상세기상', '저장된 지역이 없습니다.', '지역 추가']);
+    expect(texts(element)).toEqual([
+      '상세기상',
+      '저장된 지역이 없습니다.',
+      '지역을 추가하면 상세기상을 볼 수 있어요.',
+      '지역 추가',
+    ]);
     const button = pressableByLabel(element, '지역 추가');
     expect(button.props.accessibilityRole).toBe('button');
   });
@@ -684,13 +693,18 @@ describe('READY + SUCCESS section order and content', () => {
     const rendered = texts(element);
 
     expect(headerTexts(element)).toContain('Synthetic Alert');
-    expect(rendered).toContain('등급: 경보');
-    expect(rendered).toContain('종류: 호우');
-    expect(rendered).toContain('발표 시각: 8월 5일 (수) 12:00');
-    expect(rendered).toContain('발효 시각: 8월 5일 (수) 13:00');
-    expect(rendered).toContain('종료 시각: 8월 5일 (수) 20:00');
-    expect(rendered).toContain('대상 지역: Area One, Area Two');
-    expect(rendered).toContain('설명: Synthetic description text.');
+    expect(rendered).toContain('경보');
+    expect(rendered).toContain('호우');
+    expect(rendered).toContain('8월 5일 (수) 12:00');
+    expect(rendered).toContain('8월 5일 (수) 13:00');
+    expect(rendered).toContain('8월 5일 (수) 20:00');
+    expect(rendered).toContain('Area One, Area Two');
+    expect(rendered).toContain('Synthetic description text.');
+    expect(rendered).toContain('대상 지역');
+    expect(rendered).toContain('상세 안내');
+    expect(rendered).toContain('발표');
+    expect(rendered).toContain('발효');
+    expect(rendered).toContain('종료');
   });
 
   it('omits effective/expires/description lines when they are null', async () => {
@@ -719,9 +733,9 @@ describe('READY + SUCCESS section order and content', () => {
 
     const rendered = texts(render()).join('\n');
 
-    expect(rendered).not.toContain('발효 시각');
-    expect(rendered).not.toContain('종료 시각');
-    expect(rendered).not.toContain('설명:');
+    expect(rendered).not.toContain('발효');
+    expect(rendered).not.toContain('종료');
+    expect(rendered).not.toContain('상세 안내');
   });
 
   it('shows the current UNAVAILABLE message', async () => {
@@ -747,9 +761,9 @@ describe('READY + SUCCESS section order and content', () => {
 
     const rendered = texts(render());
 
-    expect(rendered).toContain('관측 시각: 8월 5일 (수) 14:00');
-    expect(rendered).toContain('상태: 맑음');
-    expect(rendered).toContain('기온: 23°C');
+    expect(rendered).toContain('관측 8월 5일 (수) 14:00');
+    expect(rendered).toContain('맑음');
+    expect(rendered).toContain('23°C');
     const feelsLikeIndex = rendered.indexOf('체감온도 20°C');
     const humidityIndex = rendered.indexOf('습도 55%');
     expect(feelsLikeIndex).toBeGreaterThan(-1);
