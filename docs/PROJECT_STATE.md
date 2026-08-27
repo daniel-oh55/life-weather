@@ -975,10 +975,18 @@
   `apps/api`, weather-query/saved-location store·lifecycle·persistence,
   `create-mobile-weather-details.ts`의 동작, dependency·env·native config는 변경하지 않았고 새
   dependency도 추가하지 않았습니다. 실제 provider 호출과 배포는 수행하지 않았습니다. Owner의 로컬
-  synthetic `/weather` 서버 기반 visual checkpoint(~412×915)는 이 PR에서 아직 **미수행**입니다 —
-  Owner의 현재 synthetic 시나리오는 ALERTS UNAVAILABLE을 반환하므로 AVAILABLE alert 카드의 시각적
-  검증은 test suite로만 보증되며, 별도 synthetic AVAILABLE 시나리오는 이후 선택적으로 추가될 수
-  있습니다. 실제 live API는 사용되지 않았습니다. PR은 Owner Ready gate 전까지 계속 OPEN Draft로
-  유지됩니다.
+  synthetic `/weather` 서버 기반 visual checkpoint(~412×915)는 **완료**되었고 결과는 **PASS**입니다 — 화면이 소유하는 커스텀
+  header(중복 Tabs header 없음), `기상특보` → `현재 관측` alert-first 위계, ALERTS UNAVAILABLE의
+  calm 정보 카드(`특보 없음`/`안전` 등 성공 해석으로 오인되지 않는 문구), condition → temperature →
+  observation time 순서의 현재 관측 hero(온도 시각적 우세, 관측 시각은 보조 텍스트), 6개 항목의
+  자연스러운 2열 detail grid, 긴/일반 한국어 텍스트 가독성, 값이 0인 강수량(`0mm`)의 노출, 고정
+  하단 탭 바 위로 완전히 스크롤되는 마지막 detail content, Today/Hourly/Lifestyle과 일관된 시각
+  언어가 모두 확인되었습니다. 이 checkpoint에 사용된 synthetic 응답은 ALERTS UNAVAILABLE을
+  반환했으므로 AVAILABLE alert 카드의 시각적 레이아웃은 이번 checkpoint에서 화면으로 직접
+  검증되지 않았습니다 — alert card title/severityLabel/typeLabel/issuedAtLabel/optional
+  effectiveAtLabel·expiresAtLabel/areasLabel/optional description/presenter 값 보존/nullable
+  optional 필드 생략/alert-first 순서는 기존 test suite가 이미 검증하므로 non-blocking입니다.
+  실제 live KMA/AirKorea/production API 호출은 없었습니다. PR은 Owner Ready gate 전까지 계속 OPEN
+  Draft로 유지됩니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
