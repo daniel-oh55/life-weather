@@ -136,6 +136,28 @@ function makeHourly(forecastAt = '2026-07-22T14:00:00+09:00'): HourlyForecast {
   };
 }
 
+/**
+ * A fresh, complete 24-hour KST day (`00:00`-`23:00`) for `date` - the shape the PR #96 daily
+ * derivation treats as an eligible calendar day. `perHour` overrides one entry by clock hour.
+ */
+function makeCompleteDay(
+  date: string,
+  perHour: Readonly<Record<number, Partial<HourlyForecast>>> = {},
+): HourlyForecast[] {
+  return Array.from({ length: 24 }, (_unused, hour) => ({
+    ...makeHourly(`${date}T${hour < 10 ? `0${hour}` : hour}:00:00+09:00`),
+    ...(perHour[hour] ?? {}),
+  }));
+}
+
+/** The exact `missingSections` when a selected source also yielded at least one derived day. */
+const SELECTED_WITH_DAILY_MISSING = [
+  'CURRENT',
+  'AIR_QUALITY_CURRENT',
+  'AIR_QUALITY_FORECAST',
+  'ALERTS',
+] as const;
+
 /** A fresh, complete, schema-valid `WeatherLocation` literal; overridable per field for edge cases. */
 function makeLocation(overrides: Partial<WeatherLocation> = {}): WeatherLocation {
   return {
@@ -754,6 +776,169 @@ describe('synchronous contract', () => {
     assembleKmaHourlyWeatherOverview(makePreviousInput());
     assembleKmaHourlyWeatherOverview(makeNoSelectionInput());
 
+    expect(spies.log).not.toHaveBeenCalled();
+    expect(spies.warn).not.toHaveBeenCalled();
+    expect(spies.error).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PR #96 - the derived `daily` section, from the same selected hourly data.
+// ---------------------------------------------------------------------------
+
+describe('derived daily section', () => {
+  it('a selected hourly array containing a complete KST day populates daily and clears DAILY', () => {
+    const hourly = makeCompleteDay('2026-07-22', {
+      4: { temperatureCelsius: 18.3 },
+      9: { condition: 'RAIN', precipitationProbabilityPercent: 70 },
+      15: { condition: 'CLOUDY', precipitationProbabilityPercent: 0 },
+      20: { temperatureCelsius: 31.4 },
+    });
+    const source = makeSource();
+
+    const overview = assembleKmaHourlyWeatherOverview(
+      makePrimaryInput({ hourly, source }),
+    );
+
+    expect(weatherOverview.safeParse(overview).success).toBe(true);
+
+    // daily is populated from the same hourly data, with the documented policy values.
+    expect(overview.daily).toHaveLength(1);
+    const [day] = overview.daily;
+    expect(day.date).toBe('2026-07-22');
+    expect(day.minimumTemperatureCelsius).toBe(18.3);
+    expect(day.maximumTemperatureCelsius).toBe(31.4);
+    expect(day.morning).toEqual({
+      condition: 'RAIN',
+      precipitationProbabilityPercent: 70,
+    });
+    expect(day.afternoon).toEqual({
+      condition: 'CLOUDY',
+      precipitationProbabilityPercent: 0,
+    });
+    expect(day.overall).toBeNull();
+    expect(day.sunriseAt).toBeNull();
+    expect(day.sunsetAt).toBeNull();
+
+    // DAILY is no longer missing, and nothing else changed in the missing set.
+    expect(overview.missingSections).toEqual([...SELECTED_WITH_DAILY_MISSING]);
+    expect(overview.missingSections).not.toContain('DAILY');
+    expect(overview.missingSections).not.toContain('HOURLY');
+
+    // The same single KMA source now carries both sections; every other field is the caller's.
+    expect(overview.sources).toHaveLength(1);
+    const [metadata] = overview.sources;
+    expect(metadata.sections).toEqual(['HOURLY', 'DAILY']);
+    expect(metadata.provider).toBe('KMA');
+    expect(metadata.sourceId).toBe(source.sourceId);
+    expect(metadata.issuedAt).toBe(source.issuedAt);
+    expect(metadata.observedAt).toBeNull();
+    expect(metadata.fetchedAt).toBe(source.fetchedAt);
+    expect(metadata.retrievalMode).toBe(source.retrievalMode);
+
+    expectExactOverviewShape(overview);
+  });
+
+  it('hourly value and order are unchanged when daily is derived from it', () => {
+    const hourly = makeCompleteDay('2026-07-22');
+
+    const overview = assembleKmaHourlyWeatherOverview(makePrimaryInput({ hourly }));
+
+    expect(overview.hourly).toEqual(hourly);
+    expect(overview.hourly.map((entry) => entry.forecastAt)).toEqual(
+      hourly.map((entry) => entry.forecastAt),
+    );
+  });
+
+  it('two complete days derive two date-ordered entries on a PREVIOUS selection too', () => {
+    const hourly = [
+      ...makeCompleteDay('2026-07-23'),
+      ...makeCompleteDay('2026-07-22'),
+    ];
+
+    const overview = assembleKmaHourlyWeatherOverview(
+      makePreviousInput({ hourly }),
+    );
+
+    expect(overview.daily.map((day) => day.date)).toEqual([
+      '2026-07-22',
+      '2026-07-23',
+    ]);
+    expect(overview.missingSections).not.toContain('DAILY');
+    expect(overview.sources[0].sections).toEqual(['HOURLY', 'DAILY']);
+  });
+
+  it('a selected hourly array with no complete day keeps daily empty and DAILY missing', () => {
+    // A realistic partial horizon: only the remaining hours of the current day.
+    const hourly = Array.from({ length: 10 }, (_unused, index) =>
+      makeHourly(`2026-07-22T${14 + index}:00:00+09:00`),
+    );
+
+    const overview = assembleKmaHourlyWeatherOverview(makePrimaryInput({ hourly }));
+
+    expect(weatherOverview.safeParse(overview).success).toBe(true);
+    expect(overview.daily).toEqual([]);
+    expect(overview.missingSections).toEqual([...SELECTED_MISSING]);
+    expect(overview.missingSections).toContain('DAILY');
+    expect(overview.sources).toHaveLength(1);
+    expect(overview.sources[0].sections).toEqual(['HOURLY']);
+  });
+
+  it('a day missing a single hour keeps daily empty, DAILY missing, and sections HOURLY-only', () => {
+    const hourly = makeCompleteDay('2026-07-22').filter(
+      (entry) => entry.forecastAt !== '2026-07-22T13:00:00+09:00',
+    );
+
+    const overview = assembleKmaHourlyWeatherOverview(makePrimaryInput({ hourly }));
+
+    expect(overview.daily).toEqual([]);
+    expect(overview.missingSections).toContain('DAILY');
+    expect(overview.sources[0].sections).toEqual(['HOURLY']);
+  });
+
+  it('no selection stays truthful: hourly [], daily [], HOURLY + DAILY missing, sources []', () => {
+    const overview = assembleKmaHourlyWeatherOverview(makeNoSelectionInput());
+
+    expect(weatherOverview.safeParse(overview).success).toBe(true);
+    expect(overview.hourly).toEqual([]);
+    expect(overview.daily).toEqual([]);
+    expect(overview.missingSections).toEqual([...NO_SELECTION_MISSING]);
+    expect(overview.missingSections).toContain('HOURLY');
+    expect(overview.missingSections).toContain('DAILY');
+    expect(overview.sources).toEqual([]);
+  });
+
+  it('deriving daily mutates neither the deep-frozen input nor its hourly entries', () => {
+    const hourly = makeCompleteDay('2026-07-22');
+    const input = deepFreeze(makePrimaryInput({ hourly: deepFreeze(hourly) }));
+
+    const overview = assembleKmaHourlyWeatherOverview(input);
+
+    expect(overview.daily).toHaveLength(1);
+    expect(input.selection.result.hourly).toBe(hourly);
+    expect(hourly).toHaveLength(24);
+  });
+
+  it('daily is a fresh array of fresh days on every call', () => {
+    const input = makePrimaryInput({ hourly: makeCompleteDay('2026-07-22') });
+
+    const first = assembleKmaHourlyWeatherOverview(input);
+    const second = assembleKmaHourlyWeatherOverview(input);
+
+    expect(first.daily).toEqual(second.daily);
+    expect(first.daily).not.toBe(second.daily);
+    expect(first.daily[0]).not.toBe(second.daily[0]);
+  });
+
+  it('deriving daily still reads no clock and logs nothing', () => {
+    const nowSpy = vi.spyOn(Date, 'now');
+    const spies = spyOnConsole();
+
+    assembleKmaHourlyWeatherOverview(
+      makePrimaryInput({ hourly: makeCompleteDay('2026-07-22') }),
+    );
+
+    expect(nowSpy).not.toHaveBeenCalled();
     expect(spies.log).not.toHaveBeenCalled();
     expect(spies.warn).not.toHaveBeenCalled();
     expect(spies.error).not.toHaveBeenCalled();

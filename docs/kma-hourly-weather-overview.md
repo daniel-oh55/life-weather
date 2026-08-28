@@ -3,7 +3,11 @@
 이 문서는 PR #23에서 추가한 **순수·결정론적 partial-overview assembler** 한 개
 (`assembleKmaHourlyWeatherOverview`)의 책임과 경계를 기록합니다. 이 함수는 PR #22
 `selectKmaHourlyFallbackResult`가 이미 계산한 `KmaHourlyFallbackSelection`을 입력으로 받아,
-contracts의 `WeatherOverview`를 **hourly section만** 조립합니다.
+contracts의 `WeatherOverview`를 조립합니다.
+
+**PR #96**부터 이 assembler는 hourly section에 더해, **같은 hourly 데이터에서 파생한** `daily`
+section도 채웁니다(`deriveKmaDailyForecastFromHourly`). 새 provider 요청·새 KMA product·공개 계약
+변경은 없습니다 — `daily`는 이미 `WeatherOverview`에 존재하던 계약이고, 그 producer만 없었습니다.
 
 ## 목적
 
@@ -16,15 +20,16 @@ contracts의 `WeatherOverview`를 **hourly section만** 조립합니다.
   2. 선택된 hourly source에 대응하는 KMA `HOURLY` `SourceMetadata` 한 건
   3. 아직 수집하지 않은 section의 정확한 `missingSections`
 
-현재 pipeline이 공급할 수 있는 데이터는 KMA hourly forecast뿐이므로, 이 PR은 **hourly section만**
-조립하는 partial overview assembler입니다. LOCATION branch 처리·selector 실행·source metadata 추론·
-current/daily/air-quality/alerts 구현·production composition·route·cache는 포함하지 않습니다(아래 "범위
-밖" 참조).
+이 assembler가 소유하는 section은 hourly와, 그 hourly에서 파생되는 daily뿐입니다. LOCATION branch
+처리·selector 실행·source metadata 추론·current/air-quality/alerts 구현·medium-term(D+4~D+10) 예보·
+route·cache는 포함하지 않습니다(아래 "범위 밖" 참조).
 
 ## 구현 위치
 
 - [kma-hourly-weather-overview.ts](../apps/api/src/services/kma-hourly-weather-overview.ts) — assembler
 - [kma-hourly-weather-overview.test.ts](../apps/api/src/services/kma-hourly-weather-overview.test.ts) — 테스트
+- [kma-daily-from-hourly.ts](../apps/api/src/services/kma-daily-from-hourly.ts) — PR #96 daily 파생 정책
+- [kma-daily-from-hourly.test.ts](../apps/api/src/services/kma-daily-from-hourly.test.ts) — 테스트
 
 이 위치(`apps/api/src/services`)에 두는 이유:
 
@@ -102,31 +107,30 @@ null"이거나 "선택 없는데 source context가 있는" 조합을 union이 �
 const hourly = nonEmptyHourlyForecasts.parse(input.selection.result.hourly);
 ```
 
-그 뒤 다음 의미로 조립합니다.
+그 뒤 **그 hourly 배열에서** daily를 파생하고(추가 provider 요청 없음), 다음 의미로 조립합니다.
 
 ```ts
+const daily = deriveKmaDailyForecastFromHourly(hourly);
+const hasDaily = daily.length > 0;
+
 {
   location: input.location,
   current: null,
   hourly,
-  daily: [],
+  daily: [...daily],
   airQuality: {
     current: null,
     daily: [],
   },
   alerts: [],
-  missingSections: [
-    'CURRENT',
-    'DAILY',
-    'AIR_QUALITY_CURRENT',
-    'AIR_QUALITY_FORECAST',
-    'ALERTS',
-  ],
+  missingSections: hasDaily
+    ? ['CURRENT', 'AIR_QUALITY_CURRENT', 'AIR_QUALITY_FORECAST', 'ALERTS']
+    : ['CURRENT', 'DAILY', 'AIR_QUALITY_CURRENT', 'AIR_QUALITY_FORECAST', 'ALERTS'],
   sources: [
     {
       sourceId: input.source.sourceId,
       provider: 'KMA',
-      sections: ['HOURLY'],
+      sections: hasDaily ? ['HOURLY', 'DAILY'] : ['HOURLY'],
       issuedAt: input.source.issuedAt,
       observedAt: null,
       fetchedAt: input.source.fetchedAt,
@@ -137,9 +141,37 @@ const hourly = nonEmptyHourlyForecasts.parse(input.selection.result.hourly);
 ```
 
 - `hourly`: 선택된 result의 hourly data(값·순서 보존).
-- `sources`: KMA `HOURLY` `SourceMetadata` **한 건**.
-- `missingSections`: `CURRENT`·`DAILY`·`AIR_QUALITY_CURRENT`·`AIR_QUALITY_FORECAST`·`ALERTS`.
-  **HOURLY는 포함하지 않습니다.**
+- `daily`: 같은 hourly에서 파생한 완전한 KST 달력 일자들(없으면 `[]`).
+- `sources`: KMA `SourceMetadata` **한 건**. daily가 파생됐으면 같은 source의 `sections`가
+  `['HOURLY', 'DAILY']`가 됩니다 — 두 section 모두 **동일한 선택된 KMA 발표(issuance)**에서
+  나오므로 별도 source나 가짜 `DERIVED` source를 만들지 않습니다.
+- `missingSections`: daily가 파생됐으면 `CURRENT`·`AIR_QUALITY_CURRENT`·`AIR_QUALITY_FORECAST`·
+  `ALERTS`, 아니면 여기에 `DAILY`가 더해집니다. **HOURLY는 어느 경우에도 포함하지 않습니다.**
+
+### daily 파생 정책 (PR #96)
+
+`deriveKmaDailyForecastFromHourly(readonly HourlyForecast[]) => readonly DailyForecast[]`는 순수·
+동기·clock-free 함수이며, 입력은 이미 정규화된 hourly 배열 하나뿐입니다.
+
+- **완전성**: 어떤 KST 달력 일자는 그 날짜의 `00:00`~`23:00` 24개 시각이 **각각 정확히 한 건씩**
+  존재할 때만 eligible입니다. 부분적인 당일, 잘린 마지막 날, 시각 누락, 같은 날짜/시각 중복,
+  정시가 아닌 timestamp는 모두 그 날짜를 **통째로 제외**합니다. 보간·추정·값 생성은 하지 않습니다.
+  각 날짜는 독립적으로 판정되므로, 불완전한 날짜가 다른 완전한 날짜를 없애지 않습니다.
+- **기온**: `minimumTemperatureCelsius`/`maximumTemperatureCelsius`는 그 날 **24개**
+  `temperatureCelsius`의 최소/최대입니다. 현재 관측·체감온도·provider-native `TMN`/`TMX`는
+  사용하지 않습니다(애초에 입력에 없습니다).
+- **morning / afternoon**: 각각 **09:00**과 **15:00** 항목의 `condition`과
+  `precipitationProbabilityPercent`를 그대로 복사한 대표시각 정책입니다. worst-condition 집계나
+  강수확률 평균은 하지 않으므로, 확정된 `0`은 `0`으로, 미제공 `null`은 `null`로 보존됩니다.
+- **overall / sunriseAt / sunsetAt**: 항상 `null`입니다. 이 pipeline에는 하루 단위 집계 정책도
+  일출·일몰 source도 없으므로 값을 만들어내지 않습니다.
+- **KST 식별**: `forecastAt`을 명시적 패턴으로 파싱해 `Date.UTC`로 절대 시각을 만들고 고정 `+09:00`
+  offset을 적용한 뒤 `getUTC*`로만 되읽습니다. 호스트 시간대·`Intl`·locale·`Date.now()`를 읽지
+  않으므로 어느 장비에서도 결과가 같습니다(KST는 DST가 없습니다).
+- **출력**: `date` 오름차순 정렬, 입력 순서와 무관하게 결정론적이며, 각 항목은 contracts의
+  `dailyForecast` 스키마로 검증합니다(계약 제약을 여기서 다시 쓰지 않습니다).
+
+단기예보 horizon이 완전한 하루를 포함하지 않으면 `daily`는 `[]`이고 `DAILY`는 계속 missing입니다.
 
 ## no-selection branch
 
@@ -180,12 +212,12 @@ const hourly = nonEmptyHourlyForecasts.parse(input.selection.result.hourly);
 | `location` | caller `location` | caller `location` |
 | `current` | `null` | `null` |
 | `hourly` | 선택된 result의 hourly | `[]` |
-| `daily` | `[]` | `[]` |
+| `daily` | hourly에서 파생한 완전한 날짜들(없으면 `[]`) | `[]` |
 | `airQuality.current` | `null` | `null` |
 | `airQuality.daily` | `[]` | `[]` |
 | `alerts` | `[]` | `[]` |
-| `missingSections` | HOURLY 제외 5개 | HOURLY 포함 6개 |
-| `sources` | KMA HOURLY 1건 | `[]` |
+| `missingSections` | HOURLY 제외 5개(daily 파생 시 DAILY도 제외되어 4개) | HOURLY 포함 6개 |
+| `sources` | KMA 1건(`['HOURLY']` 또는 `['HOURLY', 'DAILY']`) | `[]` |
 
 ## missingSections 정책
 
@@ -256,7 +288,7 @@ output에서는 `HOURLY` presence와 selected/no-selection 상태가 정확히 �
 | --- | --- | --- |
 | `sourceId` | caller `source.sourceId` | **caller 제공** |
 | `provider` | `'KMA'` | **assembler 고정** |
-| `sections` | `['HOURLY']` | **assembler 고정** |
+| `sections` | `['HOURLY']`, daily 파생 시 `['HOURLY', 'DAILY']` | **assembler 고정** |
 | `issuedAt` | caller `source.issuedAt` (nullable) | **caller 제공** |
 | `observedAt` | `null` | **assembler 고정** |
 | `fetchedAt` | caller `source.fetchedAt` | **caller 제공** |
@@ -279,8 +311,10 @@ trace가 보존한 issuance identity로 concrete `issuedAt`을 만듭니다 — 
 
 ### provider / sections / observedAt를 assembler가 고정하는 이유
 
-- `provider: 'KMA'` — 이 assembler는 KMA hourly source만 다룹니다.
-- `sections: ['HOURLY']` — 이 source가 기여하는 section은 hourly뿐입니다.
+- `provider: 'KMA'` — 이 assembler는 KMA forecast source만 다룹니다.
+- `sections` — 이 source가 실제로 기여한 section입니다. daily는 같은 발표(issuance)의 hourly에서
+  파생되므로 별도 source가 아니라 같은 source의 `sections`에 `DAILY`가 더해집니다. `sourceId`·
+  `provider`·`issuedAt`·`observedAt`·`fetchedAt`·`retrievalMode`는 그대로 보존됩니다.
 - `observedAt: null` — hourly forecast는 관측 데이터가 아니므로 관측 시각이 없습니다.
 
 이 세 값은 이 pipeline에서 구조적으로 참이므로 assembler가 고정합니다.
@@ -366,11 +400,18 @@ output이 fresh합니다.
 no-selection이면 `source: null`을 이 assembler에 전달합니다. 자세한 pipeline은 아래
 `application-service consumer (PR #24)` section을 참조하세요.
 
-## current/daily/AQ/alerts는 범위 밖
+## current/AQ/alerts는 범위 밖
 
-이 PR은 hourly section만 조립합니다. `current`·`daily`·`airQuality.current`·`airQuality.daily`·
-`alerts`는 fixed placeholder(null/[])로 두고 `missingSections`에 표기할 뿐, 실제 데이터를 만들지
-않습니다. current weather·daily forecast·air quality·alerts 정규화와 조립은 후속 PR입니다.
+이 assembler는 hourly section과 그로부터 파생한 daily만 조립합니다. `current`·`airQuality.current`·
+`airQuality.daily`·`alerts`는 fixed placeholder(null/[])로 두고 `missingSections`에 표기할 뿐,
+실제 데이터를 만들지 않습니다(current/AQ는 별도 pipeline이 overlay합니다).
+
+daily 쪽에서도 다음은 여전히 범위 밖입니다.
+
+- KMA 중기예보(D+4~D+10) 및 추가 provider 요청
+- 일출·일몰 source
+- `overall`(하루 단위 집계) 정책
+- provider-native `TMN`/`TMX` 노출
 
 ## no composition/route/cache
 
@@ -432,4 +473,15 @@ v3 / PR #26 / 2026-07 (live resolver output을 caller가 제공 가능; assemble
 - PR #26 createKmaLiveSelectedHourlySourceMetadataResolver가 이 assembler의 source context(sourceId/issuedAt/fetchedAt/retrievalMode)를 만듦
 - assembler는 여전히 provenance를 추정하지 않고 caller-provided source만 사용(clock/purity/output 계약 불변)
 - production composition/route/cache는 여전히 후속(PR #27)
+
+v4 / PR #96 / 2026-08 (daily section을 같은 hourly에서 파생)
+- deriveKmaDailyForecastFromHourly 추가 (순수/동기/clock-free, 입력은 정규화된 hourly 배열 하나)
+- 완전한 KST 달력 일자(00:00~23:00 24개 시각, 중복/누락/비정시 없음)만 발행, 불완전한 날짜는 제외
+- min/max는 그 날 24개 hourly 기온, morning=09:00, afternoon=15:00, overall/sunriseAt/sunsetAt는 null
+- 강수확률의 0과 null 의미 보존, date 오름차순, 입력 순서와 무관하게 결정론적, 입력 불변
+- daily가 채워지면 DAILY가 missingSections에서 빠지고 같은 KMA source의 sections가 ['HOURLY', 'DAILY']
+- daily가 비면 DAILY는 계속 missing, sections는 ['HOURLY'] 유지
+- no-selection branch(hourly []/daily []/HOURLY+DAILY missing/sources [])는 그대로
+- 공개 계약·CONTRACT_VERSION·provider 요청·route/composition/presenter 변경 없음
+- 중기예보 D+4~D+10, 일출·일몰, overall 집계는 여전히 후속
 ```

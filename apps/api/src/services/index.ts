@@ -450,6 +450,8 @@ export {
   type KmaHourlyFallbackSelectionSource,
 } from './kma-hourly-fallback-selection.js';
 
+export { deriveKmaDailyForecastFromHourly } from './kma-daily-from-hourly.js';
+
 export {
   assembleKmaHourlyWeatherOverview,
   type KmaHourlySourceMetadataInput,

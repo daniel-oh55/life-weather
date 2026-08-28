@@ -1,8 +1,8 @@
 /**
  * The KMA (기상청) hourly **partial `WeatherOverview` assembler**: the pure, deterministic
  * application-service that turns one already-computed PR #22 hourly-fallback selection into the
- * contracts {@link WeatherOverview} — but only for the **hourly** section, the sole section the
- * pipeline can currently supply.
+ * contracts {@link WeatherOverview} — the **hourly** section, and (since PR #96) the **daily** section
+ * derived from that same hourly data.
  *
  * The PR #22 selector decides *which* hourly result — the availability-aware `PRIMARY`, the
  * single-step-back `PREVIOUS`, or *none* — a downstream consumer may use as its data source. It stops
@@ -12,11 +12,27 @@
  * `WeatherOverview` in which:
  *
  * 1. `hourly` carries the selected result's forecast (or `[]` when nothing was selected),
- * 2. `sources` carries exactly one KMA `HOURLY` {@link SourceMetadata} (or `[]` when nothing was
- *    selected), and
- * 3. `missingSections` names exactly the sections this partial overview does **not** yet supply.
+ * 2. `daily` carries the days derived from that same `hourly` (or `[]` when nothing was selected, and
+ *    when the selected horizon contains no complete KST calendar day),
+ * 3. `sources` carries exactly one KMA {@link SourceMetadata} (or `[]` when nothing was selected), and
+ * 4. `missingSections` names exactly the sections this partial overview does **not** supply.
  *
- * Every other section is a fixed placeholder: `current: null`, `daily: []`, `airQuality.current: null`,
+ * ### The derived `daily` section — same issuance, no extra request
+ *
+ * PR #96 populates `daily` from the **already-selected, already-normalized** `hourly` array via the
+ * pure `deriveKmaDailyForecastFromHourly` policy — no second KMA request, no medium-term product, no
+ * new provider surface, and no public-contract change (`daily` already existed on `WeatherOverview`).
+ * The derivation publishes a day only when the hourly input covers that KST calendar date completely
+ * (all 24 clock hours, each exactly once); min/max come from those 24 temperatures, `morning`/
+ * `afternoon` from the 09:00/15:00 entries, and `overall`/`sunriseAt`/`sunsetAt` stay `null`. A short
+ * horizon that contains no complete day therefore yields `daily: []`, which keeps `DAILY` missing.
+ *
+ * Because both sections come from the one selected KMA forecast issuance, a populated `daily` does not
+ * add a source: it extends the **same** `SourceMetadata`'s `sections` to `['HOURLY', 'DAILY']` and
+ * leaves `sourceId`, `provider`, `issuedAt`, `observedAt`, `fetchedAt`, and `retrievalMode` untouched.
+ * No `DERIVED` source is ever fabricated.
+ *
+ * Every remaining section is a fixed placeholder: `current: null`, `airQuality.current: null`,
  * `airQuality.daily: []`, `alerts: []`. The contracts `weatherOverview` schema enforces the
  * object-section biconditionals (`current` ↔ `CURRENT`, `airQuality.current` ↔ `AIR_QUALITY_CURRENT`)
  * and rejects populated list data when its section is marked missing (a populated `hourly` must **not**
@@ -31,9 +47,13 @@
  *
  * ### Selected vs no-selection
  *
- * - **hourly source selected** (`selection.selected === true`) — the selected result's `hourly` is the
- *   overview's `hourly`; the caller's provenance becomes one KMA `HOURLY` source; `HOURLY` is **not**
- *   missing. Missing: `CURRENT`, `DAILY`, `AIR_QUALITY_CURRENT`, `AIR_QUALITY_FORECAST`, `ALERTS`.
+ * - **hourly source selected, with at least one complete day** — `hourly` is the selected result's
+ *   forecast and `daily` the days derived from it; the caller's provenance becomes one KMA source with
+ *   `sections: ['HOURLY', 'DAILY']`. Missing: `CURRENT`, `AIR_QUALITY_CURRENT`,
+ *   `AIR_QUALITY_FORECAST`, `ALERTS`.
+ * - **hourly source selected, no complete day** — `hourly` is the selected result's forecast, `daily`
+ *   is `[]`, and the one KMA source keeps `sections: ['HOURLY']`. Missing: `CURRENT`, `DAILY`,
+ *   `AIR_QUALITY_CURRENT`, `AIR_QUALITY_FORECAST`, `ALERTS`.
  * - **no selection** (`selection.selected === false`) — `hourly` is `[]`, `sources` is `[]`, and
  *   `HOURLY` joins the missing set. Missing: `CURRENT`, `HOURLY`, `DAILY`, `AIR_QUALITY_CURRENT`,
  *   `AIR_QUALITY_FORECAST`, `ALERTS`. No source metadata is fabricated for a source that was not chosen.
@@ -44,8 +64,9 @@
  * request, base issuance, `issuedAt`, `fetchedAt`, retrieval mode, or app-internal `sourceId`. So the
  * assembler never *infers* provenance. The caller supplies `sourceId`, `issuedAt`, `fetchedAt`, and
  * `retrievalMode` on a selected source; the assembler fixes only the three facts that are structurally
- * true here — `provider: 'KMA'`, `sections: ['HOURLY']`, `observedAt: null` (forecast data has no
- * observation instant). A caller that knows the issuance — since PR #26 the live
+ * true here — `provider: 'KMA'`, the `sections` the assembled overview actually carries
+ * (`['HOURLY']`, or `['HOURLY', 'DAILY']` when a day was derived), and `observedAt: null` (forecast
+ * data has no observation instant). A caller that knows the issuance — since PR #26 the live
  * `createKmaLiveSelectedHourlySourceMetadataResolver`, which reads the preserved PR #25 issuance
  * identity — supplies a concrete `issuedAt`; a caller that cannot determine it passes `issuedAt: null`
  * explicitly. Either way the assembler itself never reads a clock or reconstructs a KMA base time — its
@@ -57,8 +78,9 @@
  * {@link KmaHourlyFallbackSelection} and never re-derives which result to use, never re-checks
  * eligibility, and never inspects error kinds. It also does not narrow a location result's `LOCATION` /
  * `UNSUPPORTED_LOCATION` branch (a later application service does that before selecting), builds no
- * `current`/`daily`/air-quality/alerts data, wires into no production composition root, and touches no
- * route/cache/stale-data. Those are later PRs.
+ * `current`/air-quality/alerts data, wires into no production composition root, and touches no
+ * route/cache/stale-data. Its `daily` is derived from the hourly array it already holds — it opens no
+ * additional provider request and adds no medium-term (D+4~D+10) horizon. Those are later PRs.
  *
  * ### Purity, allocation, and immutability
  *
@@ -66,11 +88,13 @@
  * service, selector, or fallback call; it reads no clock (`Date.now`/`new Date`), environment
  * (`process.env`), or `AbortSignal`; it logs nothing, holds no state/cache/singleton, and uses no broad
  * `try`/`catch`. It mutates nothing — not the input, the location, the selection, the execution trace,
- * the selected result, its `hourly`, or the source context. As the overview's owner it allocates a
- * fresh output every call: `hourly` is copied out of the readonly service result into a new array (so
- * the output array is a different reference), and `weatherOverview.parse` produces fresh nested
- * objects. Value and order of `hourly` are preserved, but no reference identity (location, hourly
- * array, hourly item, source metadata) is contractual.
+ * the selected result, its `hourly`, or the source context. The daily derivation is itself pure and
+ * clock-free and mutates none of the hourly entries it reads. As the overview's owner the assembler
+ * allocates a fresh output every call: `hourly` is copied out of the readonly service result into a new
+ * array (so the output array is a different reference), `daily` is a freshly derived array, and
+ * `weatherOverview.parse` produces fresh nested objects. Value and order of `hourly` are preserved, but
+ * no reference identity (location, hourly array, hourly item, daily item, source metadata) is
+ * contractual.
  *
  * See `docs/kma-hourly-weather-overview.md`.
  */
@@ -83,6 +107,7 @@ import {
   type WeatherOverview,
 } from '@life-weather/contracts';
 
+import { deriveKmaDailyForecastFromHourly } from './kma-daily-from-hourly.js';
 import type { KmaHourlyFallbackSelection } from './kma-hourly-fallback-selection.js';
 
 /**
@@ -107,8 +132,8 @@ const nonEmptyHourlyForecasts = hourlyForecast.array().min(1);
  * {@link SourceMetadata} fields the assembler cannot know on its own — the app-internal `sourceId`, the
  * `issuedAt` issuance instant (`null` when the current pipeline cannot yet determine it), the
  * `fetchedAt` retrieval instant, and the `retrievalMode`. The assembler fixes the remaining
- * `SourceMetadata` fields itself (`provider: 'KMA'`, `sections: ['HOURLY']`, `observedAt: null`), so
- * they are deliberately absent here.
+ * `SourceMetadata` fields itself (`provider: 'KMA'`, the `sections` the assembled overview carries,
+ * `observedAt: null`), so they are deliberately absent here.
  */
 export type KmaHourlySourceMetadataInput = Pick<
   SourceMetadata,
@@ -164,19 +189,24 @@ function isSelectedOverviewInput(
 }
 
 /**
- * Assemble the hourly-only partial {@link WeatherOverview} from one precomputed PR #22 selection.
+ * Assemble the hourly + derived-daily partial {@link WeatherOverview} from one precomputed PR #22
+ * selection.
  *
  * On a selected source it first rejects an empty selected `hourly` with the module-local
- * `nonEmptyHourlyForecasts` guard, then maps the selected `hourly` into the overview, records the
- * caller's provenance as one KMA `HOURLY` {@link SourceMetadata}, and leaves `HOURLY` out of
- * `missingSections`; on no selection it emits an empty `hourly`/`sources` and adds `HOURLY` to the
- * missing set. Every other section is a fixed placeholder. The result is validated with
- * `weatherOverview.parse`, so an invalid location, timestamp, `sourceId`, a selected-empty `hourly`, or
- * an invariant breach throws a synchronous Zod error.
+ * `nonEmptyHourlyForecasts` guard, then maps the selected `hourly` into the overview, derives `daily`
+ * from that same array, records the caller's provenance as one KMA {@link SourceMetadata}, and leaves
+ * `HOURLY` out of `missingSections`. When at least one complete day was derived, `DAILY` also leaves
+ * `missingSections` and joins that same source's `sections`; otherwise `daily` stays `[]`, `DAILY`
+ * stays missing, and `sections` stays `['HOURLY']`. On no selection it emits an empty
+ * `hourly`/`daily`/`sources` and adds `HOURLY` to the missing set. Every other section is a fixed
+ * placeholder. The result is validated with `weatherOverview.parse`, so an invalid location,
+ * timestamp, `sourceId`, a selected-empty `hourly`, or an invariant breach throws a synchronous Zod
+ * error.
  *
  * Pure and synchronous: it reads only the caller's `location`, `selection`, and (when selected)
  * `source`, allocates a fresh overview each call, and mutates nothing. It infers no provenance, reads no
- * clock/environment/network, runs no selector, and handles no `LOCATION` branch.
+ * clock/environment/network, issues no additional provider request, runs no selector, and handles no
+ * `LOCATION` branch.
  */
 export function assembleKmaHourlyWeatherOverview(
   input: KmaHourlyWeatherOverviewInput,
@@ -188,30 +218,43 @@ export function assembleKmaHourlyWeatherOverview(
     // synchronous ZodError before any overview object or source metadata is built.
     const hourly = nonEmptyHourlyForecasts.parse(input.selection.result.hourly);
 
+    // Derive `daily` from that same validated hourly array — no second provider request, no other
+    // input. It yields one entry per complete KST calendar day the selection covers and `[]` when the
+    // horizon contains none (see `kma-daily-from-hourly.ts`), so `daily` is populated only when the
+    // already-selected issuance genuinely supports it.
+    const daily = deriveKmaDailyForecastFromHourly(hourly);
+    const hasDaily = daily.length > 0;
+
     // The selected forecast becomes the overview's `hourly` (a fresh array from the parse above), the
-    // caller's provenance becomes the one KMA `HOURLY` source, and `HOURLY` is not missing.
+    // caller's provenance becomes the one KMA source, and `HOURLY` is not missing. `DAILY` follows the
+    // derivation: when a complete day was derived it is no longer missing and it joins the *same*
+    // source's `sections` — both sections come from the one selected KMA forecast issuance, so no
+    // second or fabricated `DERIVED` source is created. Every other `SourceMetadata` field is the
+    // caller's provenance, unchanged.
     const overview = {
       location: input.location,
       current: null,
       hourly,
-      daily: [],
+      daily: [...daily],
       airQuality: {
         current: null,
         daily: [],
       },
       alerts: [],
-      missingSections: [
-        'CURRENT',
-        'DAILY',
-        'AIR_QUALITY_CURRENT',
-        'AIR_QUALITY_FORECAST',
-        'ALERTS',
-      ],
+      missingSections: hasDaily
+        ? ['CURRENT', 'AIR_QUALITY_CURRENT', 'AIR_QUALITY_FORECAST', 'ALERTS']
+        : [
+            'CURRENT',
+            'DAILY',
+            'AIR_QUALITY_CURRENT',
+            'AIR_QUALITY_FORECAST',
+            'ALERTS',
+          ],
       sources: [
         {
           sourceId: input.source.sourceId,
           provider: 'KMA',
-          sections: ['HOURLY'],
+          sections: hasDaily ? ['HOURLY', 'DAILY'] : ['HOURLY'],
           issuedAt: input.source.issuedAt,
           observedAt: null,
           fetchedAt: input.source.fetchedAt,
