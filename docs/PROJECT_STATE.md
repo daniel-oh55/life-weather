@@ -18,6 +18,8 @@
   (`getUltraSrtNcst`) 기반 current-observation을 함께 제공합니다(PR #81). current가 실패하면
   `current: null`과 `missingSections`의 `CURRENT`로 강등되며(PR #77의 기존 degradation 정책), 이
   경우에도 `HOURLY`는 그대로 유지됩니다.
+- PR #96(**OPEN Draft**)부터 `POST /weather`의 `daily`는 이미 선택된 KMA 단기예보 hourly
+  데이터에서 파생됩니다(추가 provider 요청 없음). 계약은 원래부터 존재했고 변경되지 않았습니다.
 - `KMA_SERVICE_KEY`는 server-only이며 누락 시 startup에서 fail-fast합니다.
 - startup 과정에서는 외부 fetch를 수행하지 않습니다.
 - `contracts`와 `weather-core`는 compiled `dist` entrypoint를 사용합니다.
@@ -28,7 +30,9 @@
 
 ## 아직 구현되지 않은 항목
 
-- daily section (아래 current-observation 관련 서술은 PR #63~#80의 historical implementation
+- daily section의 **중기예보(D+4~D+10)** 확장과 **모바일 주간예보 UI** (단기 daily 자체는 PR
+  #96에서 기존 hourly 데이터 파생으로 구현됐습니다 — 아래 PR #96 항목 참고. 아래
+  current-observation 관련 서술은 PR #63~#80의 historical implementation
   context이며, current가 현재도 미구현이라는 뜻이 아닙니다 — current는 PR #81부터 production
   `POST /weather`에 연결되어 있습니다. 위 "현재 baseline" 항목을 참고하세요. KMA
   초단기실황(`getUltraSrtNcst`) **provider boundary**는 **PR #63**에서
@@ -987,8 +991,7 @@
   optional 필드 생략/alert-first 순서는 기존 test suite가 이미 검증하므로 non-blocking입니다.
   실제 live KMA/AirKorea/production API 호출은 없었습니다. Owner Ready gate 이후 merge되어 현재
   main에 포함되어 있습니다.
-- **PR #95**(현재 **OPEN Draft**, `feat/pr-95-saved-location-switcher`, base
-  `main@c5e7e2ae431927ae139fe984d62a8f91d12a6dc1`)는 저장 지역 전환·추가를 네 개의 주요 날씨
+- **PR #95**(**MERGED**, new main `eb10a04fcdf1ff267dc98f4415ef2d0b66547e63`)는 저장 지역 전환·추가를 네 개의 주요 날씨
   화면 어디에서나 할 수 있도록 공용 우상단 지역 선택기를 추가합니다 — 새 presentation 컴포넌트
   `apps/mobile/src/components/saved-location-switcher.tsx`와 네 화면(`(tabs)/index.tsx`,
   `hourly.tsx`, `lifestyle.tsx`, `details.tsx`)의 header 우측, 그리고 Settings의 지역 안내 문구만
@@ -1025,7 +1028,36 @@
   남았음도 확인했습니다. 다만 `학성동`으로 전환한 뒤 sheet를 다시 열어 `✓ 학성동`을 보여주는
   전환 후 스크린샷은 별도로 캡처되지 않았습니다 — 지속된 선택이 탭 전반에 시각적으로 반영된
   점과 선택 행/체크 표시 semantics를 switcher test suite가 이미 검증하는 점 때문에
-  non-blocking입니다. 실제 live KMA/AirKorea/production API 호출은 없었습니다. PR은 Owner Ready
-  gate 전까지 계속 OPEN Draft로 유지됩니다.
+  non-blocking입니다. 실제 live KMA/AirKorea/production API 호출은 없었습니다. Owner Ready gate
+  이후 merge되어 현재 main에 포함되어 있습니다.
+- **PR #96**(현재 **OPEN Draft**, `feat/pr-96-kma-daily-from-hourly`, base
+  `main@eb10a04fcdf1ff267dc98f4415ef2d0b66547e63`)는 이미 존재하던
+  `WeatherOverview.daily` 계약을, **이미 선택되고 정규화된 KMA 단기예보 hourly 데이터**에서
+  파생해 채웁니다. **공개 계약과 `CONTRACT_VERSION`은 변경하지 않았고**(`DailyForecast`와
+  `WeatherOverview.daily`, `DAILY` missing-section 검증은 원래부터 존재했습니다), **추가 provider
+  요청도 없습니다**(새 KMA endpoint·두 번째 `getVilageFcst`·중기예보 API 없음). 새 순수 모듈
+  `apps/api/src/services/kma-daily-from-hourly.ts`
+  (`deriveKmaDailyForecastFromHourly`, 동기·clock-free·입력 불변)가 정책을 소유합니다 — 어떤 KST
+  달력 일자는 `00:00`~`23:00` 24개 시각이 각각 정확히 한 건씩 있을 때만 발행되고, 부분적인 당일·
+  잘린 마지막 날·시각 누락·같은 날짜/시각 중복·정시가 아닌 timestamp는 그 날짜를 통째로
+  제외합니다(보간·값 생성 없음). `minimumTemperatureCelsius`/`maximumTemperatureCelsius`는 그 날
+  **24개 hourly 기온**의 최소/최대이고, `morning`은 **09:00**, `afternoon`은 **15:00** 항목의
+  `condition`과 `precipitationProbabilityPercent`를 그대로 복사하며(강수확률의 확정 `0`과 미제공
+  `null` 의미 보존), `overall`·`sunriseAt`·`sunsetAt`은 항상 `null`입니다. 출력은 `date`
+  오름차순이고 입력 순서와 무관하게 결정론적이며 각 항목은 contracts `dailyForecast` 스키마로
+  검증합니다. production 연결은 기존 assembler
+  `apps/api/src/services/kma-hourly-weather-overview.ts` 한 곳뿐입니다 — daily가 파생되면 `DAILY`가
+  `missingSections`에서 빠지고 **같은** KMA source의 `sections`가 `['HOURLY', 'DAILY']`가 됩니다
+  (가짜 `DERIVED` source 없음, `sourceId`/`provider`/`issuedAt`/`observedAt`/`fetchedAt`/
+  `retrievalMode` 보존). 완전한 하루가 없으면 `daily: []`와 `DAILY` missing, `sections: ['HOURLY']`가
+  유지되고, no-selection branch(hourly `[]`/daily `[]`/`HOURLY`+`DAILY` missing/sources `[]`)도
+  그대로입니다. current/AirKorea overlay assembler는 baseline의 `daily`/`missingSections`/`sources`를
+  이미 verbatim 보존하므로 재설계하지 않았습니다. `packages/contracts`, `CONTRACT_VERSION`,
+  `packages/weather-core`, `apps/api/src/providers`, `routes`, `presenters`, `composition`,
+  `index.ts`/`api-app.ts`, dependency·lockfile·env·Vercel config·모바일 앱은 변경하지 않았습니다.
+  실제 KMA/AirKorea/production 호출, 배포, native build는 수행하지 않았습니다. 자세한 내용은
+  [kma-hourly-weather-overview.md](./kma-hourly-weather-overview.md) 참고. 중기예보 D+4~D+10 확장과
+  모바일 주간예보 UI는 후속 작업입니다. PR은 독립 Codex HIGH 리뷰와 Owner Ready gate 전까지 계속
+  OPEN Draft로 유지됩니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.

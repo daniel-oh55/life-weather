@@ -417,6 +417,43 @@ function completeShortSlotItems(baseTime: string): RawItem[] {
   }));
 }
 
+/**
+ * A **complete** SHORT day: all nine categories for every clock hour `0000`-`2300` of forecast date
+ * `20260722`, at the Seoul grid `60/127`. This is the minimum a real 단기예보 issuance must contain
+ * before the PR #96 daily derivation will publish a day, so it is what the production-path daily
+ * regression below feeds through the real graph.
+ *
+ * `TMP` rises `18.0` -> `29.5` in `0.5` steps so the derived min/max are provably the 24-hour
+ * extremes (never the 09:00/15:00 values), and `POP` is deliberately distinct at 09:00 (`60`) and
+ * 15:00 (`10`) so morning/afternoon can be told apart from the constant `20` of every other hour.
+ */
+function completeShortDayItems(baseTime: string): RawItem[] {
+  const items: RawItem[] = [];
+  for (let hour = 0; hour < 24; hour += 1) {
+    const fcstTime = `${hour < 10 ? `0${hour}` : hour}00`;
+    const temperature = (18 + hour * 0.5).toFixed(1);
+    const probability = hour === 9 ? '60' : hour === 15 ? '10' : '20';
+    for (const { category, fcstValue } of SHORT_SLOT_CATEGORY_VALUES) {
+      items.push({
+        baseDate: '20260722',
+        baseTime,
+        category,
+        fcstDate: '20260722',
+        fcstTime,
+        fcstValue:
+          category === 'TMP'
+            ? temperature
+            : category === 'POP'
+              ? probability
+              : fcstValue,
+        nx: 60,
+        ny: 127,
+      });
+    }
+  }
+  return items;
+}
+
 interface CurrentRawItem {
   baseDate: string;
   baseTime: string;
@@ -1052,6 +1089,77 @@ describe('production app integration — POST /weather', () => {
     expectNoForbiddenKeys(body);
     expectNoLeakage(body, FAKE_AIRKOREA_SERVICE_KEY);
     expect(Object.keys(body).sort()).toEqual(['data', 'meta', 'ok']);
+  });
+
+  it('A4. a selected KMA short forecast containing a complete calendar day → 200 with a populated data.daily and DAILY no longer missing', async () => {
+    // Same real production graph as test A - only the synthetic 단기예보 payload is wider (a full
+    // 24-hour calendar day instead of a single 0600 slot). No new route, composition, or provider
+    // call: the daily section is derived from this very hourly dataset.
+    const { fetchImpl, calls } = dispatchFetch({
+      vilageFcst: () => jsonOk(successBody(completeShortDayItems('0500'))),
+      ultraSrtNcst: () => jsonOk(successBody(fullCurrentSlotItems())),
+    });
+    const { clock } = scriptedClock([
+      CLOCK_AT_0510_KST_20260722,
+      FETCHED_AT_EPOCH_MS,
+      CURRENT_REQUEST_EPOCH_MS,
+      CURRENT_FETCHED_AT_EPOCH_MS,
+    ]);
+    const app = buildApp({
+      serviceKey: FAKE_KMA_SERVICE_KEY,
+      airKoreaServiceKey: FAKE_AIRKOREA_SERVICE_KEY,
+      fetchImpl,
+      clock,
+      now: () => new Date(META_GENERATED_AT_ISO),
+      createRequestId: () => 'req-integration-daily',
+    });
+
+    const res = await postWeather(app, { body: requestBody() });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as WeatherResponseV1;
+    expect(weatherSuccessResponseV1.safeParse(body).success).toBe(true);
+    if (!body.ok) {
+      throw new Error('expected a success response');
+    }
+
+    // Still exactly the two pre-existing upstream calls - deriving daily adds no provider request.
+    expect(calls).toHaveLength(2);
+
+    // The public WeatherResponseV1 now carries the derived daily section.
+    expect(body.data.daily.length).toBeGreaterThan(0);
+    expect(body.data.missingSections).not.toContain('DAILY');
+
+    // Real derived values, not a placeholder: 24-hour min/max and the 09:00 / 15:00 periods.
+    expect(body.data.daily).toHaveLength(1);
+    const day = body.data.daily[0];
+    expect(day.date).toBe('2026-07-22');
+    expect(day.minimumTemperatureCelsius).toBe(18);
+    expect(day.maximumTemperatureCelsius).toBe(29.5);
+    expect(day.morning).toEqual({ condition: 'CLEAR', precipitationProbabilityPercent: 60 });
+    expect(day.afternoon).toEqual({ condition: 'CLEAR', precipitationProbabilityPercent: 10 });
+    expect(day.overall).toBeNull();
+    expect(day.sunriseAt).toBeNull();
+    expect(day.sunsetAt).toBeNull();
+
+    // hourly is unaffected: still the full 24 normalized entries, in ascending forecast order.
+    expect(body.data.hourly).toHaveLength(24);
+    expect(body.data.hourly[0].forecastAt).toBe('2026-07-22T00:00:00+09:00');
+    expect(body.data.hourly[23].forecastAt).toBe('2026-07-22T23:00:00+09:00');
+    expect(body.data.missingSections).not.toContain('HOURLY');
+
+    // Both sections come from the one selected KMA forecast issuance - no fabricated DERIVED source.
+    const kmaHourlySource = body.data.sources.find(
+      (source) => source.sourceId === SHORT_SOURCE_ID,
+    );
+    expect(kmaHourlySource).toBeDefined();
+    expect(kmaHourlySource!.sections).toEqual(['HOURLY', 'DAILY']);
+    expect(kmaHourlySource!.provider).toBe('KMA');
+    expect(kmaHourlySource!.fetchedAt).toBe(FETCHED_AT_ISO);
+    expect(body.data.sources.some((source) => source.provider === 'DERIVED')).toBe(false);
+
+    expectNoForbiddenKeys(body);
+    expectNoLeakage(body);
   });
 
   it('B. unsupported location (Null Island) → 422 UNSUPPORTED_LOCATION, no fetch (current is never attempted, since the hourly LOCATION failure short-circuits before PR #77 calls current)', async () => {
