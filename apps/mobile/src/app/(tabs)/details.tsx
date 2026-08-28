@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { SavedLocationSwitcher } from '../../components/saved-location-switcher';
 import {
   createMobileWeatherDetails,
   type MobileWeatherAlertCard,
@@ -152,11 +153,7 @@ export default function DetailsScreen() {
           <Text accessibilityRole="header" style={styles.headerTitle}>
             상세기상
           </Text>
-          {savedLocations.status === 'READY' && selectedLocation !== null ? (
-            <Text style={styles.headerLocation} numberOfLines={1}>
-              {selectedLocation.displayName}
-            </Text>
-          ) : null}
+          <SavedLocationSwitcher savedLocations={savedLocations} />
         </View>
 
         {savedLocations.status === 'NOT_STARTED' ||
@@ -334,12 +331,6 @@ const styles = StyleSheet.create({
     fontSize: 26,
     fontWeight: '700',
     color: TEXT_PRIMARY,
-  },
-  headerLocation: {
-    fontSize: 15,
-    color: TEXT_SECONDARY,
-    flexShrink: 1,
-    marginLeft: 12,
   },
   card: {
     backgroundColor: CARD_BACKGROUND,

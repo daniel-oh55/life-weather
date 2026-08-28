@@ -44,6 +44,22 @@ vi.mock('expo-router', () => ({
 }));
 
 // ---------------------------------------------------------------------------
+// The shared saved-location switcher is replaced with a marker component. The region button, its
+// bottom sheet, and the select/delete/add mutations behind them are that component's own contract
+// (covered by `../components/saved-location-switcher.test.tsx`); what this screen still owns — and
+// what is asserted below — is that it renders exactly one switcher and hands it the same exact
+// snapshot it hands `useMobileWeatherQuery`.
+// ---------------------------------------------------------------------------
+
+const MockSavedLocationSwitcher = vi.hoisted(() => function MockSavedLocationSwitcher(): null {
+  return null;
+});
+
+vi.mock('../components/saved-location-switcher', () => ({
+  SavedLocationSwitcher: MockSavedLocationSwitcher,
+}));
+
+// ---------------------------------------------------------------------------
 // Both read-only hooks are replaced with call-recording mocks: this screen owns only the
 // presentation of whatever snapshot each hook returns, never the hook's own subscription or
 // lifecycle contract (each is covered by its own dedicated test file).
@@ -264,6 +280,27 @@ function press(element: ElementLike): void {
   (element.props.onPress as () => void)();
 }
 
+/** Every shared saved-location switcher the screen rendered, in render order. */
+function switchers(root: unknown): ElementLike[] {
+  const collected: ElementLike[] = [];
+  walk(root, (element) => {
+    if (element.type === MockSavedLocationSwitcher) {
+      collected.push(element);
+    }
+  });
+  return collected;
+}
+
+/**
+ * Asserts the screen delegates its region control to exactly one shared switcher, and passes that
+ * switcher the *exact* saved-location snapshot reference (never a copy, and never a re-read).
+ */
+function expectSingleSwitcher(root: unknown, snapshot: unknown): void {
+  const rendered = switchers(root);
+  expect(rendered).toHaveLength(1);
+  expect(rendered[0]?.props.savedLocations).toBe(snapshot);
+}
+
 function scrollViews(root: unknown): ElementLike[] {
   const collected: ElementLike[] = [];
   walk(root, (element) => {
@@ -433,20 +470,38 @@ describe('screen-owned header', () => {
     expect(headers(render())).toContain('시간별');
   });
 
-  it('shows the selected location display name next to the title when READY', async () => {
-    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
+  it('places exactly one shared saved-location switcher beside the title when READY', async () => {
+    const snapshot = readySnapshot([savedLocationRecord('a', 0)], 'a');
+    useMobileSavedLocationsMock.mockReturnValue(snapshot);
     useMobileWeatherQueryMock.mockReturnValue(idleQuery());
     const render = await loadScreen();
 
-    expect(texts(render())).toContain('Synthetic a');
+    expectSingleSwitcher(render(), snapshot);
   });
 
-  it('does not show a location name when saved locations are not READY', async () => {
-    useMobileSavedLocationsMock.mockReturnValue(loadingSnapshot());
+  it('passes the switcher the same exact snapshot it passes useMobileWeatherQuery', async () => {
+    const snapshot = readySnapshot([savedLocationRecord('a', 0)], 'a');
+    useMobileSavedLocationsMock.mockReturnValue(snapshot);
+    useMobileWeatherQueryMock.mockReturnValue(idleQuery());
     const render = await loadScreen();
 
-    const rendered = texts(render());
-    expect(rendered.some((text) => text.startsWith('Synthetic '))).toBe(false);
+    const element = render();
+
+    expect(useMobileWeatherQueryMock).toHaveBeenCalledWith(snapshot);
+    expect(switchers(element)[0]?.props.savedLocations).toBe(
+      useMobileWeatherQueryMock.mock.calls[0]?.[0],
+    );
+  });
+
+  it('hands non-READY snapshots to the same single switcher and renders no region name itself', async () => {
+    for (const snapshot of [notStartedSnapshot(), loadingSnapshot(), selectionLoadingSnapshot()]) {
+      useMobileSavedLocationsMock.mockReturnValue(snapshot);
+      const render = await loadScreen();
+
+      const element = render();
+      expectSingleSwitcher(element, snapshot);
+      expect(texts(element).some((text) => text.startsWith('Synthetic '))).toBe(false);
+    }
   });
 });
 
@@ -530,24 +585,26 @@ describe('saved-location ERROR', () => {
 // ---------------------------------------------------------------------------
 
 describe('READY + weather query states', () => {
-  it('shows a loading card and the selected location name while the weather query is IDLE', async () => {
-    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
+  it('shows a loading card and keeps the region switcher while the weather query is IDLE', async () => {
+    const snapshot = readySnapshot([savedLocationRecord('a', 0)], 'a');
+    useMobileSavedLocationsMock.mockReturnValue(snapshot);
     useMobileWeatherQueryMock.mockReturnValue(idleQuery());
     const render = await loadScreen();
 
-    const rendered = texts(render());
-    expect(rendered).toContain('선택한 지역의 시간별 날씨를 불러오는 중입니다.');
-    expect(rendered).toContain('Synthetic a');
+    const element = render();
+    expect(texts(element)).toContain('선택한 지역의 시간별 날씨를 불러오는 중입니다.');
+    expectSingleSwitcher(element, snapshot);
   });
 
-  it('shows the loading copy and the selected location name while the weather query is LOADING', async () => {
-    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
+  it('shows the loading copy and keeps the region switcher while the weather query is LOADING', async () => {
+    const snapshot = readySnapshot([savedLocationRecord('a', 0)], 'a');
+    useMobileSavedLocationsMock.mockReturnValue(snapshot);
     useMobileWeatherQueryMock.mockReturnValue(loadingQuery('a'));
     const render = await loadScreen();
 
-    const rendered = texts(render());
-    expect(rendered).toContain('선택한 지역의 시간별 날씨를 불러오는 중입니다.');
-    expect(rendered).toContain('Synthetic a');
+    const element = render();
+    expect(texts(element)).toContain('선택한 지역의 시간별 날씨를 불러오는 중입니다.');
+    expectSingleSwitcher(element, snapshot);
   });
 
   it('shows a preparing card, not raw id, when the selected record is missing (defensive)', async () => {
@@ -571,8 +628,9 @@ describe('READY + weather ERROR', () => {
     ['NETWORK', '날씨 정보를 불러오지 못했습니다. 네트워크 연결을 확인해 주세요.'],
     ['API', '날씨 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.'],
     ['INVALID_RESPONSE', '날씨 정보를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.'],
-  ] as const)('shows the fixed %s copy with the selected location name, a retry control, and no raw detail', async (presentation, copy) => {
-    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
+  ] as const)('shows the fixed %s copy with the region switcher, a retry control, and no raw detail', async (presentation, copy) => {
+    const snapshot = readySnapshot([savedLocationRecord('a', 0)], 'a');
+    useMobileSavedLocationsMock.mockReturnValue(snapshot);
     useMobileWeatherQueryMock.mockReturnValue(errorQuery('a', presentation));
     const render = await loadScreen();
 
@@ -580,7 +638,7 @@ describe('READY + weather ERROR', () => {
     const rendered = texts(element).join('\n');
 
     expect(rendered).toContain(copy);
-    expect(rendered).toContain('Synthetic a');
+    expectSingleSwitcher(element, snapshot);
     expect(rendered).not.toContain(presentation);
     expect(pressableByLabel(element, '시간별 날씨 다시 시도')).toBeDefined();
   });
@@ -601,16 +659,16 @@ describe('READY + weather ERROR', () => {
 // ---------------------------------------------------------------------------
 
 describe('READY + SUCCESS with empty hourly', () => {
-  it('shows the empty-hourly copy and the selected location name without a retry control', async () => {
-    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
+  it('shows the empty-hourly copy with the region switcher and no retry control', async () => {
+    const snapshot = readySnapshot([savedLocationRecord('a', 0)], 'a');
+    useMobileSavedLocationsMock.mockReturnValue(snapshot);
     useMobileWeatherQueryMock.mockReturnValue(successQuery('a', successResponse([])));
     const render = await loadScreen();
 
     const element = render();
-    const rendered = texts(element);
 
-    expect(rendered).toContain('표시할 시간별 예보가 없습니다.');
-    expect(rendered).toContain('Synthetic a');
+    expect(texts(element)).toContain('표시할 시간별 예보가 없습니다.');
+    expectSingleSwitcher(element, snapshot);
     expect(pressables(element)).toHaveLength(0);
   });
 
@@ -629,34 +687,36 @@ describe('READY + SUCCESS with empty hourly', () => {
 // ---------------------------------------------------------------------------
 
 describe('hourly content', () => {
-  it('shows the selected display name and every hourly entry in response order', async () => {
-    useMobileSavedLocationsMock.mockReturnValue(
-      readySnapshot([savedLocationRecord('a', 0), savedLocationRecord('b', 1)], 'b'),
-    );
+  it('shows the region switcher and every hourly entry in response order', async () => {
+    const snapshot = readySnapshot([savedLocationRecord('a', 0), savedLocationRecord('b', 1)], 'b');
+    useMobileSavedLocationsMock.mockReturnValue(snapshot);
     const first = hourlyEntry({ forecastAt: '2026-08-05T05:00:00Z', temperatureCelsius: 21 });
     const second = hourlyEntry({ forecastAt: '2026-08-05T06:00:00Z', temperatureCelsius: 22 });
     useMobileWeatherQueryMock.mockReturnValue(successQuery('b', successResponse([first, second], 'b')));
     const render = await loadScreen();
 
-    const rendered = texts(render());
+    const element = render();
+    const rendered = texts(element);
 
-    expect(rendered).toContain('Synthetic b');
+    expectSingleSwitcher(element, snapshot);
     const firstIndex = rendered.indexOf('21°');
     const secondIndex = rendered.indexOf('22°');
     expect(firstIndex).toBeGreaterThan(-1);
     expect(secondIndex).toBeGreaterThan(firstIndex);
   });
 
-  it('shows the selected display name exactly once', async () => {
-    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
+  it('renders exactly one region switcher and no display-name text of its own', async () => {
+    const snapshot = readySnapshot([savedLocationRecord('a', 0)], 'a');
+    useMobileSavedLocationsMock.mockReturnValue(snapshot);
     useMobileWeatherQueryMock.mockReturnValue(
       successQuery('a', successResponse([hourlyEntry()])),
     );
     const render = await loadScreen();
 
-    const rendered = texts(render());
+    const element = render();
 
-    expect(rendered.filter((text) => text === 'Synthetic a')).toHaveLength(1);
+    expectSingleSwitcher(element, snapshot);
+    expect(texts(element).filter((text) => text === 'Synthetic a')).toHaveLength(0);
   });
 
   it('never renders current/daily/alerts/source content', async () => {
@@ -1067,17 +1127,19 @@ describe('horizontal timeline axis', () => {
     }
   });
 
-  it('keeps the screen title and selected location outside the horizontal scroll surface', async () => {
+  it('keeps the screen title and region switcher outside the horizontal scroll surface', async () => {
     useMobileSavedLocationsMock.mockReturnValue(
       readySnapshot([savedLocationRecord('a', 0, 'Asia/Seoul')], 'a'),
     );
     useMobileWeatherQueryMock.mockReturnValue(successQuery('a', timelineResponse()));
     const render = await loadScreen();
 
-    const inside = texts(timelineScrollView(render()));
+    const element = render();
+    const inside = texts(timelineScrollView(element));
 
     expect(inside).not.toContain('시간별');
-    expect(inside).not.toContain('Synthetic a');
+    expect(switchers(timelineScrollView(element))).toHaveLength(0);
+    expect(switchers(element)).toHaveLength(1);
   });
 
   it('describes the timeline as a horizontally scrollable comparison for assistive technology', async () => {
