@@ -18,8 +18,10 @@
   (`getUltraSrtNcst`) 기반 current-observation을 함께 제공합니다(PR #81). current가 실패하면
   `current: null`과 `missingSections`의 `CURRENT`로 강등되며(PR #77의 기존 degradation 정책), 이
   경우에도 `HOURLY`는 그대로 유지됩니다.
-- PR #96(**OPEN Draft**)부터 `POST /weather`의 `daily`는 이미 선택된 KMA 단기예보 hourly
-  데이터에서 파생됩니다(추가 provider 요청 없음). 계약은 원래부터 존재했고 변경되지 않았습니다.
+- PR #96(**MERGED**, main `c3dc6518aaf069c76072dc53c957e7dae08efb63`)부터 `POST /weather`의
+  `daily`는 이미 선택된 KMA 단기예보 hourly 데이터에서 파생됩니다(추가 provider 요청 없음).
+  계약은 원래부터 존재했고 변경되지 않았습니다. 이 단기 daily 파생은 현재 main에 포함되어
+  있습니다.
 - `KMA_SERVICE_KEY`는 server-only이며 누락 시 startup에서 fail-fast합니다.
 - startup 과정에서는 외부 fetch를 수행하지 않습니다.
 - `contracts`와 `weather-core`는 compiled `dist` entrypoint를 사용합니다.
@@ -30,8 +32,9 @@
 
 ## 아직 구현되지 않은 항목
 
-- daily section의 **중기예보(D+4~D+10)** 확장과 **모바일 주간예보 UI** (단기 daily 자체는 PR
-  #96에서 기존 hourly 데이터 파생으로 구현됐습니다 — 아래 PR #96 항목 참고. 아래
+- daily section의 **중기예보(D+4~D+10)** 확장 (단기 daily 자체는 PR
+  #96에서 기존 hourly 데이터 파생으로 구현되어 merge됐고, 이를 소비하는 **모바일 주간예보 UI**는
+  PR #97에서 구현됐습니다 — 아래 PR #96·#97 항목 참고. 아래
   current-observation 관련 서술은 PR #63~#80의 historical implementation
   context이며, current가 현재도 미구현이라는 뜻이 아닙니다 — current는 PR #81부터 production
   `POST /weather`에 연결되어 있습니다. 위 "현재 baseline" 항목을 참고하세요. KMA
@@ -1030,8 +1033,7 @@
   점과 선택 행/체크 표시 semantics를 switcher test suite가 이미 검증하는 점 때문에
   non-blocking입니다. 실제 live KMA/AirKorea/production API 호출은 없었습니다. Owner Ready gate
   이후 merge되어 현재 main에 포함되어 있습니다.
-- **PR #96**(현재 **OPEN Draft**, `feat/pr-96-kma-daily-from-hourly`, base
-  `main@eb10a04fcdf1ff267dc98f4415ef2d0b66547e63`)는 이미 존재하던
+- **PR #96**(**MERGED**, new main `c3dc6518aaf069c76072dc53c957e7dae08efb63`)는 이미 존재하던
   `WeatherOverview.daily` 계약을, **이미 선택되고 정규화된 KMA 단기예보 hourly 데이터**에서
   파생해 채웁니다. **공개 계약과 `CONTRACT_VERSION`은 변경하지 않았고**(`DailyForecast`와
   `WeatherOverview.daily`, `DAILY` missing-section 검증은 원래부터 존재했습니다), **추가 provider
@@ -1056,8 +1058,37 @@
   `packages/weather-core`, `apps/api/src/providers`, `routes`, `presenters`, `composition`,
   `index.ts`/`api-app.ts`, dependency·lockfile·env·Vercel config·모바일 앱은 변경하지 않았습니다.
   실제 KMA/AirKorea/production 호출, 배포, native build는 수행하지 않았습니다. 자세한 내용은
-  [kma-hourly-weather-overview.md](./kma-hourly-weather-overview.md) 참고. 중기예보 D+4~D+10 확장과
-  모바일 주간예보 UI는 후속 작업입니다. PR은 독립 Codex HIGH 리뷰와 Owner Ready gate 전까지 계속
-  OPEN Draft로 유지됩니다.
+  [kma-hourly-weather-overview.md](./kma-hourly-weather-overview.md) 참고. 중기예보 D+4~D+10 확장은
+  후속 작업이며, 이 `daily`를 소비하는 모바일 주간예보 UI는 PR #97입니다. 독립 Codex HIGH 리뷰와
+  Owner Ready gate를 거쳐 merge되어 현재 main에 포함되어 있습니다.
+- **PR #97**(현재 **OPEN Draft**, `feat/pr-97-mobile-weekly-forecast`, base
+  `main@c3dc6518aaf069c76072dc53c957e7dae08efb63`)는 PR #96이 채우기 시작한 기존
+  `WeatherOverview.daily`를 모바일에서 **읽기만** 해서 주간예보 화면으로 보여줍니다. **API·contract·
+  `CONTRACT_VERSION`·provider·backend·store·dependency 변경이 없고**, 새 route 파일도 새 weather
+  요청·query lifecycle도 추가하지 않습니다. 기존 `시간별` 하단 탭의 **표시 제목만 `예보`로**
+  바뀌었고(탭 개수·순서·다른 탭 제목·navigation 구조는 그대로), 그 화면이 헤더 아래에
+  `시간별 | 주간` 2-option segmented control을 갖습니다. 뷰 선택은 presentation 전용으로 기존
+  `/hourly` route의 `view` search parameter에만 존재하며(`useLocalSearchParams` 읽기,
+  `router.replace`로 전환, 저장하지 않음), 화면은 여전히 `useMobileSavedLocations()` 스냅샷 하나를
+  그대로 `SavedLocationSwitcher`와 `useMobileWeatherQuery`에 넘깁니다 — 재구독·직접 fetch·
+  generation/abort/retry/reset 의미 변경·TabsLayout lifecycle 소유권 변경이 없습니다. 기본값과
+  인식되지 않는 값은 기존 시간별 timeline(고정 좌측 rail, 가로 snap, timezone 기반 local-date band,
+  기온 그래프, null/0 표기)을 그대로 유지합니다. `view=weekly`는 `weatherQuery.data.data.daily`를
+  **계약 순서 그대로** 하루 한 장의 카드로 렌더링합니다(모바일 재파생·정렬·dedupe·7일 padding 없음).
+  `date`는 계약이 이미 검증한 달력 일자이므로 문자열에서 직접 읽고 요일만 UTC로 계산해 `M월 D일 (요일)`로
+  표시하므로 host/device timezone이 날짜를 밀 수 없습니다. `최저`/`최고`는 공급된 값만 쓰고 `null`은
+  `—`, `0`과 음수는 그대로 유지합니다. `overall`/`morning`/`afternoon`은 공급된 것만 각각 `종일`/
+  `오전`/`오후`로 렌더링하고(누락 period를 다른 period로 유추하지 않음), 셋 다 `null`이면 기온은
+  유지한 채 `날씨 정보 없음`만 표시합니다. 강수확률은 `null`이면 `강수 —`, `0`이면 `강수 0%`로 서로
+  구분됩니다. `sunriseAt`/`sunsetAt`은 이번 PR UI에 노출하지 않습니다. SUCCESS인데 `daily`가 비어
+  있으면 오류가 아니라 `표시할 주간 예보가 없습니다.` 카드를 보여주며 hourly로 대체하지 않습니다.
+  변경 파일은 `apps/mobile/src/app/(tabs)/hourly.tsx`,
+  `apps/mobile/src/app/(tabs)/_layout.tsx`와 대응 app-test 두 개뿐입니다. `packages/contracts`,
+  `CONTRACT_VERSION`, `packages/weather-core`, `packages/lifestyle-engine`, `apps/api`,
+  `apps/mobile/src/weather-api`, `weather-query`/`locations` production 파일,
+  `SavedLocationSwitcher` 동작, package·lockfile·env·Expo/native config는 변경하지 않았습니다.
+  실제 KMA/AirKorea/production 호출, 배포, EAS/native build는 수행하지 않았습니다. 중기예보
+  D+4~D+10과 전체 하단 navigation 재구성은 여전히 후속 작업입니다. Owner의 Expo Web 약 412×915
+  시각 확인이 다음 gate이며, 그 전까지 PR은 OPEN Draft로 유지됩니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
