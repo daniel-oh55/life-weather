@@ -1664,6 +1664,28 @@ describe('forecast view selection', () => {
     },
   );
 
+  // A repeated `view` search parameter reaches the screen as a `string[]`. It is ambiguous — no
+  // array shape, ordering or content selects the weekly presentation, so every one of them keeps
+  // the default hourly timeline.
+  it.each([
+    [['weekly']],
+    [['hourly', 'weekly']],
+    [['weekly', 'hourly']],
+    [['weekly', 'weekly']],
+    [['weekly-ish', 'nonsense']],
+    [['', 'weekly', '']],
+  ] as const)('keeps the hourly timeline for the repeated view parameter %j', async (value) => {
+    const { element } = await renderForecast([...value]);
+
+    // The hourly timeline is rendered...
+    expect(horizontalScrollViews(element)).toHaveLength(1);
+    expect(texts(element)).toContain('21°');
+    // ...the weekly day cards are not...
+    expect(texts(element)).not.toContain('8월 30일 (일)');
+    // ...and the 시간별 segment is the selected one.
+    expect(selectedSegmentLabels(element)).toEqual(['시간별 예보']);
+  });
+
   it('renders the weekly day presentation instead of the hourly timeline for view=weekly', async () => {
     const { element } = await renderForecast('weekly');
 

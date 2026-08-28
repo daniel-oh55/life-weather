@@ -75,8 +75,7 @@ const FORECAST_VIEW_OPTIONS: readonly ForecastViewOption[] = [
  * presentation; a missing, repeated or unrecognised value keeps the default hourly one.
  */
 function resolveForecastView(raw: string | string[] | undefined): ForecastView {
-  const value = Array.isArray(raw) ? raw[raw.length - 1] : raw;
-  return value === 'weekly' ? 'weekly' : 'hourly';
+  return raw === 'weekly' ? 'weekly' : 'hourly';
 }
 
 /** Korean weekday labels indexed by day-of-week, starting at Sunday. */
