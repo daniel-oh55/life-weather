@@ -1,5 +1,10 @@
-import type { HourlyForecast, WeatherCondition } from '@life-weather/contracts';
-import { useRouter } from 'expo-router';
+import type {
+  DailyForecast,
+  ForecastPeriod,
+  HourlyForecast,
+  WeatherCondition,
+} from '@life-weather/contracts';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { SavedLocationSwitcher } from '../../components/saved-location-switcher';
@@ -43,6 +48,87 @@ const CONDITION_EMOJI: Record<WeatherCondition, string> = {
  * cell without breaking column alignment, so a `null` is shown as missing — never as a `0`.
  */
 const NO_VALUE = '—';
+
+// ---------------------------------------------------------------------------
+// Forecast view selection. The 예보 screen shows one of two presentations of the *same* weather
+// query: the hourly timeline or the weekly day cards. The choice is presentation-only — it lives
+// in the route's `view` search parameter, never in storage or a store, and never triggers,
+// resets or duplicates a weather request.
+// ---------------------------------------------------------------------------
+
+type ForecastView = 'hourly' | 'weekly';
+
+interface ForecastViewOption {
+  readonly view: ForecastView;
+  readonly label: string;
+  readonly href: '/hourly' | '/hourly?view=weekly';
+}
+
+/** The two segmented-control options, in display order. */
+const FORECAST_VIEW_OPTIONS: readonly ForecastViewOption[] = [
+  { view: 'hourly', label: '시간별', href: '/hourly' },
+  { view: 'weekly', label: '주간', href: '/hourly?view=weekly' },
+];
+
+/**
+ * The active view for a raw `view` search parameter. Only an explicit `weekly` selects the weekly
+ * presentation; a missing, repeated or unrecognised value keeps the default hourly one.
+ */
+function resolveForecastView(raw: string | string[] | undefined): ForecastView {
+  const value = Array.isArray(raw) ? raw[raw.length - 1] : raw;
+  return value === 'weekly' ? 'weekly' : 'hourly';
+}
+
+/** Korean weekday labels indexed by day-of-week, starting at Sunday. */
+const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'] as const;
+
+/**
+ * Korean heading for a daily entry's `YYYY-MM-DD` date, e.g. "8월 30일 (일)".
+ *
+ * `DailyForecast.date` is a calendar date the contract has already validated, not an instant, so
+ * the month and day are read straight from the string and only the weekday is derived — in UTC,
+ * so the host or device timezone can never shift the day onto a neighbouring date. An
+ * unparseable value degrades to the raw string rather than a fabricated date.
+ */
+function dailyDateLabel(date: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (match === null) {
+    return date;
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const utc = new Date(Date.UTC(2000, month - 1, day));
+  utc.setUTCFullYear(year);
+  const weekday = WEEKDAY_LABELS[utc.getUTCDay()];
+  return weekday === undefined ? date : `${month}월 ${day}일 (${weekday})`;
+}
+
+/** `최저 22°` / `최고 —`. A supplied `0` or a negative value stays visible exactly as supplied. */
+function dailyTemperatureLabel(prefix: string, celsius: number | null): string {
+  return celsius === null ? `${prefix} ${NO_VALUE}` : `${prefix} ${celsius}°`;
+}
+
+/** `강수 60%` / `강수 0%` / `강수 —`. A missing probability is never rendered as a zero. */
+function precipitationProbabilityLabel(percent: number | null): string {
+  return percent === null ? `강수 ${NO_VALUE}` : `강수 ${percent}%`;
+}
+
+interface DailyPeriodSpec {
+  readonly key: 'overall' | 'morning' | 'afternoon';
+  readonly label: string;
+}
+
+/**
+ * Every period a {@link DailyForecast} can carry, in display order. A day may supply any subset —
+ * a single all-day `overall`, a `morning`/`afternoon` pair, or none at all — so each supplied
+ * period is rendered as given and an absent one is simply omitted, never inferred from another.
+ */
+const DAILY_PERIODS: readonly DailyPeriodSpec[] = [
+  { key: 'overall', label: '종일' },
+  { key: 'morning', label: '오전' },
+  { key: 'afternoon', label: '오후' },
+];
 
 /** Fixed, safe copy per weather-query error presentation. No raw kind/message/URL/id. */
 function describeWeatherError(presentation: MobileWeatherQueryErrorPresentation): string {
@@ -522,8 +608,104 @@ function renderTimeline(hourly: readonly HourlyForecast[], timeZone: string) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Weekly presentation: one vertical card per contract-supplied day.
+// ---------------------------------------------------------------------------
+
+function renderDailyPeriod(spec: DailyPeriodSpec, period: ForecastPeriod) {
+  return (
+    <View key={spec.key} style={styles.periodPanel}>
+      <Text style={styles.periodLabel}>{spec.label}</Text>
+      <Text style={styles.periodGlyph}>{CONDITION_EMOJI[period.condition]}</Text>
+      <Text style={styles.periodCondition} numberOfLines={2}>
+        {CONDITION_LABELS[period.condition]}
+      </Text>
+      <Text style={styles.periodPrecipitation} numberOfLines={1}>
+        {precipitationProbabilityLabel(period.precipitationProbabilityPercent)}
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * One day: its calendar date and weekday, the supplied minimum/maximum temperatures, and a panel
+ * per supplied period. A day whose periods are all `null` still shows its temperatures, with quiet
+ * missing-information copy in place of a condition that was never supplied.
+ */
+function renderDailyCard(day: DailyForecast, index: number) {
+  const periods = DAILY_PERIODS.flatMap((spec) => {
+    const period = day[spec.key];
+    return period === null ? [] : [renderDailyPeriod(spec, period)];
+  });
+
+  return (
+    <View key={`${day.date}-${index}`} style={styles.dayCard}>
+      <View style={styles.dayHeader}>
+        <Text accessibilityRole="header" style={styles.dayDate} numberOfLines={1}>
+          {dailyDateLabel(day.date)}
+        </Text>
+        <View style={styles.dayTemperatures}>
+          <Text style={styles.dayMinimum} numberOfLines={1}>
+            {dailyTemperatureLabel('최저', day.minimumTemperatureCelsius)}
+          </Text>
+          <Text style={styles.dayMaximum} numberOfLines={1}>
+            {dailyTemperatureLabel('최고', day.maximumTemperatureCelsius)}
+          </Text>
+        </View>
+      </View>
+      {periods.length === 0 ? (
+        <Text style={styles.dayNoCondition}>날씨 정보 없음</Text>
+      ) : (
+        <View style={styles.periodRow}>{periods}</View>
+      )}
+    </View>
+  );
+}
+
+/**
+ * Every day the contract supplied, in contract order. The list is never sorted, deduped, padded
+ * to a full week, or completed from hourly data — a short response simply renders fewer cards.
+ */
+function renderWeekly(daily: readonly DailyForecast[]) {
+  return <View style={styles.weeklyList}>{daily.map(renderDailyCard)}</View>;
+}
+
+/**
+ * The two-option view control under the header. Selecting an option only replaces the current
+ * route's `view` parameter — it never mutates saved locations or the weather query, and choosing
+ * the already-selected option is harmless.
+ */
+function renderForecastViewControl(
+  activeView: ForecastView,
+  onSelect: (option: ForecastViewOption) => void,
+) {
+  return (
+    <View accessibilityRole="tablist" style={styles.segmentedControl}>
+      {FORECAST_VIEW_OPTIONS.map((option) => {
+        const selected = option.view === activeView;
+        return (
+          <Pressable
+            key={option.view}
+            accessibilityRole="tab"
+            accessibilityState={{ selected }}
+            accessibilityLabel={`${option.label} 예보`}
+            onPress={() => onSelect(option)}
+            style={[styles.segment, selected ? styles.segmentSelected : null]}
+          >
+            <Text style={selected ? styles.segmentLabelSelected : styles.segmentLabel}>
+              {option.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 export default function HourlyScreen() {
   const router = useRouter();
+  const { view } = useLocalSearchParams<{ view?: string | string[] }>();
+  const activeView = resolveForecastView(view);
   const savedLocations = useMobileSavedLocations();
   const weatherQuery = useMobileWeatherQuery(savedLocations);
 
@@ -546,15 +728,21 @@ export default function HourlyScreen() {
     mobileWeatherQueryStore.retry();
   }
 
+  function handleForecastViewSelect(option: ForecastViewOption): void {
+    router.replace(option.href);
+  }
+
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent}>
       <View style={styles.page}>
         <View style={styles.header}>
           <Text accessibilityRole="header" style={styles.headerTitle}>
-            시간별
+            예보
           </Text>
           <SavedLocationSwitcher savedLocations={savedLocations} />
         </View>
+
+        {renderForecastViewControl(activeView, handleForecastViewSelect)}
 
         {savedLocations.status === 'NOT_STARTED' ||
         savedLocations.status === 'LOADING' ||
@@ -625,7 +813,15 @@ export default function HourlyScreen() {
             ) : null}
 
             {weatherQuery.status === 'SUCCESS' ? (
-              weatherQuery.data.data.hourly.length === 0 ? (
+              activeView === 'weekly' ? (
+                weatherQuery.data.data.daily.length === 0 ? (
+                  <View style={styles.card}>
+                    <Text style={styles.cardBody}>표시할 주간 예보가 없습니다.</Text>
+                  </View>
+                ) : (
+                  renderWeekly(weatherQuery.data.data.daily)
+                )
+              ) : weatherQuery.data.data.hourly.length === 0 ? (
                 <View style={styles.card}>
                   <Text style={styles.cardBody}>표시할 시간별 예보가 없습니다.</Text>
                 </View>
@@ -725,6 +921,111 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: ACCENT_COLOR,
     fontWeight: '600',
+  },
+  segmentedControl: {
+    flexDirection: 'row',
+    backgroundColor: CARD_BACKGROUND,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: BORDER_COLOR,
+    padding: 4,
+    gap: 4,
+  },
+  segment: {
+    flex: 1,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 9,
+    paddingHorizontal: 12,
+  },
+  segmentSelected: {
+    backgroundColor: ACCENT_COLOR,
+  },
+  segmentLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: TEXT_SECONDARY,
+  },
+  segmentLabelSelected: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  weeklyList: {
+    gap: 12,
+  },
+  dayCard: {
+    backgroundColor: CARD_BACKGROUND,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: BORDER_COLOR,
+    padding: 16,
+    gap: 12,
+  },
+  dayHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  dayDate: {
+    flexShrink: 1,
+    fontSize: 16,
+    fontWeight: '700',
+    color: TEXT_PRIMARY,
+  },
+  dayTemperatures: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 10,
+  },
+  dayMinimum: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: TEXT_SECONDARY,
+  },
+  dayMaximum: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: TEXT_PRIMARY,
+  },
+  dayNoCondition: {
+    fontSize: 14,
+    color: TEXT_SECONDARY,
+  },
+  periodRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  periodPanel: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: RAIL_BACKGROUND,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: BORDER_COLOR,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+  },
+  periodLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: TEXT_SECONDARY,
+  },
+  periodGlyph: {
+    fontSize: 24,
+  },
+  periodCondition: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: TEXT_PRIMARY,
+    textAlign: 'center',
+  },
+  periodPrecipitation: {
+    fontSize: 12,
+    color: TEXT_SECONDARY,
   },
   timelineCard: {
     backgroundColor: CARD_BACKGROUND,

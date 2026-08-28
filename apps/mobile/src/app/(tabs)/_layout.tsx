@@ -16,7 +16,7 @@ export default function TabsLayout() {
   return (
     <Tabs>
       <Tabs.Screen name="index" options={{ title: '오늘', headerShown: false }} />
-      <Tabs.Screen name="hourly" options={{ title: '시간별', headerShown: false }} />
+      <Tabs.Screen name="hourly" options={{ title: '예보', headerShown: false }} />
       <Tabs.Screen name="lifestyle" options={{ title: '생활날씨', headerShown: false }} />
       <Tabs.Screen name="details" options={{ title: '상세기상', headerShown: false }} />
       <Tabs.Screen name="settings" options={{ title: '설정' }} />
