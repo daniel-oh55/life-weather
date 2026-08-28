@@ -248,6 +248,71 @@ describe('deriveKmaDailyForecastFromHourly — KST identity', () => {
   });
 });
 
+describe('deriveKmaDailyForecastFromHourly — millisecond precision', () => {
+  /**
+   * The contracts `isoDateTime` schema admits **either** seconds precision **or** exactly-3-digit
+   * milliseconds, so `…:00.123+09:00` is a legal input this derivation must actually read. Only an
+   * exact KST clock hour may fill an hour slot, so a non-zero millisecond component is off the hour
+   * and disqualifies its own KST date — it must never be truncated into the matching `HH:00` slot.
+   */
+
+  it('a contract-valid `.123` entry never fills its hour slot — its KST date is omitted entirely', () => {
+    const day = makeCompleteDay('2026-07-22');
+    // Replace the otherwise-exact 09:00 entry with the same hour carrying 123 ms.
+    day[9] = makeHourly('2026-07-22T09:00:00.123+09:00');
+
+    expect(deriveKmaDailyForecastFromHourly(day)).toEqual([]);
+  });
+
+  it('a `.123` entry omits only its own KST date — a sibling complete date still derives', () => {
+    // Proves the millisecond entry resolves to a known date it poisons, rather than becoming an
+    // unattributable timestamp that would suppress the whole derivation.
+    const poisoned = makeCompleteDay('2026-07-22');
+    poisoned[15] = makeHourly('2026-07-22T15:00:00.001+09:00');
+
+    const daily = deriveKmaDailyForecastFromHourly([
+      ...poisoned,
+      ...makeCompleteDay('2026-07-23'),
+    ]);
+
+    expect(daily.map((day) => day.date)).toEqual(['2026-07-23']);
+  });
+
+  it('contract-valid `.000` entries are exact clock hours, so the day stays eligible', () => {
+    const day = makeCompleteDay('2026-07-22');
+    day[9] = makeHourly('2026-07-22T09:00:00.000+09:00');
+    day[15] = makeHourly('2026-07-22T15:00:00.000+09:00');
+
+    const daily = deriveKmaDailyForecastFromHourly(day);
+
+    expect(daily).toHaveLength(1);
+    expect(daily[0].date).toBe('2026-07-22');
+  });
+
+  it('a complete day in the millisecond `Z` form maps to the same KST date and stays eligible', () => {
+    // KST 2026-07-22 00:00–23:00 is UTC 2026-07-21 15:00 through 2026-07-22 14:00; KST 09:00 is
+    // exactly `2026-07-22T00:00:00.000Z`.
+    const utcMillisecondForm = Array.from({ length: 24 }, (_unused, hour) => {
+      const utcHour = (hour + 15) % 24;
+      const utcDate = hour < 9 ? '2026-07-21' : '2026-07-22';
+      return makeHourly(`${utcDate}T${padTwo(utcHour)}:00:00.000Z`);
+    });
+
+    const daily = deriveKmaDailyForecastFromHourly(utcMillisecondForm);
+
+    expect(daily).toHaveLength(1);
+    expect(daily[0].date).toBe('2026-07-22');
+  });
+
+  it('a non-zero millisecond `Z` entry resolves to KST 09:00:00.123 and disqualifies that KST date', () => {
+    const day = makeCompleteDay('2026-07-22');
+    // The UTC spelling of KST 2026-07-22 09:00, carrying 123 ms.
+    day[9] = makeHourly('2026-07-22T00:00:00.123Z');
+
+    expect(deriveKmaDailyForecastFromHourly(day)).toEqual([]);
+  });
+});
+
 describe('deriveKmaDailyForecastFromHourly — temperatures', () => {
   it('G. min/max come from all 24 hourly temperatures, including hours outside 09/15', () => {
     const daily = deriveKmaDailyForecastFromHourly(

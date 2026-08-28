@@ -97,7 +97,7 @@ const AFTERNOON_HOUR = 15;
  * keeps parsing independent of engine-specific lenient date parsing and of the host locale.
  */
 const ISO_DATE_TIME_PATTERN =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{3})?(?:Z|([+-])(\d{2}):(\d{2}))$/;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?(?:Z|([+-])(\d{2}):(\d{2}))$/;
 
 /** An entry that lands exactly on a KST clock hour — the only kind that can fill an hour slot. */
 interface KstClockHour {
@@ -154,6 +154,7 @@ function resolveKstClockHour(forecastAt: string): KstResolution {
     hourPart,
     minutePart,
     secondPart,
+    millisecondPart,
     offsetSign,
     offsetHourPart,
     offsetMinutePart,
@@ -170,6 +171,7 @@ function resolveKstClockHour(forecastAt: string): KstResolution {
     Number(hourPart),
     Number(minutePart),
     Number(secondPart),
+    millisecondPart === undefined ? 0 : Number(millisecondPart),
   );
 
   // Reject a literal the calendar does not actually contain: `Date.UTC` rolls `2026-02-30` over to
