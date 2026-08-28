@@ -1012,7 +1012,20 @@
   lifecycle(`(tabs)/_layout.tsx`), `/locations` 검색·추가 계약, contracts, `weather-core`,
   `lifestyle-engine`, `apps/api`, dependency·lockfile·env·native config는 변경하지 않았습니다.
   실제 provider 호출, 배포, native build, 실제 위치 요청은 수행하지 않았습니다. Owner의 로컬
-  synthetic `/weather` 서버 기반 visual checkpoint(~412×915, 저장 지역 2개 이상)는 **미완료**이며,
-  PR은 Owner Ready gate 전까지 계속 OPEN Draft로 유지됩니다.
+  synthetic `/weather` 서버 기반 visual checkpoint(~412×915)는 **완료**되었고 결과는
+  **PASS**입니다 — 저장 지역 2개(`중구`/서울특별시, `학성동`/울산광역시 중구)로 수행했고, 공용
+  우상단 지역 선택기(Today의 pressable `중구 ▾`), bottom-sheet 형태의 지역 선택 UI(dimmed
+  backdrop, `지역 선택` title, 닫기 컨트롤, 현재 지역 체크 표시, 지역명과 행정 보조 라벨, 절제된
+  삭제 컨트롤, `+ 지역 추가` 액션, ~412×915에서 편안한 sheet 높이와 여백), 그리고 성공한 지역
+  전환(`중구` → `학성동`, 선택 후 sheet 닫힘)이 모두 확인되었습니다. 변경된 선택 지역은 Today와
+  Hourly header에서 모두 `학성동 ▾`으로 나타나 기존 saved-location selection 경계를 통해 날씨
+  탭 전반에 전파되는 것이 확인되었습니다(local synthetic `/weather` 서버는 지역별 응답을 주지
+  않으므로 날씨 수치 자체가 동일하게 남는 것은 예상된 동작입니다). Today 하단까지 스크롤해 기존
+  READY 전용 `저장 지역` 관리 카드가 제거되고 READY 상태의 지역 관리가 공용 우상단 선택기만
+  남았음도 확인했습니다. 다만 `학성동`으로 전환한 뒤 sheet를 다시 열어 `✓ 학성동`을 보여주는
+  전환 후 스크린샷은 별도로 캡처되지 않았습니다 — 지속된 선택이 탭 전반에 시각적으로 반영된
+  점과 선택 행/체크 표시 semantics를 switcher test suite가 이미 검증하는 점 때문에
+  non-blocking입니다. 실제 live KMA/AirKorea/production API 호출은 없었습니다. PR은 Owner Ready
+  gate 전까지 계속 OPEN Draft로 유지됩니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
