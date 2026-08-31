@@ -55,6 +55,42 @@ request 검증·URL 생성, operation별 raw JSON runtime schema, 성공/upstrea
 모델링했습니다. 한 operation의 payload가 다른 operation의 계약을 만족하는 일은 구조적으로
 불가능합니다.
 
+### D+4는 발표시각에 따라 달라지는 유일한 예외 필드 (PR #98 correction)
+
+공식 발표시각은 06:00 KST와 18:00 KST 두 번이며, **06:00 발표는 D+4~D+10을 모두 포함**하지만
+**18:00 발표는 D+5부터 시작할 수 있어 D+4 필드 전체를 생략**할 수 있습니다. 초기 구현은 이
+비대칭을 반영하지 못해 D+4를 항상 필수로 요구했고, 그 결과 유효한 18:00 응답이 raw schema
+단계에서 거부되는 P1 결함이 있었습니다. 이 correction으로 다음과 같이 바로잡았습니다.
+
+* **D+5~D+10은 여전히 raw schema에서 무조건 필수**입니다. 바뀐 것은 D+4뿐입니다.
+* **D+4는 raw schema 레벨에서 atomic optional group**입니다 —
+  `midterm-raw-schema.ts`의 `kmaMidtermTemperatureItemSchema`/`kmaMidtermLandItemSchema`가
+  `taMin4`/`taMax4`(TEMPERATURE)와 `rnSt4Am`/`rnSt4Pm`/`wf4Am`/`wf4Pm`(LAND)를 각각
+  `.optional()`로 선언한 뒤 `superRefine`으로 "그룹 전체가 존재하거나 그룹 전체가 부재해야 한다"를
+  강제합니다. `taMin4`만 있고 `taMax4`가 없는 것처럼 **부분적으로만 존재하는 D+4는 항상
+  거부**됩니다 — 이는 발표시각과 무관한 규칙입니다.
+* raw schema는 이 응답이 어떤 `tmFc`에 대한 것인지 알 수 없으므로, **06:00 발표는 D+4를 반드시
+  포함해야 한다**는 request-aware 규칙은 raw schema가 아니라 `provider.ts`가 담당합니다.
+  `tmFc`가 정확히 `0600`으로 끝나는 요청에 대해 item이 하나 이상 존재하면, provider가 모든
+  item의 D+4 그룹이 완전한지 확인합니다. 완전하지 않으면 값·raw body·resultMsg를 노출하지 않는
+  기존 `KMA_INVALID_RESPONSE` 오류 표면으로 안전하게 실패합니다(새 오류 variant를 추가하지
+  않았습니다).
+* `tmFc`가 `1800`으로 끝나는 요청은 D+4가 없어도, 완전한 D+4 그룹이 있어도 모두 성공으로
+  받아들입니다 — 활용가이드 예시가 D+4를 생략한다는 사실 하나에 과적합하지 않고, KMA가 일부
+  18:00 응답에 D+4를 포함하는 경우도 여전히 수용합니다.
+* `202608310615`처럼 구조적으로는 유효하지만 06/18 공식 schedule과 무관한 `tmFc`는 request 계층의
+  `isKmaMidtermIssuanceStamp` 정책을 그대로 따라 계속 허용되며(request semantics는 이
+  correction에서 바꾸지 않았습니다), 이 D+4 completeness 규칙도 강제하지 않습니다 — 06:00/18:00
+  스케줄 선택 정책을 여기서 새로 발명하지 않습니다.
+* `totalCount === 0`인 진짜 빈 성공(`items.item: []`)은 완전성 검사 대상이 아닙니다 — 확인할
+  레코드 자체가 없기 때문입니다.
+* 어떤 계층도 부재한 D+4 값을 `null`/`0`/빈 문자열/D+5 값으로 날조하지 않습니다. 다음
+  normalization 계층이 "이 18:00 발표에는 D+4가 없다"는 사실을 그대로 관찰할 수 있어야 합니다.
+
+이 correction을 위해 **실호출은 수행하지 않았습니다** — 06:00/18:00 발표 구간과 `tmFc`
+schedule은 이미 이 문서와 `validation.ts`가 기록한 공식 자료(공공데이터포털 API Hub의
+"4일(최대5일)에서 10일까지" 설명과 활용가이드의 18:00 예시)에 근거합니다.
+
 ### 실제 인증 API 검증 상태
 
 이 PR에서는 **실제 KMA `MidFcstInfoService` 호출을 수행하지 않았습니다.** 실제 service key,
@@ -161,7 +197,8 @@ page 자기모순 규칙도 동일합니다(거부): `items.item.length > numOfR
 * `dataType`은 리터럴 `'JSON'`입니다.
 * **어떤 필드도 nullable로 모델링하지 않습니다** — forecast의 `fcstValue`나 current의
   `obsrValue`와 달리, 두 공식 item spec 중 어느 쪽도 nullable 값을 문서화하지 않으므로 근거 없는
-  방어적 `.nullable()` 허용을 추가하지 않았습니다.
+  방어적 `.nullable()` 허용을 추가하지 않았습니다. (D+4 그룹의 부재는 `.optional()`이지 `null`이
+  아닙니다 — 위 "D+4는 발표시각에 따라 달라지는 유일한 예외 필드" 절 참고.)
 * 기온(`taMin{N}`/`taMax{N}`)은 유한한 `z.number()`이며 `.int()`나 범위 제약을 두지 않습니다 —
   공식 필드 타입이 정수성을 명시하지 않고 최소/최대도 문서화되지 않았으므로 추측하지 않습니다
   (`raw-schema.ts`가 `nx`/`ny`에 상한을 두지 않는 것과 같은 입장).

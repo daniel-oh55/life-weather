@@ -36,6 +36,17 @@
  * - Provider strings (`wf4Am` and friends, e.g. `맑음`/`구름많음`/`흐리고 비`) are **not**
  *   normalized, enumerated, or mapped to a `WeatherCondition` here. This is a raw boundary; that
  *   mapping is a later normalization PR's responsibility.
+ * - **D+4 is the one issuance-dependent exception to "every field is required".** The official
+ *   06:00 KST issuance covers D+4~D+10, but the 18:00 KST issuance can begin at D+5, so a valid
+ *   18:00 response legitimately omits the whole D+4 group. D+5~D+10 stay required unconditionally.
+ *   The D+4 group — `taMin4`+`taMax4` for {@link kmaMidtermTemperatureItemSchema}, and
+ *   `rnSt4Am`+`rnSt4Pm`+`wf4Am`+`wf4Pm` for {@link kmaMidtermLandItemSchema} — is therefore
+ *   `.optional()` at the field level but enforced as **atomic** by a `superRefine`: every field in
+ *   the group must be present together, or every field must be absent together. A partial D+4
+ *   group (e.g. `taMin4` present without `taMax4`) is rejected here, at the raw boundary. This
+ *   schema cannot see which `tmFc` produced a response, so it cannot enforce the *06:00-must-have-
+ *   D+4* half of the rule — that request-aware check lives in `provider.ts` (see its module doc).
+ *   Absent D+4 fields are never fabricated as `null`/`0`/empty-string/D+5 values by any layer.
  *
  * ## Open evidence item: `getMidTa`'s low/high range fields
  *
@@ -111,62 +122,105 @@ const kmaMidtermTotalCount = z.number().int().min(0);
 
 /**
  * One 중기기온조회 (`getMidTa`) item: the region code plus the D+4 through D+10 최저/최고기온 pairs.
- * Every field is required and non-null. Unknown extra keys — including the unconfirmed
+ * Every field D+5~D+10 is required and non-null. `taMin4`/`taMax4` are the one issuance-dependent
+ * exception (see the module doc): both `.optional()`, and enforced as an **atomic pair** by the
+ * trailing `superRefine` — a response supplying only one of the two is rejected here, at the raw
+ * boundary, not silently treated as "D+4 absent". Unknown extra keys — including the unconfirmed
  * `taMin{N}Low`/`taMin{N}High`/`taMax{N}Low`/`taMax{N}High` range fields discussed in the module
  * doc — are stripped by Zod's default rather than rejected.
  */
-export const kmaMidtermTemperatureItemSchema = z.object({
-  regId: kmaMidtermRegId,
-  taMin4: kmaMidtermTemperature,
-  taMax4: kmaMidtermTemperature,
-  taMin5: kmaMidtermTemperature,
-  taMax5: kmaMidtermTemperature,
-  taMin6: kmaMidtermTemperature,
-  taMax6: kmaMidtermTemperature,
-  taMin7: kmaMidtermTemperature,
-  taMax7: kmaMidtermTemperature,
-  taMin8: kmaMidtermTemperature,
-  taMax8: kmaMidtermTemperature,
-  taMin9: kmaMidtermTemperature,
-  taMax9: kmaMidtermTemperature,
-  taMin10: kmaMidtermTemperature,
-  taMax10: kmaMidtermTemperature,
-});
+export const kmaMidtermTemperatureItemSchema = z
+  .object({
+    regId: kmaMidtermRegId,
+    taMin4: kmaMidtermTemperature.optional(),
+    taMax4: kmaMidtermTemperature.optional(),
+    taMin5: kmaMidtermTemperature,
+    taMax5: kmaMidtermTemperature,
+    taMin6: kmaMidtermTemperature,
+    taMax6: kmaMidtermTemperature,
+    taMin7: kmaMidtermTemperature,
+    taMax7: kmaMidtermTemperature,
+    taMin8: kmaMidtermTemperature,
+    taMax8: kmaMidtermTemperature,
+    taMin9: kmaMidtermTemperature,
+    taMax9: kmaMidtermTemperature,
+    taMin10: kmaMidtermTemperature,
+    taMax10: kmaMidtermTemperature,
+  })
+  .superRefine((item, ctx) => {
+    const hasTaMin4 = item.taMin4 !== undefined;
+    const hasTaMax4 = item.taMax4 !== undefined;
+    if (hasTaMin4 !== hasTaMax4) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [hasTaMin4 ? 'taMax4' : 'taMin4'],
+        message: 'taMin4 and taMax4 must both be present or both be absent',
+      });
+    }
+  });
 
 export type KmaMidtermTemperatureItem = z.infer<typeof kmaMidtermTemperatureItemSchema>;
+
+/**
+ * The D+4 오전/오후 land fields, treated as one **atomic** optional group (see the module doc and
+ * {@link kmaMidtermLandItemSchema}'s trailing `superRefine`): every field here must be present
+ * together, or every field must be absent together.
+ */
+const KMA_MIDTERM_LAND_D4_FIELDS = ['rnSt4Am', 'rnSt4Pm', 'wf4Am', 'wf4Pm'] as const;
 
 /**
  * One 중기육상예보조회 (`getMidLandFcst`) item: the region code, the D+4~D+7 오전/오후 pairs, and the
  * D+8~D+10 종일 values. The AM/PM-vs-all-day asymmetry is the official product semantics, not a
  * modelling shortcut — KMA publishes 중기육상예보 split by 오전/오후 only through D+7 and as a single
  * daily value from D+8 onward, which is exactly why the public `DailyForecast` contract already
- * carries `morning`/`afternoon` **and** `overall`. Every field is required and non-null.
+ * carries `morning`/`afternoon` **and** `overall`. Every field D+5~D+10 is required and non-null.
+ * `rnSt4Am`/`rnSt4Pm`/`wf4Am`/`wf4Pm` are the one issuance-dependent exception (see the module
+ * doc): all four `.optional()`, and enforced as an **atomic group** by the trailing `superRefine`
+ * — a response supplying any partial subset of the four is rejected here, at the raw boundary.
  */
-export const kmaMidtermLandItemSchema = z.object({
-  regId: kmaMidtermRegId,
-  rnSt4Am: kmaMidtermPrecipitationProbability,
-  rnSt4Pm: kmaMidtermPrecipitationProbability,
-  rnSt5Am: kmaMidtermPrecipitationProbability,
-  rnSt5Pm: kmaMidtermPrecipitationProbability,
-  rnSt6Am: kmaMidtermPrecipitationProbability,
-  rnSt6Pm: kmaMidtermPrecipitationProbability,
-  rnSt7Am: kmaMidtermPrecipitationProbability,
-  rnSt7Pm: kmaMidtermPrecipitationProbability,
-  rnSt8: kmaMidtermPrecipitationProbability,
-  rnSt9: kmaMidtermPrecipitationProbability,
-  rnSt10: kmaMidtermPrecipitationProbability,
-  wf4Am: kmaMidtermWeatherPhrase,
-  wf4Pm: kmaMidtermWeatherPhrase,
-  wf5Am: kmaMidtermWeatherPhrase,
-  wf5Pm: kmaMidtermWeatherPhrase,
-  wf6Am: kmaMidtermWeatherPhrase,
-  wf6Pm: kmaMidtermWeatherPhrase,
-  wf7Am: kmaMidtermWeatherPhrase,
-  wf7Pm: kmaMidtermWeatherPhrase,
-  wf8: kmaMidtermWeatherPhrase,
-  wf9: kmaMidtermWeatherPhrase,
-  wf10: kmaMidtermWeatherPhrase,
-});
+export const kmaMidtermLandItemSchema = z
+  .object({
+    regId: kmaMidtermRegId,
+    rnSt4Am: kmaMidtermPrecipitationProbability.optional(),
+    rnSt4Pm: kmaMidtermPrecipitationProbability.optional(),
+    rnSt5Am: kmaMidtermPrecipitationProbability,
+    rnSt5Pm: kmaMidtermPrecipitationProbability,
+    rnSt6Am: kmaMidtermPrecipitationProbability,
+    rnSt6Pm: kmaMidtermPrecipitationProbability,
+    rnSt7Am: kmaMidtermPrecipitationProbability,
+    rnSt7Pm: kmaMidtermPrecipitationProbability,
+    rnSt8: kmaMidtermPrecipitationProbability,
+    rnSt9: kmaMidtermPrecipitationProbability,
+    rnSt10: kmaMidtermPrecipitationProbability,
+    wf4Am: kmaMidtermWeatherPhrase.optional(),
+    wf4Pm: kmaMidtermWeatherPhrase.optional(),
+    wf5Am: kmaMidtermWeatherPhrase,
+    wf5Pm: kmaMidtermWeatherPhrase,
+    wf6Am: kmaMidtermWeatherPhrase,
+    wf6Pm: kmaMidtermWeatherPhrase,
+    wf7Am: kmaMidtermWeatherPhrase,
+    wf7Pm: kmaMidtermWeatherPhrase,
+    wf8: kmaMidtermWeatherPhrase,
+    wf9: kmaMidtermWeatherPhrase,
+    wf10: kmaMidtermWeatherPhrase,
+  })
+  .superRefine((item, ctx) => {
+    const presentCount = KMA_MIDTERM_LAND_D4_FIELDS.filter(
+      (field) => item[field] !== undefined,
+    ).length;
+    if (presentCount === 0 || presentCount === KMA_MIDTERM_LAND_D4_FIELDS.length) {
+      return;
+    }
+    for (const field of KMA_MIDTERM_LAND_D4_FIELDS) {
+      if (item[field] === undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [field],
+          message: 'rnSt4Am, rnSt4Pm, wf4Am, and wf4Pm must be present together or all absent',
+        });
+      }
+    }
+  });
 
 export type KmaMidtermLandItem = z.infer<typeof kmaMidtermLandItemSchema>;
 

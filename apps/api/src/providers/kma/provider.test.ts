@@ -2720,6 +2720,238 @@ describe('fetchMidtermForecast — response parser connection', () => {
   });
 });
 
+describe('fetchMidtermForecast — 06:00 vs 18:00 D+4 completeness (PR #98 correction)', () => {
+  const MIDTERM_TM_FC_1800 = '202608311800';
+
+  const MIDTERM_TEMPERATURE_REQUEST_1800: KmaMidtermForecastRequest = {
+    operation: 'TEMPERATURE',
+    regId: MIDTERM_TEMPERATURE_REG_ID,
+    tmFc: MIDTERM_TM_FC_1800,
+  };
+
+  const MIDTERM_LAND_REQUEST_1800: KmaMidtermForecastRequest = {
+    operation: 'LAND',
+    regId: MIDTERM_LAND_REG_ID,
+    tmFc: MIDTERM_TM_FC_1800,
+  };
+
+  function temperatureItemWithoutD4(): Record<string, unknown> {
+    const item = midtermTemperatureItem();
+    delete item.taMin4;
+    delete item.taMax4;
+    return item;
+  }
+
+  function landItemWithoutD4(): Record<string, unknown> {
+    const item = midtermLandItem();
+    delete item.rnSt4Am;
+    delete item.rnSt4Pm;
+    delete item.wf4Am;
+    delete item.wf4Pm;
+    return item;
+  }
+
+  // ---------------------------------------------------------------------------
+  // TEMPERATURE
+  // ---------------------------------------------------------------------------
+
+  it('A. 06:00 + D+4 present -> success', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermTemperatureBody())),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    expect(result.ok).toBe(true);
+  });
+
+  it('B. 18:00 + D+4 omitted -> success', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(temperatureItemWithoutD4()))),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST_1800);
+    if (!result.ok || result.midterm.operation !== 'TEMPERATURE') {
+      throw new Error(`expected a TEMPERATURE success, got ${JSON.stringify(result)}`);
+    }
+    const record = result.midterm.temperatures[0] as Record<string, unknown>;
+    expect('taMin4' in record).toBe(false);
+    expect('taMax4' in record).toBe(false);
+  });
+
+  it('C. 18:00 + complete D+4 present -> success', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermTemperatureBody())),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST_1800);
+    expect(result.ok).toBe(true);
+  });
+
+  it('D. 06:00 + D+4 omitted -> safe failure, no leaked values', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(temperatureItemWithoutD4()))),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    if (result.ok) {
+      throw new Error('expected a failure');
+    }
+    expect(result.error.kind).toBe('KMA_INVALID_RESPONSE');
+    if (result.error.kind === 'KMA_INVALID_RESPONSE') {
+      expect(result.error.issues.length).toBeGreaterThan(0);
+    }
+    const serialized = JSON.stringify(result);
+    for (const secret of [FAKE_KEY, 'apis.data.go.kr', 'ServiceKey']) {
+      expect(serialized).not.toContain(secret);
+    }
+  });
+
+  it('E. a partial D+4 pair (taMin4 only) under a 06:00 request is rejected', async () => {
+    const item = midtermTemperatureItem();
+    delete item.taMax4;
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(item))),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    if (result.ok) {
+      throw new Error('expected a failure');
+    }
+    expect(result.error.kind).toBe('KMA_INVALID_RESPONSE');
+  });
+
+  it('E. a partial D+4 pair (taMax4 only) under an 18:00 request is still rejected', async () => {
+    const item = midtermTemperatureItem();
+    delete item.taMin4;
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(item))),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST_1800);
+    if (result.ok) {
+      throw new Error('expected a failure');
+    }
+    expect(result.error.kind).toBe('KMA_INVALID_RESPONSE');
+  });
+
+  it('F. a missing D+5 field is still invalid even when D+4 is legitimately absent', async () => {
+    const item = temperatureItemWithoutD4();
+    delete item.taMin5;
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(item))),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST_1800);
+    if (result.ok) {
+      throw new Error('expected a failure');
+    }
+    expect(result.error.kind).toBe('KMA_INVALID_RESPONSE');
+  });
+
+  // ---------------------------------------------------------------------------
+  // LAND
+  // ---------------------------------------------------------------------------
+
+  it('G. 06:00 + complete D+4 group -> success', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermLandBody())),
+    ).fetchMidtermForecast(MIDTERM_LAND_REQUEST);
+    expect(result.ok).toBe(true);
+  });
+
+  it('H. 18:00 + all D+4 fields omitted -> success', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(landItemWithoutD4()))),
+    ).fetchMidtermForecast(MIDTERM_LAND_REQUEST_1800);
+    if (!result.ok || result.midterm.operation !== 'LAND') {
+      throw new Error(`expected a LAND success, got ${JSON.stringify(result)}`);
+    }
+    const record = result.midterm.landForecasts[0] as Record<string, unknown>;
+    expect('rnSt4Am' in record).toBe(false);
+    expect('rnSt4Pm' in record).toBe(false);
+    expect('wf4Am' in record).toBe(false);
+    expect('wf4Pm' in record).toBe(false);
+  });
+
+  it('I. 18:00 + complete D+4 group present -> success', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermLandBody())),
+    ).fetchMidtermForecast(MIDTERM_LAND_REQUEST_1800);
+    expect(result.ok).toBe(true);
+  });
+
+  it('J. 06:00 + all D+4 fields omitted -> safe failure', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(landItemWithoutD4()))),
+    ).fetchMidtermForecast(MIDTERM_LAND_REQUEST);
+    if (result.ok) {
+      throw new Error('expected a failure');
+    }
+    expect(result.error.kind).toBe('KMA_INVALID_RESPONSE');
+  });
+
+  it.each(['rnSt4Am', 'rnSt4Pm', 'wf4Am', 'wf4Pm'])(
+    'K. a partial D+4 group missing only %s is rejected under a 06:00 request',
+    async (missingField) => {
+      const item = midtermLandItem();
+      delete item[missingField];
+      const result = await midtermProviderWith(
+        fetchReturning(jsonOk(midtermBody(item))),
+      ).fetchMidtermForecast(MIDTERM_LAND_REQUEST);
+      if (result.ok) {
+        throw new Error('expected a failure');
+      }
+      expect(result.error.kind).toBe('KMA_INVALID_RESPONSE');
+    },
+  );
+
+  it('K. a partial D+4 group with two of the four fields present is rejected even at 18:00', async () => {
+    const item = midtermLandItem();
+    delete item.wf4Am;
+    delete item.wf4Pm;
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(item))),
+    ).fetchMidtermForecast(MIDTERM_LAND_REQUEST_1800);
+    if (result.ok) {
+      throw new Error('expected a failure');
+    }
+    expect(result.error.kind).toBe('KMA_INVALID_RESPONSE');
+  });
+
+  it('L. a missing D+5 land field is still invalid even when D+4 is legitimately absent', async () => {
+    const item = landItemWithoutD4();
+    delete item.wf5Am;
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(item))),
+    ).fetchMidtermForecast(MIDTERM_LAND_REQUEST_1800);
+    if (result.ok) {
+      throw new Error('expected a failure');
+    }
+    expect(result.error.kind).toBe('KMA_INVALID_RESPONSE');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Cross-cutting: empty page, non-canonical tmFc, no fabricated D+4 values
+  // ---------------------------------------------------------------------------
+
+  it('accepts a genuine empty 06:00 success without requiring D+4', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermTemperatureBody({ totalCount: 0, items: [] }))),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    expect(result.ok).toBe(true);
+  });
+
+  it('does not force 06:00 completeness onto a structurally valid but non-canonical tmFc', async () => {
+    const nonCanonicalRequest: KmaMidtermForecastRequest = {
+      operation: 'TEMPERATURE',
+      regId: MIDTERM_TEMPERATURE_REG_ID,
+      tmFc: '202608310615',
+    };
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(temperatureItemWithoutD4()))),
+    ).fetchMidtermForecast(nonCanonicalRequest);
+    expect(result.ok).toBe(true);
+  });
+
+  it('never fabricates a D+4 value (null/0/empty-string/D+5) when the upstream 18:00 issuance omits it', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(temperatureItemWithoutD4()))),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST_1800);
+    if (!result.ok || result.midterm.operation !== 'TEMPERATURE') {
+      throw new Error(`expected a TEMPERATURE success, got ${JSON.stringify(result)}`);
+    }
+    const record = result.midterm.temperatures[0] as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(record, 'taMin4')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(record, 'taMax4')).toBe(false);
+  });
+});
+
 describe('fetchMidtermForecast — request/response correlation', () => {
   it('rejects an item whose regId does not match the request', async () => {
     const mismatched = midtermBody(midtermTemperatureItem({ regId: '11H20201' }));

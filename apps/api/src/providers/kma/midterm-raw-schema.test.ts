@@ -157,6 +157,47 @@ describe('kmaMidtermTemperatureItemSchema', () => {
   it('rejects a getMidLandFcst item — the two shapes are strictly separate', () => {
     expect(kmaMidtermTemperatureItemSchema.safeParse(landItem()).success).toBe(false);
   });
+
+  // ---------------------------------------------------------------------------
+  // D+4 issuance-dependent atomic pair (PR #98 correction — 18:00 issuances may omit D+4)
+  // ---------------------------------------------------------------------------
+
+  it('accepts a complete D+4 pair (e.g. a 06:00 issuance)', () => {
+    expect(kmaMidtermTemperatureItemSchema.safeParse(temperatureItem()).success).toBe(true);
+  });
+
+  it('accepts D+4 entirely absent (a legitimate 18:00 issuance starting at D+5)', () => {
+    const item = temperatureItem();
+    delete item.taMin4;
+    delete item.taMax4;
+    const parsed = kmaMidtermTemperatureItemSchema.parse(item);
+    expect(parsed).not.toHaveProperty('taMin4');
+    expect(parsed).not.toHaveProperty('taMax4');
+    for (const day of [5, 6, 7, 8, 9, 10]) {
+      expect(parsed).toHaveProperty(`taMin${day}`);
+      expect(parsed).toHaveProperty(`taMax${day}`);
+    }
+  });
+
+  it('rejects a partial D+4 pair — taMin4 only', () => {
+    const item = temperatureItem();
+    delete item.taMax4;
+    expect(kmaMidtermTemperatureItemSchema.safeParse(item).success).toBe(false);
+  });
+
+  it('rejects a partial D+4 pair — taMax4 only', () => {
+    const item = temperatureItem();
+    delete item.taMin4;
+    expect(kmaMidtermTemperatureItemSchema.safeParse(item).success).toBe(false);
+  });
+
+  it('still requires every D+5~D+10 field even when D+4 is absent', () => {
+    const item = temperatureItem();
+    delete item.taMin4;
+    delete item.taMax4;
+    delete item.taMin5;
+    expect(kmaMidtermTemperatureItemSchema.safeParse(item).success).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -233,6 +274,67 @@ describe('kmaMidtermLandItemSchema', () => {
 
   it('rejects a getMidTa item — the two shapes are strictly separate', () => {
     expect(kmaMidtermLandItemSchema.safeParse(temperatureItem()).success).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------------
+  // D+4 issuance-dependent atomic group (PR #98 correction — 18:00 issuances may omit D+4)
+  // ---------------------------------------------------------------------------
+
+  it('accepts a complete D+4 group (e.g. a 06:00 issuance)', () => {
+    expect(kmaMidtermLandItemSchema.safeParse(landItem()).success).toBe(true);
+  });
+
+  it('accepts D+4 entirely absent (a legitimate 18:00 issuance starting at D+5)', () => {
+    const item = landItem();
+    delete item.rnSt4Am;
+    delete item.rnSt4Pm;
+    delete item.wf4Am;
+    delete item.wf4Pm;
+    const parsed = kmaMidtermLandItemSchema.parse(item);
+    expect(parsed).not.toHaveProperty('rnSt4Am');
+    expect(parsed).not.toHaveProperty('rnSt4Pm');
+    expect(parsed).not.toHaveProperty('wf4Am');
+    expect(parsed).not.toHaveProperty('wf4Pm');
+    for (const day of [5, 6, 7]) {
+      expect(parsed).toHaveProperty(`wf${day}Am`);
+      expect(parsed).toHaveProperty(`wf${day}Pm`);
+      expect(parsed).toHaveProperty(`rnSt${day}Am`);
+      expect(parsed).toHaveProperty(`rnSt${day}Pm`);
+    }
+  });
+
+  it.each([
+    ['rnSt4Am'],
+    ['rnSt4Pm'],
+    ['wf4Am'],
+    ['wf4Pm'],
+  ])('rejects a partial D+4 group missing only %s', (missingField) => {
+    const item = landItem();
+    delete item[missingField];
+    expect(kmaMidtermLandItemSchema.safeParse(item).success).toBe(false);
+  });
+
+  it('rejects a partial D+4 group with two of the four fields present', () => {
+    const item = landItem();
+    delete item.wf4Am;
+    delete item.wf4Pm;
+    expect(kmaMidtermLandItemSchema.safeParse(item).success).toBe(false);
+  });
+
+  it('rejects a partial D+4 group with three of the four fields present', () => {
+    const item = landItem();
+    delete item.wf4Pm;
+    expect(kmaMidtermLandItemSchema.safeParse(item).success).toBe(false);
+  });
+
+  it('still requires every D+5~D+10 field even when D+4 is absent', () => {
+    const item = landItem();
+    delete item.rnSt4Am;
+    delete item.rnSt4Pm;
+    delete item.wf4Am;
+    delete item.wf4Pm;
+    delete item.wf5Am;
+    expect(kmaMidtermLandItemSchema.safeParse(item).success).toBe(false);
   });
 });
 

@@ -1142,18 +1142,31 @@ export function createKmaAlertEventProviderFromEnv(
 // ---------------------------------------------------------------------------
 // Mid-term forecast provider (PR #98 — 중기예보 조회서비스, getMidTa / getMidLandFcst)
 // ---------------------------------------------------------------------------
+//
+// 06:00 vs 18:00 D+4 completeness: `midterm-raw-schema.ts` enforces the D+4 group's atomicity
+// (present entirely or absent entirely) but cannot see which `tmFc` a response answers. This
+// module adds the one request-aware rule the raw schemas cannot express: for an official 06:00
+// KST request (`tmFc` ending in `0600`) with a non-empty page, every item must carry the complete
+// D+4 group, because the 06:00 issuance officially covers D+4~D+10. An official 18:00 request
+// (`tmFc` ending in `1800`) is not required to omit D+4 — it may begin at D+5 (D+4 legitimately
+// absent) or, if KMA ever supplies it, carry a complete D+4 group; both are accepted. See
+// `checkOfficial0600TemperatureCompleteness` / `checkOfficial0600LandCompleteness` below.
 
 /**
  * One validated 중기기온조회 (`getMidTa`) record — the region code plus the D+4~D+10 최저/최고기온
- * pairs, exactly as `midterm-raw-schema.ts` validated them. Not normalized: this provider does not
- * build `DailyForecast[]`, derive dates from `tmFc`, or interpret the day offsets.
+ * pairs, exactly as `midterm-raw-schema.ts` validated them. `taMin4`/`taMax4` are optional (absent
+ * together for a legitimate 18:00-issuance D+5 start) — see the section doc above. Not normalized:
+ * this provider does not build `DailyForecast[]`, derive dates from `tmFc`, or interpret the day
+ * offsets.
  */
 export type KmaMidtermTemperatureRecord = KmaMidtermTemperatureItem;
 
 /**
  * One validated 중기육상예보조회 (`getMidLandFcst`) record — the region code, the D+4~D+7 오전/오후
- * 날씨예보·강수확률 pairs, and the D+8~D+10 종일 values. The Korean `wf…` phrases are carried
- * verbatim; mapping them to the shared `WeatherCondition` is a later normalization PR's job.
+ * 날씨예보·강수확률 pairs, and the D+8~D+10 종일 values. `rnSt4Am`/`rnSt4Pm`/`wf4Am`/`wf4Pm` are an
+ * optional atomic group (absent together for a legitimate 18:00-issuance D+5 start) — see the
+ * section doc above. The Korean `wf…` phrases are carried verbatim; mapping them to the shared
+ * `WeatherCondition` is a later normalization PR's job.
  */
 export type KmaMidtermLandRecord = KmaMidtermLandItem;
 
@@ -1302,6 +1315,88 @@ function checkMidtermPage(
   return null;
 }
 
+/** The official 06:00 KST issuance stamp suffix — see {@link isOfficial0600MidtermRequest}. */
+const KMA_MIDTERM_OFFICIAL_0600_TM_FC_SUFFIX = '0600';
+
+/**
+ * Whether `tmFc` explicitly ends in the official 06:00 KST issuance stamp. The raw schemas
+ * (`midterm-raw-schema.ts`) cannot see which `tmFc` a response answers, so they can only enforce
+ * the D+4 group's *atomicity* (all-or-nothing). Only this request-aware check can enforce the
+ * official 06:00 completeness rule — 06:00 covers D+4~D+10, while 18:00 can begin at D+5 and may
+ * legitimately omit the whole D+4 group (see `midterm-raw-schema.ts`'s module doc).
+ *
+ * Structural only: it does not re-validate the rest of `tmFc` (already done by
+ * `isKmaMidtermIssuanceStamp` at the request boundary) and does not treat a structurally valid but
+ * non-canonical stamp (e.g. `202608310615`) as 06:00 or 18:00 — it simply is neither, and this
+ * completeness rule does not apply to it. No issuance-selection policy is invented here (see
+ * `validation.ts`'s `isKmaMidtermIssuanceStamp` docblock).
+ */
+function isOfficial0600MidtermRequest(tmFc: string): boolean {
+  return tmFc.endsWith(KMA_MIDTERM_OFFICIAL_0600_TM_FC_SUFFIX);
+}
+
+/**
+ * Build the sanitized `KMA_INVALID_RESPONSE` result for a 06:00 issuance whose items are missing
+ * the required D+4 group. Reuses the existing invalid-response error surface rather than a new
+ * variant; the issue carries only a fixed path/message, never a response value.
+ */
+function official0600D4IncompleteResult(
+  message: string,
+): KmaMidtermForecastProviderResult {
+  return failMidterm({
+    kind: 'KMA_INVALID_RESPONSE',
+    issues: [{ path: ['response', 'body', 'items', 'item'], message }],
+  });
+}
+
+/**
+ * For an official 06:00 request with a non-empty page, every returned item must carry both
+ * `taMin4` and `taMax4` (see {@link isOfficial0600MidtermRequest}). A genuine empty success
+ * (`items.length === 0`) never triggers this — there is no record to be incomplete.
+ */
+function checkOfficial0600TemperatureCompleteness(
+  request: KmaMidtermForecastRequest,
+  items: readonly KmaMidtermTemperatureItem[],
+): KmaMidtermForecastProviderResult | null {
+  if (!isOfficial0600MidtermRequest(request.tmFc) || items.length === 0) {
+    return null;
+  }
+  const incomplete = items.some(
+    (item) => item.taMin4 === undefined || item.taMax4 === undefined,
+  );
+  return incomplete
+    ? official0600D4IncompleteResult(
+        'an official 06:00 issuance response must include both taMin4 and taMax4',
+      )
+    : null;
+}
+
+/**
+ * For an official 06:00 request with a non-empty page, every returned item must carry all of
+ * `rnSt4Am`/`rnSt4Pm`/`wf4Am`/`wf4Pm` (see {@link isOfficial0600MidtermRequest}). A genuine empty
+ * success (`items.length === 0`) never triggers this.
+ */
+function checkOfficial0600LandCompleteness(
+  request: KmaMidtermForecastRequest,
+  items: readonly KmaMidtermLandItem[],
+): KmaMidtermForecastProviderResult | null {
+  if (!isOfficial0600MidtermRequest(request.tmFc) || items.length === 0) {
+    return null;
+  }
+  const incomplete = items.some(
+    (item) =>
+      item.rnSt4Am === undefined ||
+      item.rnSt4Pm === undefined ||
+      item.wf4Am === undefined ||
+      item.wf4Pm === undefined,
+  );
+  return incomplete
+    ? official0600D4IncompleteResult(
+        'an official 06:00 issuance response must include the complete D+4 group (rnSt4Am, rnSt4Pm, wf4Am, wf4Pm)',
+      )
+    : null;
+}
+
 /** Turn a validated 중기기온조회 page into a provider result. */
 function interpretMidtermTemperaturePage(
   request: KmaMidtermForecastRequest,
@@ -1310,6 +1405,11 @@ function interpretMidtermTemperaturePage(
   const rejected = checkMidtermPage(request, page);
   if (rejected !== null) {
     return rejected;
+  }
+
+  const incomplete0600 = checkOfficial0600TemperatureCompleteness(request, page.items);
+  if (incomplete0600 !== null) {
+    return incomplete0600;
   }
 
   return {
@@ -1332,6 +1432,11 @@ function interpretMidtermLandPage(
   const rejected = checkMidtermPage(request, page);
   if (rejected !== null) {
     return rejected;
+  }
+
+  const incomplete0600 = checkOfficial0600LandCompleteness(request, page.items);
+  if (incomplete0600 !== null) {
+    return incomplete0600;
   }
 
   return {
