@@ -1088,7 +1088,17 @@
   `apps/mobile/src/weather-api`, `weather-query`/`locations` production 파일,
   `SavedLocationSwitcher` 동작, package·lockfile·env·Expo/native config는 변경하지 않았습니다.
   실제 KMA/AirKorea/production 호출, 배포, EAS/native build는 수행하지 않았습니다. 중기예보
-  D+4~D+10과 전체 하단 navigation 재구성은 여전히 후속 작업입니다. Owner의 Expo Web 약 412×915
-  시각 확인이 다음 gate이며, 그 전까지 PR은 OPEN Draft로 유지됩니다.
+  D+4~D+10과 전체 하단 navigation 재구성은 여전히 후속 작업입니다. Owner의 로컬 synthetic
+  `/weather` 서버 기반 Expo Web visual checkpoint(~412×915, synthetic 데이터만 사용)는
+  **완료**되었고 결과는 **PASS**입니다 — Today 화면이 정상 렌더링되고, 하단 탭 라벨이 `예보`이며,
+  `예보` 헤더와 우상단 저장 지역 선택기, `시간별 | 주간` segmented control이 모두 명확하게
+  표시됨을 확인했습니다. `시간별` 선택 시 기존 가로 timeline이 고정 좌측 rail과 정렬을 유지한 채
+  그대로 보존되고, `주간` 선택 시 synthetic daily 3건이 하루 한 장의 카드로 모바일 폭에 맞게
+  렌더링되며 가로 clipping이 없음을 확인했습니다. 날짜(`8월 30일 (일)`, `8월 31일 (월)`,
+  `9월 1일 (화)`), 최저·최고 기온, `오전`/`오후` 위계, 강수확률이 모두 가독 가능했고, `강수 0%`와
+  누락 POP의 `강수 —`가 시각적으로 구분되는 것도 확인했습니다. 하단 navigation이 주간 콘텐츠를
+  가리지 않았고, `시간별`로 되돌아가면 기존 timeline이 그대로 복원됐습니다. UI 수정은 필요하지
+  않습니다. Ready 전환과 merge 승인은 여전히 Owner 결정이며, 그 전까지 PR은 OPEN Draft로
+  유지됩니다.
 - 이 문서는 다음 product PR을 임의로 확정하지 않습니다.
 - 다음 product priority와 작업 scope는 Owner가 별도로 승인해야 합니다.
