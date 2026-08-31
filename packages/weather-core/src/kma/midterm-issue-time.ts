@@ -108,16 +108,25 @@ function assertSupportedCalendarYear(year: number, message: string): void {
  * Pure and deterministic; never reads the system clock; does not mutate `input`; returns a fresh
  * result object on every call.
  *
- * @throws RangeError if `referenceEpochMilliseconds` is not a finite safe integer, denotes an
- *   instant outside the representable `Date` range, or has a KST calendar year outside
- *   `[1000, 9999]`; or if the previous-day rollover selects an issuance date whose year falls
- *   below that range (e.g. the `1000-01-01` lower bound rolling into `0999`). Every message
- *   names only the offending field or policy — it never echoes the raw input value nor
- *   serializes the input object.
+ * @throws RangeError if `input` is not an object (including `null` or `undefined`, reachable
+ *   only past a type-bypassing/unsafe-cast call); if `referenceEpochMilliseconds` is not a
+ *   finite safe integer, denotes an instant outside the representable `Date` range, or has a
+ *   KST calendar year outside `[1000, 9999]`; or if the previous-day rollover selects an
+ *   issuance date whose year falls below that range (e.g. the `1000-01-01` lower bound rolling
+ *   into `0999`). Every message names only the offending field or policy — it never echoes the
+ *   raw input value nor serializes the input object.
  */
 export function selectLatestKmaMidtermIssuance(
   input: SelectLatestKmaMidtermIssuanceInput,
 ): KmaMidtermIssuance {
+  // Validate the top-level input itself before destructuring, so that a `null` or `undefined`
+  // input (reachable only past a type-bypassing/unsafe-cast call, since the TS type requires an
+  // object) raises this module's own value-free RangeError instead of an engine-generated
+  // TypeError from destructuring a non-object.
+  if (typeof input !== 'object' || input === null) {
+    throw new RangeError('selectLatestKmaMidtermIssuance input must be an object');
+  }
+
   const { referenceEpochMilliseconds } = input;
 
   // Reject NaN, ±Infinity, fractional, and unsafe-integer millisecond values in one check —

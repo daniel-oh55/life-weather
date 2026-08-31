@@ -277,6 +277,39 @@ describe('selectLatestKmaMidtermIssuance — invalid input', () => {
     expect(() => selectLatestKmaMidtermIssuance(input)).toThrow(RangeError);
     expect(input).toEqual(snapshot);
   });
+
+  it.each([
+    { label: 'null', value: null },
+    { label: 'undefined', value: undefined },
+    { label: 'a string', value: 'not-an-object' },
+  ])(
+    'throws RangeError (not TypeError) for a top-level input of $label',
+    ({ value }) => {
+      let caught: unknown;
+      try {
+        selectLatestKmaMidtermIssuance(
+          value as unknown as SelectLatestKmaMidtermIssuanceInput,
+        );
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(RangeError);
+      expect(caught).not.toBeInstanceOf(TypeError);
+    },
+  );
+
+  it('does not echo a raw non-object top-level input in the error message', () => {
+    let message = '';
+    try {
+      selectLatestKmaMidtermIssuance(
+        SECRET_SHAPED_VALUE_MUST_NOT_LEAK as unknown as SelectLatestKmaMidtermIssuanceInput,
+      );
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).not.toContain(SECRET_SHAPED_VALUE_MUST_NOT_LEAK);
+    expect(message).not.toContain('{');
+  });
 });
 
 describe('selectLatestKmaMidtermIssuance — immutability and reuse', () => {
