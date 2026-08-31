@@ -49,6 +49,27 @@
  * provider into `POST /weather`/`services`/`composition`/`routes`. See
  * `docs/kma-alert-event-provider.md` for the full scope boundary.
  *
+ * Mid-term forecast (중기예보 조회서비스 `getMidTa` / `getMidLandFcst`, PR #98) is a **fourth,
+ * independent** boundary against the `MidFcstInfoService` service family (its own base URL; the
+ * 공공데이터포털 `ServiceKey` query casing, like the forecast/current boundaries — see
+ * `docs/kma-midterm-provider.md`):
+ *
+ * 1. `midterm-request.ts` / `midterm-raw-schema.ts` / `parse-midterm-response.ts` — request
+ *    validation and the fixed `TEMPERATURE`→`getMidTa` / `LAND`→`getMidLandFcst` path mapping, two
+ *    **separate** raw-item schemas (D+4~D+10 최저/최고기온 vs. D+4~D+7 오전/오후 plus D+8~D+10 종일
+ *    육상예보), and a three-outcome parser per operation (success / upstream error / invalid
+ *    response — no dedicated no-data code is documented for these operations, so a non-success
+ *    `resultCode` is never *guessed* to mean no-data).
+ * 2. `createKmaMidtermForecastProvider` / `createKmaMidtermForecastProviderFromEnv` (`provider.ts`)
+ *    — the HTTP provider, sharing the same transport policy via `performKmaGetRequest` and the same
+ *    `KMA_SERVICE_KEY` configuration, with `regId` and pagination request/response correlation.
+ *
+ * This PR stops at validated raw mid-term records. It does **not** resolve a location to a `regId`,
+ * select the latest 06/18 KST issuance, normalize records into `DailyForecast[]`, map Korean KMA
+ * weather phrases to `WeatherCondition`, or wire this provider into `POST /weather`/`services`/
+ * `composition`/`routes`. See `docs/kma-midterm-provider.md` for the full scope boundary. The
+ * mid-term raw schemas and parsers are internal and not exported.
+ *
  * The `WeatherOverview` assembly, `SourceMetadata`, daily forecast, and the API route are **not**
  * here — those are later PRs. See `docs/kma-response-boundary.md`, `docs/kma-http-provider.md`,
  * `docs/kma-hourly-normalization.md`, and `docs/kma-current-observation-provider.md` for the
@@ -63,9 +84,12 @@ export {
   createKmaCurrentObservationProviderFromEnv,
   createKmaForecastProvider,
   createKmaForecastProviderFromEnv,
+  createKmaMidtermForecastProvider,
+  createKmaMidtermForecastProviderFromEnv,
   type CreateKmaAlertEventProviderResult,
   type CreateKmaCurrentObservationProviderResult,
   type CreateKmaForecastProviderResult,
+  type CreateKmaMidtermForecastProviderResult,
   type KmaAlertEventProvider,
   type KmaAlertEventProviderError,
   type KmaAlertEventProviderResult,
@@ -81,6 +105,13 @@ export {
   type KmaForecastProviderError,
   type KmaForecastProviderResult,
   type KmaForecastProviderSuccess,
+  type KmaMidtermForecastProvider,
+  type KmaMidtermForecastProviderError,
+  type KmaMidtermForecastProviderResult,
+  type KmaMidtermForecastProviderSuccess,
+  type KmaMidtermLandRecord,
+  type KmaMidtermResponseMismatchField,
+  type KmaMidtermTemperatureRecord,
   type KmaResponseMismatchField,
 } from './provider.js';
 
@@ -117,6 +148,15 @@ export {
   type KmaAlertRequestIssue,
   type KmaAlertWarningType,
 } from './alert-request.js';
+
+export {
+  KMA_MIDTERM_OPERATIONS,
+  type KmaMidtermForecastRequest,
+  type KmaMidtermOperation,
+  type KmaMidtermRequestIssue,
+} from './midterm-request.js';
+
+export { type KmaMidtermResponseIssue } from './parse-midterm-response.js';
 
 export {
   parseKmaAlertEventResponse,

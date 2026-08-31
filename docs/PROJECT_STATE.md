@@ -28,7 +28,20 @@
 - `postinstall`과 public checks의 build-first 흐름은 clean checkout과 stale `dist` 문제를
   방지합니다.
 - `lifestyle-engine`에는 umbrella, outfit, mask와 laundry 정책이 구현되어 있습니다.
-- baseline 시점에 열린 PR은 없습니다.
+- PR #97(**MERGED**)이 모바일 주간예보 뷰를 main에 포함시켰고, 현재 main은
+  `afa6db599dcd6bc227c5c3f380fbfac8fc7f16bd` 입니다.
+- PR #98은 **OPEN Draft**이며, KMA 중기예보 조회서비스(`MidFcstInfoService`)의 D+4~D+10
+  **provider boundary**를 추가합니다 — 중기기온조회(`getMidTa`)와 중기육상예보조회
+  (`getMidLandFcst`)의 request 검증·고정 operation path 매핑·URL 생성, operation별 raw JSON
+  runtime schema, 성공/upstream error/invalid response 3-outcome parser, 기존 공유 HTTP
+  transport(`performKmaGetRequest`)와 동일한 `KMA_SERVICE_KEY` config를 재사용하는
+  provider(`createKmaMidtermForecastProvider`)까지입니다. 변경은
+  `apps/api/src/providers/kma/**` 와 문서에 한정되며 `packages/**`·`CONTRACT_VERSION`·
+  `services`·`composition`·`routes`·`presenters`·`apps/mobile/**`·dependency·env는 변경하지
+  않았습니다. 위치 → `regId` resolver, 최신 06/18 KST issuance selector, `DailyForecast`
+  정규화, 한국어 날씨 문구 → `WeatherCondition` 매핑, `POST /weather` production wiring은
+  **여전히 후속 작업**입니다. 이 PR에서 실제 KMA API 호출·배포·env 변경은 수행하지 않았습니다.
+  자세한 내용은 [kma-midterm-provider.md](./kma-midterm-provider.md) 참고.
 
 ## 아직 구현되지 않은 항목
 

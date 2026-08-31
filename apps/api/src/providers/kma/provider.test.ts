@@ -5,13 +5,17 @@ import type { KmaAlertEventRequest } from './alert-request.js';
 import type { KmaCurrentObservationRequest } from './current-request.js';
 import { getKmaCurrentObservationField } from './group-current-observation-items.js';
 import { getKmaForecastField } from './group-forecast-items.js';
+import type { KmaMidtermForecastRequest } from './midterm-request.js';
 import {
   createKmaAlertEventProvider,
   createKmaCurrentObservationProvider,
   createKmaForecastProvider,
+  createKmaMidtermForecastProvider,
+  createKmaMidtermForecastProviderFromEnv,
   type KmaAlertEventProvider,
   type KmaCurrentObservationProvider,
   type KmaForecastProvider,
+  type KmaMidtermForecastProvider,
 } from './provider.js';
 import type { KmaForecastRequest, KmaRequestIssue } from './request.js';
 
@@ -2297,6 +2301,877 @@ describe('fetchAlertEvents — secret non-exposure across error variants', () =>
     const result = await alertProviderWith(fetchImpl).fetchAlertEvents(ALERT_REQUEST);
     const serialized = JSON.stringify(result);
     for (const secret of [...forbidden, FAKE_KEY, 'apis.data.go.kr', 'serviceKey']) {
+      expect(serialized).not.toContain(secret);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fetchMidtermForecast (PR #98 — getMidTa / getMidLandFcst). The shared transport
+// (timeout/caller-abort/HTTP-status/response-size/gateway-XML detection) is exhaustively covered
+// above by the forecast and current-observation suites against the same `performKmaGetRequest`
+// helper this provider reuses unchanged — representative passthrough coverage is repeated here so a
+// regression that bypassed the shared transport for mid-term would fail. The mid-term-specific
+// concerns (request validation, per-operation path selection, per-operation response validation,
+// regId/pagination correlation, incomplete-page rejection, and secret non-exposure) are covered in
+// full.
+// ---------------------------------------------------------------------------
+
+const MIDTERM_TEMPERATURE_REG_ID = '11B10101';
+const MIDTERM_LAND_REG_ID = '11B00000';
+const MIDTERM_TM_FC = '202608310600';
+
+const MIDTERM_TEMPERATURE_REQUEST: KmaMidtermForecastRequest = {
+  operation: 'TEMPERATURE',
+  regId: MIDTERM_TEMPERATURE_REG_ID,
+  tmFc: MIDTERM_TM_FC,
+};
+
+const MIDTERM_LAND_REQUEST: KmaMidtermForecastRequest = {
+  operation: 'LAND',
+  regId: MIDTERM_LAND_REG_ID,
+  tmFc: MIDTERM_TM_FC,
+};
+
+function midtermTemperatureItem(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    regId: MIDTERM_TEMPERATURE_REG_ID,
+    taMin4: 21,
+    taMax4: 29,
+    taMin5: 22,
+    taMax5: 30,
+    taMin6: 20,
+    taMax6: 28,
+    taMin7: 19,
+    taMax7: 27,
+    taMin8: 18,
+    taMax8: 26,
+    taMin9: 17,
+    taMax9: 25,
+    taMin10: 16,
+    taMax10: 24,
+    ...overrides,
+  };
+}
+
+function midtermLandItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    regId: MIDTERM_LAND_REG_ID,
+    rnSt4Am: 30,
+    rnSt4Pm: 60,
+    rnSt5Am: 20,
+    rnSt5Pm: 20,
+    rnSt6Am: 10,
+    rnSt6Pm: 30,
+    rnSt7Am: 40,
+    rnSt7Pm: 50,
+    rnSt8: 30,
+    rnSt9: 20,
+    rnSt10: 10,
+    wf4Am: '구름많음',
+    wf4Pm: '흐리고 비',
+    wf5Am: '맑음',
+    wf5Pm: '구름많음',
+    wf6Am: '흐림',
+    wf6Pm: '흐리고 비',
+    wf7Am: '맑음',
+    wf7Pm: '맑음',
+    wf8: '구름많음',
+    wf9: '맑음',
+    wf10: '흐림',
+    ...overrides,
+  };
+}
+
+interface MidtermBodyOptions {
+  pageNo?: number;
+  numOfRows?: number;
+  totalCount?: number;
+  items?: readonly Record<string, unknown>[];
+  resultCode?: string;
+  resultMsg?: string;
+}
+
+/** Serialize a KMA mid-term success/error envelope to a JSON string. */
+function midtermBody(
+  item: Record<string, unknown>,
+  options: MidtermBodyOptions = {},
+): string {
+  const items = options.items ?? [item];
+  return JSON.stringify({
+    response: {
+      header: {
+        resultCode: options.resultCode ?? '00',
+        resultMsg: options.resultMsg ?? 'NORMAL_SERVICE',
+      },
+      body: {
+        dataType: 'JSON',
+        pageNo: options.pageNo ?? 1,
+        numOfRows: options.numOfRows ?? 10,
+        totalCount: options.totalCount ?? items.length,
+        items: { item: items },
+      },
+    },
+  });
+}
+
+function midtermTemperatureBody(options: MidtermBodyOptions = {}): string {
+  return midtermBody(midtermTemperatureItem(), options);
+}
+
+function midtermLandBody(options: MidtermBodyOptions = {}): string {
+  return midtermBody(midtermLandItem(), options);
+}
+
+function midtermProviderWith(
+  fetchImpl: typeof fetch,
+  options: { timeoutMs?: number; maxResponseBytes?: number } = {},
+): KmaMidtermForecastProvider {
+  const created = createKmaMidtermForecastProvider({ serviceKey: FAKE_KEY, fetchImpl, ...options });
+  if (!created.ok) {
+    throw new Error('unexpected config error in test setup');
+  }
+  return created.provider;
+}
+
+/** The URL the provider actually requested, captured from a spy. */
+function requestedUrl(spy: ReturnType<typeof vi.fn>): URL {
+  const [input] = spy.mock.calls[0] as [URL];
+  return input;
+}
+
+describe('fetchMidtermForecast — request validation', () => {
+  it.each([
+    ['an unsupported operation', { operation: 'SEA', regId: MIDTERM_LAND_REG_ID, tmFc: MIDTERM_TM_FC }],
+    ['a malformed regId', { ...MIDTERM_TEMPERATURE_REQUEST, regId: '11b10101' }],
+    ['a malformed tmFc', { ...MIDTERM_TEMPERATURE_REQUEST, tmFc: '20260831' }],
+    ['a non-object request', null],
+  ])('returns INVALID_REQUEST without calling fetch for %s', async (_label, request) => {
+    const spy = vi.fn(fetchReturning(jsonOk(midtermTemperatureBody())));
+    const result = await midtermProviderWith(spy as unknown as typeof fetch).fetchMidtermForecast(
+      request as unknown as KmaMidtermForecastRequest,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error('unreachable');
+    }
+    expect(result.error.kind).toBe('INVALID_REQUEST');
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe('fetchMidtermForecast — fixed operation path selection', () => {
+  it('requests getMidTa for a TEMPERATURE request', async () => {
+    const spy = vi.fn(fetchReturning(jsonOk(midtermTemperatureBody())));
+    await midtermProviderWith(spy as unknown as typeof fetch).fetchMidtermForecast(
+      MIDTERM_TEMPERATURE_REQUEST,
+    );
+    expect(requestedUrl(spy).pathname).toBe('/1360000/MidFcstInfoService/getMidTa');
+  });
+
+  it('requests getMidLandFcst for a LAND request', async () => {
+    const spy = vi.fn(fetchReturning(jsonOk(midtermLandBody())));
+    await midtermProviderWith(spy as unknown as typeof fetch).fetchMidtermForecast(
+      MIDTERM_LAND_REQUEST,
+    );
+    expect(requestedUrl(spy).pathname).toBe('/1360000/MidFcstInfoService/getMidLandFcst');
+  });
+
+  it('sends the HTTPS MidFcstInfoService URL with the fixed pagination, JSON format, and once-encoded key', async () => {
+    const spy = vi.fn(fetchReturning(jsonOk(midtermTemperatureBody())));
+    await midtermProviderWith(spy as unknown as typeof fetch).fetchMidtermForecast(
+      MIDTERM_TEMPERATURE_REQUEST,
+    );
+    const url = requestedUrl(spy);
+    expect(url.protocol).toBe('https:');
+    expect(url.host).toBe('apis.data.go.kr');
+    expect(url.searchParams.get('ServiceKey')).toBe(FAKE_KEY);
+    expect(url.searchParams.get('pageNo')).toBe('1');
+    expect(url.searchParams.get('numOfRows')).toBe('10');
+    expect(url.searchParams.get('dataType')).toBe('JSON');
+    expect(url.searchParams.get('regId')).toBe(MIDTERM_TEMPERATURE_REG_ID);
+    expect(url.searchParams.get('tmFc')).toBe(MIDTERM_TM_FC);
+    expect(url.toString()).toContain('ServiceKey=test-key%2Bwith%2Fslash%3D%3D');
+  });
+});
+
+describe('fetchMidtermForecast — transport passthrough (shared performKmaGetRequest)', () => {
+  it('sends GET with Accept: application/json and redirect: error', async () => {
+    const spy = vi.fn(fetchReturning(jsonOk(midtermTemperatureBody())));
+    await midtermProviderWith(spy as unknown as typeof fetch).fetchMidtermForecast(
+      MIDTERM_TEMPERATURE_REQUEST,
+    );
+    const [, init] = spy.mock.calls[0] as [URL, RequestInit];
+    expect(init.method).toBe('GET');
+    expect(init.redirect).toBe('error');
+    expect(init.headers).toEqual({ Accept: 'application/json' });
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('issues exactly one fetch per fetchMidtermForecast call', async () => {
+    const spy = vi.fn(fetchReturning(jsonOk(midtermLandBody())));
+    await midtermProviderWith(spy as unknown as typeof fetch).fetchMidtermForecast(
+      MIDTERM_LAND_REQUEST,
+    );
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('maps a provider timeout to TIMEOUT', async () => {
+    const result = await midtermProviderWith(fetchHangingUntilAbort(), {
+      timeoutMs: 10,
+    }).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+  });
+
+  it('terminates with TIMEOUT even when fetchImpl ignores the abort signal entirely', async () => {
+    const result = await midtermProviderWith(fetchIgnoringAbortForever(), {
+      timeoutMs: 10,
+    }).fetchMidtermForecast(MIDTERM_LAND_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'TIMEOUT' } });
+  });
+
+  it('returns ABORTED without calling fetch when the caller signal is already aborted', async () => {
+    const spy = vi.fn(fetchReturning(jsonOk(midtermTemperatureBody())));
+    const controller = new AbortController();
+    controller.abort();
+    const result = await midtermProviderWith(spy as unknown as typeof fetch).fetchMidtermForecast(
+      MIDTERM_TEMPERATURE_REQUEST,
+      { signal: controller.signal },
+    );
+    expect(result).toEqual({ ok: false, error: { kind: 'ABORTED' } });
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('maps a mid-flight caller abort to ABORTED', async () => {
+    const controller = new AbortController();
+    const promise = midtermProviderWith(fetchHangingUntilAbort(), {
+      timeoutMs: 10_000,
+    }).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST, { signal: controller.signal });
+    controller.abort();
+    expect(await promise).toEqual({ ok: false, error: { kind: 'ABORTED' } });
+  });
+
+  it('applies a caller abort while the body is being read after the header arrives', async () => {
+    const { fetchImpl, bodyObservedAbort } = fetchHeaderThenBodyTiedToSignal();
+    const controller = new AbortController();
+    const promise = midtermProviderWith(fetchImpl, {
+      timeoutMs: 10_000,
+    }).fetchMidtermForecast(MIDTERM_LAND_REQUEST, { signal: controller.signal });
+    await tick();
+    controller.abort();
+    expect(await promise).toEqual({ ok: false, error: { kind: 'ABORTED' } });
+    expect(bodyObservedAbort()).toBe(true);
+  });
+
+  it('maps a generic fetch rejection to NETWORK_ERROR', async () => {
+    const result = await midtermProviderWith(
+      fetchRejecting(new Error('boom')),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'NETWORK_ERROR' } });
+  });
+
+  it('maps a non-2xx status to HTTP_ERROR carrying only the status', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(new Response('SECRET_HTTP_BODY', { status: 503 })),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'HTTP_ERROR', status: 503 } });
+  });
+
+  it('rejects an over-large body with RESPONSE_TOO_LARGE', async () => {
+    const huge = 'x'.repeat(10_000);
+    const result = await midtermProviderWith(fetchReturning(jsonOk(huge)), {
+      maxResponseBytes: 128,
+    }).fetchMidtermForecast(MIDTERM_LAND_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'RESPONSE_TOO_LARGE' } });
+  });
+});
+
+describe('fetchMidtermForecast — body format', () => {
+  it('classifies an empty body as EMPTY_RESPONSE', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(new Response('   ', { status: 200 })),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'EMPTY_RESPONSE' } });
+  });
+
+  it('classifies gateway XML as GATEWAY_ERROR with only the reason code', async () => {
+    const xml =
+      '<OpenAPI_ServiceResponse><returnReasonCode>30</returnReasonCode><returnAuthMsg>SERVICE_KEY_IS_NOT_REGISTERED_ERROR</returnAuthMsg></OpenAPI_ServiceResponse>';
+    const result = await midtermProviderWith(fetchReturning(jsonOk(xml))).fetchMidtermForecast(
+      MIDTERM_TEMPERATURE_REQUEST,
+    );
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: 'GATEWAY_ERROR', reasonCode: '30' },
+    });
+  });
+
+  it('classifies other XML/HTML as NON_JSON_RESPONSE', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk('<html><body>nope</body></html>')),
+    ).fetchMidtermForecast(MIDTERM_LAND_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'NON_JSON_RESPONSE' } });
+  });
+
+  it('classifies malformed JSON as INVALID_JSON', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk('{ not json')),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    expect(result).toEqual({ ok: false, error: { kind: 'INVALID_JSON' } });
+  });
+});
+
+describe('fetchMidtermForecast — response parser connection', () => {
+  it('returns a TEMPERATURE success retaining D+4 through D+10', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermTemperatureBody())),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    if (!result.ok || result.midterm.operation !== 'TEMPERATURE') {
+      throw new Error(`expected a TEMPERATURE success, got ${JSON.stringify(result)}`);
+    }
+    expect(result.midterm.regId).toBe(MIDTERM_TEMPERATURE_REG_ID);
+    expect(result.midterm.tmFc).toBe(MIDTERM_TM_FC);
+    expect(result.midterm.totalCount).toBe(1);
+    expect(result.midterm.temperatures).toHaveLength(1);
+    const record = result.midterm.temperatures[0];
+    for (const day of [4, 5, 6, 7, 8, 9, 10]) {
+      expect(record).toHaveProperty(`taMin${day}`);
+      expect(record).toHaveProperty(`taMax${day}`);
+    }
+    expect(record.taMin4).toBe(21);
+    expect(record.taMax10).toBe(24);
+  });
+
+  it('returns a LAND success retaining AM/PM D+4~D+7 and all-day D+8~D+10', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermLandBody())),
+    ).fetchMidtermForecast(MIDTERM_LAND_REQUEST);
+    if (!result.ok || result.midterm.operation !== 'LAND') {
+      throw new Error(`expected a LAND success, got ${JSON.stringify(result)}`);
+    }
+    expect(result.midterm.landForecasts).toHaveLength(1);
+    const record = result.midterm.landForecasts[0];
+    for (const day of [4, 5, 6, 7]) {
+      expect(record).toHaveProperty(`wf${day}Am`);
+      expect(record).toHaveProperty(`wf${day}Pm`);
+      expect(record).toHaveProperty(`rnSt${day}Am`);
+      expect(record).toHaveProperty(`rnSt${day}Pm`);
+    }
+    for (const day of [8, 9, 10]) {
+      expect(record).toHaveProperty(`wf${day}`);
+      expect(record).toHaveProperty(`rnSt${day}`);
+    }
+    expect(record.wf4Pm).toBe('흐리고 비');
+    expect(record.wf8).toBe('구름많음');
+  });
+
+  it('rejects a getMidLandFcst payload returned for a TEMPERATURE request', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermLandBody())),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    if (result.ok) {
+      throw new Error('expected a failure');
+    }
+    expect(result.error.kind).toBe('KMA_INVALID_RESPONSE');
+  });
+
+  it('rejects a getMidTa payload returned for a LAND request', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(midtermTemperatureItem({ regId: MIDTERM_LAND_REG_ID })))),
+    ).fetchMidtermForecast(MIDTERM_LAND_REQUEST);
+    if (result.ok) {
+      throw new Error('expected a failure');
+    }
+    expect(result.error.kind).toBe('KMA_INVALID_RESPONSE');
+  });
+
+  it('maps a non-success resultCode to KMA_UPSTREAM_ERROR keeping only the code', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermTemperatureBody({ resultCode: '30' }))),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: 'KMA_UPSTREAM_ERROR', resultCode: '30' },
+    });
+  });
+
+  it('maps resultCode 03 to KMA_UPSTREAM_ERROR, never to a fabricated empty success', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermLandBody({ resultCode: '03' }))),
+    ).fetchMidtermForecast(MIDTERM_LAND_REQUEST);
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: 'KMA_UPSTREAM_ERROR', resultCode: '03' },
+    });
+  });
+
+  it('maps a malformed item to KMA_INVALID_RESPONSE with value-free issues', async () => {
+    const malformed = midtermBody(midtermTemperatureItem({ taMin4: 'SECRET_VALUE' }));
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(malformed)),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    if (result.ok || result.error.kind !== 'KMA_INVALID_RESPONSE') {
+      throw new Error(`expected KMA_INVALID_RESPONSE, got ${JSON.stringify(result)}`);
+    }
+    expect(result.error.issues.length).toBeGreaterThan(0);
+    expect(JSON.stringify(result)).not.toContain('SECRET_VALUE');
+  });
+});
+
+describe('fetchMidtermForecast — 06:00 vs 18:00 D+4 completeness (PR #98 correction)', () => {
+  const MIDTERM_TM_FC_1800 = '202608311800';
+
+  const MIDTERM_TEMPERATURE_REQUEST_1800: KmaMidtermForecastRequest = {
+    operation: 'TEMPERATURE',
+    regId: MIDTERM_TEMPERATURE_REG_ID,
+    tmFc: MIDTERM_TM_FC_1800,
+  };
+
+  const MIDTERM_LAND_REQUEST_1800: KmaMidtermForecastRequest = {
+    operation: 'LAND',
+    regId: MIDTERM_LAND_REG_ID,
+    tmFc: MIDTERM_TM_FC_1800,
+  };
+
+  function temperatureItemWithoutD4(): Record<string, unknown> {
+    const item = midtermTemperatureItem();
+    delete item.taMin4;
+    delete item.taMax4;
+    return item;
+  }
+
+  function landItemWithoutD4(): Record<string, unknown> {
+    const item = midtermLandItem();
+    delete item.rnSt4Am;
+    delete item.rnSt4Pm;
+    delete item.wf4Am;
+    delete item.wf4Pm;
+    return item;
+  }
+
+  // ---------------------------------------------------------------------------
+  // TEMPERATURE
+  // ---------------------------------------------------------------------------
+
+  it('A. 06:00 + D+4 present -> success', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermTemperatureBody())),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    expect(result.ok).toBe(true);
+  });
+
+  it('B. 18:00 + D+4 omitted -> success', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(temperatureItemWithoutD4()))),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST_1800);
+    if (!result.ok || result.midterm.operation !== 'TEMPERATURE') {
+      throw new Error(`expected a TEMPERATURE success, got ${JSON.stringify(result)}`);
+    }
+    const record = result.midterm.temperatures[0] as Record<string, unknown>;
+    expect('taMin4' in record).toBe(false);
+    expect('taMax4' in record).toBe(false);
+  });
+
+  it('C. 18:00 + complete D+4 present -> success', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermTemperatureBody())),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST_1800);
+    expect(result.ok).toBe(true);
+  });
+
+  it('D. 06:00 + D+4 omitted -> safe failure, no leaked values', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(temperatureItemWithoutD4()))),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    if (result.ok) {
+      throw new Error('expected a failure');
+    }
+    expect(result.error.kind).toBe('KMA_INVALID_RESPONSE');
+    if (result.error.kind === 'KMA_INVALID_RESPONSE') {
+      expect(result.error.issues.length).toBeGreaterThan(0);
+    }
+    const serialized = JSON.stringify(result);
+    for (const secret of [FAKE_KEY, 'apis.data.go.kr', 'ServiceKey']) {
+      expect(serialized).not.toContain(secret);
+    }
+  });
+
+  it('E. a partial D+4 pair (taMin4 only) under a 06:00 request is rejected', async () => {
+    const item = midtermTemperatureItem();
+    delete item.taMax4;
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(item))),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    if (result.ok) {
+      throw new Error('expected a failure');
+    }
+    expect(result.error.kind).toBe('KMA_INVALID_RESPONSE');
+  });
+
+  it('E. a partial D+4 pair (taMax4 only) under an 18:00 request is still rejected', async () => {
+    const item = midtermTemperatureItem();
+    delete item.taMin4;
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(item))),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST_1800);
+    if (result.ok) {
+      throw new Error('expected a failure');
+    }
+    expect(result.error.kind).toBe('KMA_INVALID_RESPONSE');
+  });
+
+  it('F. a missing D+5 field is still invalid even when D+4 is legitimately absent', async () => {
+    const item = temperatureItemWithoutD4();
+    delete item.taMin5;
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(item))),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST_1800);
+    if (result.ok) {
+      throw new Error('expected a failure');
+    }
+    expect(result.error.kind).toBe('KMA_INVALID_RESPONSE');
+  });
+
+  // ---------------------------------------------------------------------------
+  // LAND
+  // ---------------------------------------------------------------------------
+
+  it('G. 06:00 + complete D+4 group -> success', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermLandBody())),
+    ).fetchMidtermForecast(MIDTERM_LAND_REQUEST);
+    expect(result.ok).toBe(true);
+  });
+
+  it('H. 18:00 + all D+4 fields omitted -> success', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(landItemWithoutD4()))),
+    ).fetchMidtermForecast(MIDTERM_LAND_REQUEST_1800);
+    if (!result.ok || result.midterm.operation !== 'LAND') {
+      throw new Error(`expected a LAND success, got ${JSON.stringify(result)}`);
+    }
+    const record = result.midterm.landForecasts[0] as Record<string, unknown>;
+    expect('rnSt4Am' in record).toBe(false);
+    expect('rnSt4Pm' in record).toBe(false);
+    expect('wf4Am' in record).toBe(false);
+    expect('wf4Pm' in record).toBe(false);
+  });
+
+  it('I. 18:00 + complete D+4 group present -> success', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermLandBody())),
+    ).fetchMidtermForecast(MIDTERM_LAND_REQUEST_1800);
+    expect(result.ok).toBe(true);
+  });
+
+  it('J. 06:00 + all D+4 fields omitted -> safe failure', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(landItemWithoutD4()))),
+    ).fetchMidtermForecast(MIDTERM_LAND_REQUEST);
+    if (result.ok) {
+      throw new Error('expected a failure');
+    }
+    expect(result.error.kind).toBe('KMA_INVALID_RESPONSE');
+  });
+
+  it.each(['rnSt4Am', 'rnSt4Pm', 'wf4Am', 'wf4Pm'])(
+    'K. a partial D+4 group missing only %s is rejected under a 06:00 request',
+    async (missingField) => {
+      const item = midtermLandItem();
+      delete item[missingField];
+      const result = await midtermProviderWith(
+        fetchReturning(jsonOk(midtermBody(item))),
+      ).fetchMidtermForecast(MIDTERM_LAND_REQUEST);
+      if (result.ok) {
+        throw new Error('expected a failure');
+      }
+      expect(result.error.kind).toBe('KMA_INVALID_RESPONSE');
+    },
+  );
+
+  it('K. a partial D+4 group with two of the four fields present is rejected even at 18:00', async () => {
+    const item = midtermLandItem();
+    delete item.wf4Am;
+    delete item.wf4Pm;
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(item))),
+    ).fetchMidtermForecast(MIDTERM_LAND_REQUEST_1800);
+    if (result.ok) {
+      throw new Error('expected a failure');
+    }
+    expect(result.error.kind).toBe('KMA_INVALID_RESPONSE');
+  });
+
+  it('L. a missing D+5 land field is still invalid even when D+4 is legitimately absent', async () => {
+    const item = landItemWithoutD4();
+    delete item.wf5Am;
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(item))),
+    ).fetchMidtermForecast(MIDTERM_LAND_REQUEST_1800);
+    if (result.ok) {
+      throw new Error('expected a failure');
+    }
+    expect(result.error.kind).toBe('KMA_INVALID_RESPONSE');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Cross-cutting: empty page, non-canonical tmFc, no fabricated D+4 values
+  // ---------------------------------------------------------------------------
+
+  it('accepts a genuine empty 06:00 success without requiring D+4', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermTemperatureBody({ totalCount: 0, items: [] }))),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    expect(result.ok).toBe(true);
+  });
+
+  it('does not force 06:00 completeness onto a structurally valid but non-canonical tmFc', async () => {
+    const nonCanonicalRequest: KmaMidtermForecastRequest = {
+      operation: 'TEMPERATURE',
+      regId: MIDTERM_TEMPERATURE_REG_ID,
+      tmFc: '202608310615',
+    };
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(temperatureItemWithoutD4()))),
+    ).fetchMidtermForecast(nonCanonicalRequest);
+    expect(result.ok).toBe(true);
+  });
+
+  it('never fabricates a D+4 value (null/0/empty-string/D+5) when the upstream 18:00 issuance omits it', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(temperatureItemWithoutD4()))),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST_1800);
+    if (!result.ok || result.midterm.operation !== 'TEMPERATURE') {
+      throw new Error(`expected a TEMPERATURE success, got ${JSON.stringify(result)}`);
+    }
+    const record = result.midterm.temperatures[0] as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(record, 'taMin4')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(record, 'taMax4')).toBe(false);
+  });
+});
+
+describe('fetchMidtermForecast — request/response correlation', () => {
+  it('rejects an item whose regId does not match the request', async () => {
+    const mismatched = midtermBody(midtermTemperatureItem({ regId: '11H20201' }));
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(mismatched)),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: 'RESPONSE_MISMATCH', field: 'regId' },
+    });
+  });
+
+  it('rejects a land item whose regId does not match the request', async () => {
+    const mismatched = midtermBody(midtermLandItem({ regId: '11D10000' }));
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(mismatched)),
+    ).fetchMidtermForecast(MIDTERM_LAND_REQUEST);
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: 'RESPONSE_MISMATCH', field: 'regId' },
+    });
+  });
+
+  it('detects a regId mismatch on any item, independent of item order', async () => {
+    const items = [
+      midtermTemperatureItem({ regId: '11H20201' }),
+      midtermTemperatureItem(),
+    ];
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermBody(midtermTemperatureItem(), { items, totalCount: 2 }))),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: 'RESPONSE_MISMATCH', field: 'regId' },
+    });
+  });
+
+  it('rejects an echoed pageNo that is not the fixed value', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermTemperatureBody({ pageNo: 2 }))),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: 'RESPONSE_MISMATCH', field: 'pageNo' },
+    });
+  });
+
+  it('rejects an echoed numOfRows that is not the fixed value', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermLandBody({ numOfRows: 1000 }))),
+    ).fetchMidtermForecast(MIDTERM_LAND_REQUEST);
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: 'RESPONSE_MISMATCH', field: 'numOfRows' },
+    });
+  });
+
+  it('reports a pagination mismatch ahead of a regId mismatch', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(
+        jsonOk(
+          midtermBody(midtermTemperatureItem({ regId: '11H20201' }), { pageNo: 3 }),
+        ),
+      ),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: 'RESPONSE_MISMATCH', field: 'pageNo' },
+    });
+  });
+
+  it('rejects a partial page rather than silently returning it', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermTemperatureBody({ totalCount: 4 }))),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: 'INCOMPLETE_PAGE', totalCount: 4, receivedCount: 1 },
+    });
+  });
+
+  it('accepts a genuine empty success without fabricating a record', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermTemperatureBody({ totalCount: 0, items: [] }))),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    if (!result.ok || result.midterm.operation !== 'TEMPERATURE') {
+      throw new Error(`expected a TEMPERATURE success, got ${JSON.stringify(result)}`);
+    }
+    expect(result.midterm.totalCount).toBe(0);
+    expect(result.midterm.temperatures).toEqual([]);
+  });
+});
+
+describe('fetchMidtermForecast — configuration and construction', () => {
+  it('returns CONFIG_ERROR and performs no fetch when the service key is missing', async () => {
+    const spy = vi.fn(fetchReturning(jsonOk(midtermTemperatureBody())));
+    const created = createKmaMidtermForecastProvider({
+      serviceKey: '',
+      fetchImpl: spy as unknown as typeof fetch,
+    });
+    expect(created).toEqual({
+      ok: false,
+      error: { kind: 'CONFIG_ERROR', field: 'serviceKey', reason: 'MISSING' },
+    });
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('returns CONFIG_ERROR for an untrimmed key without leaking it', async () => {
+    const created = createKmaMidtermForecastProvider({ serviceKey: ` ${FAKE_KEY} ` });
+    expect(created).toEqual({
+      ok: false,
+      error: { kind: 'CONFIG_ERROR', field: 'serviceKey', reason: 'INVALID' },
+    });
+    expect(JSON.stringify(created)).not.toContain(FAKE_KEY);
+  });
+
+  it('reads only KMA_SERVICE_KEY from the environment, at call time, with no fetch', () => {
+    const spy = vi.fn(fetchReturning(jsonOk(midtermTemperatureBody())));
+    const missing = createKmaMidtermForecastProviderFromEnv({} as NodeJS.ProcessEnv, {
+      fetchImpl: spy as unknown as typeof fetch,
+    });
+    expect(missing).toEqual({
+      ok: false,
+      error: { kind: 'CONFIG_ERROR', field: 'serviceKey', reason: 'MISSING' },
+    });
+
+    const created = createKmaMidtermForecastProviderFromEnv(
+      { KMA_SERVICE_KEY: FAKE_KEY } as NodeJS.ProcessEnv,
+      { fetchImpl: spy as unknown as typeof fetch },
+    );
+    expect(created.ok).toBe(true);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('performs no fetch merely by constructing a provider', () => {
+    const spy = vi.fn(fetchReturning(jsonOk(midtermTemperatureBody())));
+    midtermProviderWith(spy as unknown as typeof fetch);
+    createKmaMidtermForecastProvider({
+      serviceKey: FAKE_KEY,
+      fetchImpl: spy as unknown as typeof fetch,
+    });
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe('fetchMidtermForecast — result identity and immutability', () => {
+  it('never mutates the request object', async () => {
+    const request: KmaMidtermForecastRequest = { ...MIDTERM_TEMPERATURE_REQUEST };
+    const snapshot = { ...request };
+    await midtermProviderWith(
+      fetchReturning(jsonOk(midtermTemperatureBody())),
+    ).fetchMidtermForecast(request);
+    expect(request).toEqual(snapshot);
+  });
+
+  it('returns a fresh result object on every call', async () => {
+    const provider = midtermProviderWith(
+      (async () => jsonOk(midtermTemperatureBody())) as unknown as typeof fetch,
+    );
+    const first = await provider.fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    const second = await provider.fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    expect(first).not.toBe(second);
+    expect(first).toEqual(second);
+    if (!first.ok || !second.ok) {
+      throw new Error('expected two successes');
+    }
+    expect(first.midterm).not.toBe(second.midterm);
+  });
+});
+
+describe('fetchMidtermForecast — secret non-exposure across error variants', () => {
+  const gatewaySecret = 'MIDTERM_GATEWAY_SECRET_AUTH==';
+  const gatewayXml = `<OpenAPI_ServiceResponse><returnReasonCode>30</returnReasonCode><returnAuthMsg>${gatewaySecret}</returnAuthMsg></OpenAPI_ServiceResponse>`;
+
+  const scenarios: { name: string; fetchImpl: typeof fetch; forbidden: string[] }[] = [
+    {
+      name: 'HTTP_ERROR',
+      fetchImpl: fetchReturning(new Response('SECRET_HTTP_BODY', { status: 500 })),
+      forbidden: ['SECRET_HTTP_BODY'],
+    },
+    {
+      name: 'NETWORK_ERROR',
+      fetchImpl: fetchRejecting(new Error('SECRET_NETWORK_EXCEPTION')),
+      forbidden: ['SECRET_NETWORK_EXCEPTION'],
+    },
+    {
+      name: 'GATEWAY_ERROR',
+      fetchImpl: fetchReturning(jsonOk(gatewayXml)),
+      forbidden: [gatewaySecret],
+    },
+    {
+      name: 'KMA_UPSTREAM_ERROR',
+      fetchImpl: fetchReturning(
+        jsonOk(midtermTemperatureBody({ resultCode: '99', resultMsg: 'SECRET_UPSTREAM_MSG' })),
+      ),
+      forbidden: ['SECRET_UPSTREAM_MSG'],
+    },
+    {
+      name: 'NON_JSON_RESPONSE',
+      fetchImpl: fetchReturning(jsonOk('<html>SECRET_HTML_BODY</html>')),
+      forbidden: ['SECRET_HTML_BODY'],
+    },
+  ];
+
+  it.each(scenarios)('$name never leaks secrets or the URL/key', async ({ fetchImpl, forbidden }) => {
+    const result = await midtermProviderWith(fetchImpl).fetchMidtermForecast(
+      MIDTERM_TEMPERATURE_REQUEST,
+    );
+    const serialized = JSON.stringify(result);
+    for (const secret of [...forbidden, FAKE_KEY, 'apis.data.go.kr', 'ServiceKey', 'getMidTa']) {
+      expect(serialized).not.toContain(secret);
+    }
+  });
+
+  it('a success result carries no key, URL, or raw body either', async () => {
+    const result = await midtermProviderWith(
+      fetchReturning(jsonOk(midtermTemperatureBody())),
+    ).fetchMidtermForecast(MIDTERM_TEMPERATURE_REQUEST);
+    const serialized = JSON.stringify(result);
+    for (const secret of [FAKE_KEY, 'apis.data.go.kr', 'ServiceKey', 'NORMAL_SERVICE']) {
       expect(serialized).not.toContain(secret);
     }
   });
