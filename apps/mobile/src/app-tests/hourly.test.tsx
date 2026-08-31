@@ -32,15 +32,23 @@ vi.mock('react-native', () => ({
 }));
 
 // ---------------------------------------------------------------------------
-// Expo Router's `useRouter` is replaced with a fake returning a call-recording `push` mock.
+// Expo Router's `useRouter` is replaced with a fake returning call-recording `push`/`replace`
+// mocks, and `useLocalSearchParams` with a fake reading a per-test parameter holder — the exact
+// two-call view-selection API the screen uses. Neither performs real navigation.
 // ---------------------------------------------------------------------------
 
 const routerMock = vi.hoisted(() => ({
   push: vi.fn(),
+  replace: vi.fn(),
+}));
+
+const searchParamsMock = vi.hoisted(() => ({
+  current: {} as Record<string, string | string[] | undefined>,
 }));
 
 vi.mock('expo-router', () => ({
   useRouter: () => routerMock,
+  useLocalSearchParams: () => searchParamsMock.current,
 }));
 
 // ---------------------------------------------------------------------------
@@ -191,9 +199,31 @@ function hourlyEntry(overrides: Partial<WeatherSuccessResponseV1['data']['hourly
   };
 }
 
+type DailyEntry = WeatherSuccessResponseV1['data']['daily'][number];
+
+/**
+ * A synthetic day in the shape PR #96 currently produces — distinct morning/afternoon periods,
+ * no `overall`, no sunrise/sunset. Every field is overridable so other contract-legal shapes
+ * (an `overall`-only day, an all-null-period day) can be exercised too.
+ */
+function dailyEntry(overrides: Partial<DailyEntry> = {}): DailyEntry {
+  return {
+    date: '2026-08-30',
+    minimumTemperatureCelsius: 22,
+    maximumTemperatureCelsius: 29,
+    overall: null,
+    morning: { condition: 'PARTLY_CLOUDY', precipitationProbabilityPercent: 20 },
+    afternoon: { condition: 'RAIN', precipitationProbabilityPercent: 60 },
+    sunriseAt: null,
+    sunsetAt: null,
+    ...overrides,
+  } as DailyEntry;
+}
+
 function successResponse(
   hourly: WeatherSuccessResponseV1['data']['hourly'],
   locationId = 'a',
+  daily: WeatherSuccessResponseV1['data']['daily'] = [],
 ): WeatherSuccessResponseV1 {
   return {
     ok: true,
@@ -202,10 +232,16 @@ function successResponse(
       location: { ...sharedFields(locationId, 'Asia/Seoul') },
       current: null,
       hourly,
-      daily: [],
+      daily,
       airQuality: { current: null, daily: [] },
       alerts: [],
-      missingSections: ['CURRENT', 'DAILY', 'AIR_QUALITY_CURRENT', 'AIR_QUALITY_FORECAST', 'ALERTS'],
+      missingSections: [
+        'CURRENT',
+        ...(daily.length === 0 ? (['DAILY'] as const) : []),
+        'AIR_QUALITY_CURRENT',
+        'AIR_QUALITY_FORECAST',
+        'ALERTS',
+      ],
       sources: [],
     },
   } as WeatherSuccessResponseV1;
@@ -264,6 +300,25 @@ function pressables(root: unknown): ElementLike[] {
     }
   });
   return collected;
+}
+
+/** The persistent 시간별/주간 view segments, in display order. */
+function viewSegments(root: unknown): ElementLike[] {
+  return pressables(root).filter((element) => element.props.accessibilityRole === 'tab');
+}
+
+/**
+ * Every pressable the *content area* owns. The two view segments sit in the screen chrome and are
+ * present in every state, so state-specific control assertions exclude them.
+ */
+function contentPressables(root: unknown): ElementLike[] {
+  return pressables(root).filter((element) => element.props.accessibilityRole !== 'tab');
+}
+
+function selectedSegmentLabels(root: unknown): string[] {
+  return viewSegments(root)
+    .filter((element) => (element.props.accessibilityState as { selected?: boolean }).selected === true)
+    .map((element) => (element.props.accessibilityLabel as string) ?? '');
 }
 
 function pressableByLabel(root: unknown, accessibilityLabel: string): ElementLike {
@@ -397,6 +452,7 @@ async function loadScreen() {
 beforeEach(() => {
   vi.resetModules();
   vi.resetAllMocks();
+  searchParamsMock.current = {};
   useMobileSavedLocationsMock.mockReturnValue(notStartedSnapshot());
   useMobileWeatherQueryMock.mockReturnValue(idleQuery());
 });
@@ -412,6 +468,7 @@ describe('import and invocation boundaries', () => {
     expect(useMobileSavedLocationsMock).toHaveBeenCalledTimes(0);
     expect(useMobileWeatherQueryMock).toHaveBeenCalledTimes(0);
     expect(routerMock.push).toHaveBeenCalledTimes(0);
+    expect(routerMock.replace).toHaveBeenCalledTimes(0);
     expect(mobileWeatherQueryStoreMock.retry).toHaveBeenCalledTimes(0);
     expect(mobileSavedLocationApplicationStoreMock.retryInitialization).toHaveBeenCalledTimes(0);
   });
@@ -463,11 +520,11 @@ describe('import and invocation boundaries', () => {
 // ---------------------------------------------------------------------------
 
 describe('screen-owned header', () => {
-  it('always shows the "시간별" header title', async () => {
+  it('always shows the "예보" header title', async () => {
     useMobileSavedLocationsMock.mockReturnValue(notStartedSnapshot());
     const render = await loadScreen();
 
-    expect(headers(render())).toContain('시간별');
+    expect(headers(render())).toContain('예보');
   });
 
   it('places exactly one shared saved-location switcher beside the title when READY', async () => {
@@ -521,7 +578,7 @@ describe('saved-location preparation states', () => {
     const element = render();
 
     expect(texts(element)).toContain(copy);
-    expect(pressables(element)).toHaveLength(0);
+    expect(contentPressables(element)).toHaveLength(0);
   });
 });
 
@@ -669,7 +726,7 @@ describe('READY + SUCCESS with empty hourly', () => {
 
     expect(texts(element)).toContain('표시할 시간별 예보가 없습니다.');
     expectSingleSwitcher(element, snapshot);
-    expect(pressables(element)).toHaveLength(0);
+    expect(contentPressables(element)).toHaveLength(0);
   });
 
   it('does not treat an empty hourly SUCCESS as an error', async () => {
@@ -678,7 +735,7 @@ describe('READY + SUCCESS with empty hourly', () => {
     const render = await loadScreen();
 
     expect(() => render()).not.toThrow();
-    expect(pressables(render())).toHaveLength(0);
+    expect(contentPressables(render())).toHaveLength(0);
   });
 });
 
@@ -941,7 +998,7 @@ describe('local-date grouping and time formatting', () => {
     const render = await loadScreen();
 
     const element = render();
-    expect(headers(element)).toEqual(['시간별', '8월 5일 (수)', '8월 6일 (목)']);
+    expect(headers(element)).toEqual(['예보', '8월 5일 (수)', '8월 6일 (목)']);
   });
 
   it('groups two instants with different UTC dates into the same local-date heading when the selected timezone keeps them on the same local day', async () => {
@@ -956,7 +1013,7 @@ describe('local-date grouping and time formatting', () => {
     const render = await loadScreen();
 
     const element = render();
-    expect(headers(element)).toEqual(['시간별', '8월 5일 (수)']);
+    expect(headers(element)).toEqual(['예보', '8월 5일 (수)']);
   });
 
   it('preserves original contract order of entries within a local-date group', async () => {
@@ -987,7 +1044,7 @@ describe('local-date grouping and time formatting', () => {
     );
     const render = await loadScreen();
 
-    expect(headers(render())).toEqual(['시간별', '8월 5일 (수)', '8월 6일 (목)', '8월 7일 (금)']);
+    expect(headers(render())).toEqual(['예보', '8월 5일 (수)', '8월 6일 (목)', '8월 7일 (금)']);
   });
 
   it('falls back to the raw ISO string without throwing for an invalid timezone', async () => {
@@ -1137,7 +1194,10 @@ describe('horizontal timeline axis', () => {
     const element = render();
     const inside = texts(timelineScrollView(element));
 
+    expect(inside).not.toContain('예보');
     expect(inside).not.toContain('시간별');
+    expect(inside).not.toContain('주간');
+    expect(viewSegments(timelineScrollView(element))).toHaveLength(0);
     expect(switchers(timelineScrollView(element))).toHaveLength(0);
     expect(switchers(element)).toHaveLength(1);
   });
@@ -1248,7 +1308,7 @@ describe('contiguous local-date bands', () => {
     const element = render();
     const inside = texts(timelineScrollView(element));
 
-    expect(headers(element)).toEqual(['시간별', '8월 5일 (수)', '8월 6일 (목)']);
+    expect(headers(element)).toEqual(['예보', '8월 5일 (수)', '8월 6일 (목)']);
     // The band order follows the timeline: the first day's hours, then the next day's.
     expect(inside.indexOf('8월 5일 (수)')).toBeLessThan(inside.indexOf('8월 6일 (목)'));
     expect(inside.indexOf('22:00')).toBeLessThan(inside.indexOf('23:00'));
@@ -1294,7 +1354,7 @@ describe('contiguous local-date bands', () => {
     );
     const render = await loadScreen();
 
-    expect(headers(render())).toEqual(['시간별', '8월 5일 (수)', '8월 6일 (목)', '8월 5일 (수)']);
+    expect(headers(render())).toEqual(['예보', '8월 5일 (수)', '8월 6일 (목)', '8월 5일 (수)']);
   });
 
   it('never labels a band 오늘 or 내일', async () => {
@@ -1563,5 +1623,465 @@ describe('wind direction presentation', () => {
     }
     // The row label itself stays.
     expect(rendered).toContain('풍향');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Forecast view selection: which of the two presentations of the *same* weather query is shown.
+// ---------------------------------------------------------------------------
+
+/** A READY snapshot plus a SUCCESS query carrying both hourly and daily data. */
+async function renderForecast(
+  view: string | string[] | undefined,
+  daily: DailyEntry[] = [dailyEntry()],
+) {
+  const snapshot = readySnapshot([savedLocationRecord('a', 0)], 'a');
+  useMobileSavedLocationsMock.mockReturnValue(snapshot);
+  useMobileWeatherQueryMock.mockReturnValue(
+    successQuery('a', successResponse([hourlyEntry()], 'a', daily)),
+  );
+  searchParamsMock.current = view === undefined ? {} : { view };
+  const render = await loadScreen();
+  return { snapshot, element: render() };
+}
+
+describe('forecast view selection', () => {
+  it('keeps the hourly timeline when no view parameter is present', async () => {
+    const { element } = await renderForecast(undefined);
+
+    expect(horizontalScrollViews(element)).toHaveLength(1);
+    expect(texts(element)).toContain('21°');
+    expect(texts(element)).not.toContain('8월 30일 (일)');
+  });
+
+  it.each([['hourly'], ['weekly-ish'], ['']] as const)(
+    'keeps the hourly timeline for the unselective view value "%s"',
+    async (value) => {
+      const { element } = await renderForecast(value);
+
+      expect(horizontalScrollViews(element)).toHaveLength(1);
+      expect(texts(element)).not.toContain('8월 30일 (일)');
+    },
+  );
+
+  // A repeated `view` search parameter reaches the screen as a `string[]`. It is ambiguous — no
+  // array shape, ordering or content selects the weekly presentation, so every one of them keeps
+  // the default hourly timeline.
+  it.each([
+    [['weekly']],
+    [['hourly', 'weekly']],
+    [['weekly', 'hourly']],
+    [['weekly', 'weekly']],
+    [['weekly-ish', 'nonsense']],
+    [['', 'weekly', '']],
+  ] as const)('keeps the hourly timeline for the repeated view parameter %j', async (value) => {
+    const { element } = await renderForecast([...value]);
+
+    // The hourly timeline is rendered...
+    expect(horizontalScrollViews(element)).toHaveLength(1);
+    expect(texts(element)).toContain('21°');
+    // ...the weekly day cards are not...
+    expect(texts(element)).not.toContain('8월 30일 (일)');
+    // ...and the 시간별 segment is the selected one.
+    expect(selectedSegmentLabels(element)).toEqual(['시간별 예보']);
+  });
+
+  it('renders the weekly day presentation instead of the hourly timeline for view=weekly', async () => {
+    const { element } = await renderForecast('weekly');
+
+    expect(horizontalScrollViews(element)).toHaveLength(0);
+    expect(texts(element)).toContain('8월 30일 (일)');
+    expect(texts(element)).not.toContain('시간');
+  });
+
+  it('offers exactly the two 시간별/주간 segments in every saved-location state', async () => {
+    for (const snapshot of [
+      notStartedSnapshot(),
+      loadingSnapshot(),
+      emptySnapshot(),
+      savedLocationErrorSnapshot(),
+      readySnapshot([savedLocationRecord('a', 0)], 'a'),
+    ]) {
+      useMobileSavedLocationsMock.mockReturnValue(snapshot);
+      const render = await loadScreen();
+
+      const segments = viewSegments(render());
+      expect(segments.map((element) => element.props.accessibilityLabel)).toEqual([
+        '시간별 예보',
+        '주간 예보',
+      ]);
+    }
+  });
+
+  it('marks exactly the hourly segment selected by default and the weekly one for view=weekly', async () => {
+    const hourly = await renderForecast(undefined);
+    expect(selectedSegmentLabels(hourly.element)).toEqual(['시간별 예보']);
+
+    const weekly = await renderForecast('weekly');
+    expect(selectedSegmentLabels(weekly.element)).toEqual(['주간 예보']);
+  });
+
+  it('gives every segment an interactive height of at least 48dp', async () => {
+    const { element } = await renderForecast(undefined);
+
+    for (const segment of viewSegments(element)) {
+      expect(flattenStyle(segment.props.style).minHeight).toBeGreaterThanOrEqual(48);
+    }
+  });
+
+  it('replaces to the weekly URL — never pushes — when 주간 is selected', async () => {
+    const { element } = await renderForecast(undefined);
+
+    press(pressableByLabel(element, '주간 예보'));
+
+    expect(routerMock.replace).toHaveBeenCalledTimes(1);
+    expect(routerMock.replace).toHaveBeenCalledWith('/hourly?view=weekly');
+    expect(routerMock.push).toHaveBeenCalledTimes(0);
+  });
+
+  it('replaces back to the plain hourly URL when 시간별 is selected', async () => {
+    const { element } = await renderForecast('weekly');
+
+    press(pressableByLabel(element, '시간별 예보'));
+
+    expect(routerMock.replace).toHaveBeenCalledTimes(1);
+    expect(routerMock.replace).toHaveBeenCalledWith('/hourly');
+    expect(routerMock.push).toHaveBeenCalledTimes(0);
+  });
+
+  it('re-selecting the already-active view is harmless and still only replaces', async () => {
+    const { element } = await renderForecast('weekly');
+
+    press(pressableByLabel(element, '주간 예보'));
+
+    expect(routerMock.replace).toHaveBeenCalledTimes(1);
+    expect(routerMock.replace).toHaveBeenCalledWith('/hourly?view=weekly');
+  });
+
+  it('mutates no saved-location or weather-query state when the view changes', async () => {
+    const { element } = await renderForecast(undefined);
+    const savedLocationReads = useMobileSavedLocationsMock.mock.calls.length;
+    const weatherQueryReads = useMobileWeatherQueryMock.mock.calls.length;
+
+    press(pressableByLabel(element, '주간 예보'));
+    press(pressableByLabel(element, '시간별 예보'));
+
+    expect(mobileWeatherQueryStoreMock.retry).toHaveBeenCalledTimes(0);
+    expect(mobileSavedLocationApplicationStoreMock.retryInitialization).toHaveBeenCalledTimes(0);
+    expect(useMobileSavedLocationsMock).toHaveBeenCalledTimes(savedLocationReads);
+    expect(useMobileWeatherQueryMock).toHaveBeenCalledTimes(weatherQueryReads);
+  });
+
+  it('hands the weekly view the same single switcher and the same exact snapshot', async () => {
+    const { snapshot, element } = await renderForecast('weekly');
+
+    expectSingleSwitcher(element, snapshot);
+    expect(useMobileWeatherQueryMock).toHaveBeenCalledTimes(1);
+    expect(useMobileWeatherQueryMock).toHaveBeenCalledWith(snapshot);
+    expect(switchers(element)[0]?.props.savedLocations).toBe(
+      useMobileWeatherQueryMock.mock.calls[0]?.[0],
+    );
+  });
+
+  it('reads the saved-location snapshot exactly once per render in the weekly view', async () => {
+    await renderForecast('weekly');
+
+    expect(useMobileSavedLocationsMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Weekly content: order, dates, temperatures, periods and precipitation probability.
+// ---------------------------------------------------------------------------
+
+describe('weekly content', () => {
+  it('renders every supplied day in response order, with no sort, dedupe or padding', async () => {
+    const { element } = await renderForecast('weekly', [
+      dailyEntry({ date: '2026-09-01' }),
+      dailyEntry({ date: '2026-08-30' }),
+      dailyEntry({ date: '2026-09-01' }),
+    ]);
+    const rendered = texts(element);
+
+    expect(rendered.filter((text) => text === '9월 1일 (화)')).toHaveLength(2);
+    expect(rendered.indexOf('9월 1일 (화)')).toBeLessThan(rendered.indexOf('8월 30일 (일)'));
+    expect(rendered.lastIndexOf('9월 1일 (화)')).toBeGreaterThan(rendered.indexOf('8월 30일 (일)'));
+  });
+
+  it('never pads a short response out to seven days', async () => {
+    const { element } = await renderForecast('weekly', [
+      dailyEntry({ date: '2026-08-30' }),
+      dailyEntry({ date: '2026-08-31' }),
+    ]);
+
+    expect(texts(element).filter((text) => /^\d+월 \d+일 \(.\)$/.test(text))).toHaveLength(2);
+  });
+
+  it.each([
+    ['2026-01-01', '1월 1일 (목)'],
+    ['2026-02-28', '2월 28일 (토)'],
+    ['2026-03-01', '3월 1일 (일)'],
+    ['2026-08-30', '8월 30일 (일)'],
+    ['2026-08-31', '8월 31일 (월)'],
+    ['2026-12-31', '12월 31일 (목)'],
+  ] as const)('formats the calendar date %s as "%s"', async (date, label) => {
+    const { element } = await renderForecast('weekly', [dailyEntry({ date })]);
+
+    expect(texts(element)).toContain(label);
+  });
+
+  it('formats the same calendar date identically at UTC+14 and at UTC-11', async () => {
+    const original = process.env.TZ;
+    const labelsPerZone: string[][] = [];
+    const observedOffsets: number[] = [];
+    try {
+      for (const timeZone of ['Pacific/Kiritimati', 'Pacific/Midway']) {
+        process.env.TZ = timeZone;
+        observedOffsets.push(new Date('2026-08-30T00:00:00Z').getTimezoneOffset());
+        const { element } = await renderForecast('weekly', [
+          dailyEntry({ date: '2026-08-30' }),
+          dailyEntry({ date: '2026-12-31' }),
+        ]);
+        labelsPerZone.push(texts(element).filter((text) => /^\d+월 \d+일 \(.\)$/.test(text)));
+      }
+    } finally {
+      process.env.TZ = original;
+    }
+
+    // Control: the host really did switch to two zones more than a day apart.
+    expect(observedOffsets[1] - observedOffsets[0]).toBeGreaterThanOrEqual(24 * 60);
+    expect(labelsPerZone[0]).toEqual(['8월 30일 (일)', '12월 31일 (목)']);
+    expect(labelsPerZone[1]).toEqual(labelsPerZone[0]);
+  });
+
+  it('falls back to the raw value, never a fabricated date, for an unparseable date', async () => {
+    const { element } = await renderForecast('weekly', [dailyEntry({ date: 'not-a-date' })]);
+
+    expect(texts(element)).toContain('not-a-date');
+  });
+
+  it('shows the supplied minimum and maximum temperatures', async () => {
+    const { element } = await renderForecast('weekly', [
+      dailyEntry({ minimumTemperatureCelsius: 22, maximumTemperatureCelsius: 29 }),
+    ]);
+    const rendered = texts(element);
+
+    expect(rendered).toContain('최저 22°');
+    expect(rendered).toContain('최고 29°');
+  });
+
+  it('keeps a zero temperature visible as 0°, never as a missing value', async () => {
+    const { element } = await renderForecast('weekly', [
+      dailyEntry({ minimumTemperatureCelsius: 0, maximumTemperatureCelsius: 0 }),
+    ]);
+    const rendered = texts(element);
+
+    expect(rendered).toContain('최저 0°');
+    expect(rendered).toContain('최고 0°');
+    expect(rendered).not.toContain('최저 —');
+  });
+
+  it('keeps negative temperatures negative', async () => {
+    const { element } = await renderForecast('weekly', [
+      dailyEntry({ minimumTemperatureCelsius: -7, maximumTemperatureCelsius: -1 }),
+    ]);
+    const rendered = texts(element);
+
+    expect(rendered).toContain('최저 -7°');
+    expect(rendered).toContain('최고 -1°');
+  });
+
+  it('shows a neutral marker, never a zero, for a null temperature', async () => {
+    const { element } = await renderForecast('weekly', [
+      dailyEntry({ minimumTemperatureCelsius: null, maximumTemperatureCelsius: null }),
+    ]);
+    const rendered = texts(element);
+
+    expect(rendered).toContain('최저 —');
+    expect(rendered).toContain('최고 —');
+    expect(rendered).not.toContain('최저 0°');
+    expect(rendered).not.toContain('최고 0°');
+  });
+
+  it('shows one null and one supplied temperature side by side', async () => {
+    const { element } = await renderForecast('weekly', [
+      dailyEntry({ minimumTemperatureCelsius: null, maximumTemperatureCelsius: 31 }),
+    ]);
+    const rendered = texts(element);
+
+    expect(rendered).toContain('최저 —');
+    expect(rendered).toContain('최고 31°');
+  });
+
+  it('renders the morning and afternoon periods with their condition and precipitation', async () => {
+    const { element } = await renderForecast('weekly', [
+      dailyEntry({
+        morning: { condition: 'PARTLY_CLOUDY', precipitationProbabilityPercent: 20 },
+        afternoon: { condition: 'RAIN', precipitationProbabilityPercent: 60 },
+      }),
+    ]);
+    const rendered = texts(element);
+
+    expect(rendered).toContain('오전');
+    expect(rendered).toContain('구름 조금');
+    expect(rendered).toContain('강수 20%');
+    expect(rendered).toContain('오후');
+    expect(rendered).toContain('비');
+    expect(rendered).toContain('강수 60%');
+    expect(rendered).not.toContain('종일');
+  });
+
+  it('renders an overall-only day as 종일 and fabricates no morning or afternoon', async () => {
+    const { element } = await renderForecast('weekly', [
+      dailyEntry({
+        overall: { condition: 'SNOW', precipitationProbabilityPercent: 80 },
+        morning: null,
+        afternoon: null,
+      }),
+    ]);
+    const rendered = texts(element);
+
+    expect(rendered).toContain('종일');
+    expect(rendered).toContain('눈');
+    expect(rendered).toContain('강수 80%');
+    expect(rendered).not.toContain('오전');
+    expect(rendered).not.toContain('오후');
+    expect(rendered).not.toContain('날씨 정보 없음');
+  });
+
+  it('renders all three periods, in order, when the contract supplies all three', async () => {
+    const { element } = await renderForecast('weekly', [
+      dailyEntry({
+        overall: { condition: 'CLOUDY', precipitationProbabilityPercent: 10 },
+        morning: { condition: 'CLEAR', precipitationProbabilityPercent: 0 },
+        afternoon: { condition: 'SHOWER', precipitationProbabilityPercent: 70 },
+      }),
+    ]);
+    const rendered = texts(element);
+
+    expect(rendered.indexOf('종일')).toBeGreaterThan(-1);
+    expect(rendered.indexOf('오전')).toBeGreaterThan(rendered.indexOf('종일'));
+    expect(rendered.indexOf('오후')).toBeGreaterThan(rendered.indexOf('오전'));
+  });
+
+  it('shows missing-information copy, and no fabricated condition, when every period is null', async () => {
+    const { element } = await renderForecast('weekly', [
+      dailyEntry({ overall: null, morning: null, afternoon: null }),
+    ]);
+    const rendered = texts(element);
+
+    expect(rendered).toContain('날씨 정보 없음');
+    expect(rendered).not.toContain('종일');
+    expect(rendered).not.toContain('오전');
+    expect(rendered).not.toContain('오후');
+    for (const label of ['맑음', '구름 조금', '흐림', '비', '눈', '소나기', '상태 미확인']) {
+      expect(rendered).not.toContain(label);
+    }
+    // The temperatures the contract *did* supply stay visible.
+    expect(rendered).toContain('최저 22°');
+    expect(rendered).toContain('최고 29°');
+  });
+
+  it('keeps a null precipitation probability distinct from a confirmed zero', async () => {
+    const { element } = await renderForecast('weekly', [
+      dailyEntry({
+        morning: { condition: 'CLEAR', precipitationProbabilityPercent: null },
+        afternoon: { condition: 'CLEAR', precipitationProbabilityPercent: 0 },
+      }),
+    ]);
+    const rendered = texts(element);
+
+    expect(rendered).toContain('강수 —');
+    expect(rendered).toContain('강수 0%');
+    expect(rendered.filter((text) => text === '강수 0%')).toHaveLength(1);
+  });
+
+  it('never renders a null precipitation probability as a zero', async () => {
+    const { element } = await renderForecast('weekly', [
+      dailyEntry({
+        overall: { condition: 'FOG', precipitationProbabilityPercent: null },
+        morning: null,
+        afternoon: null,
+      }),
+    ]);
+    const rendered = texts(element);
+
+    expect(rendered).toContain('강수 —');
+    expect(rendered).not.toContain('강수 0%');
+  });
+
+  it.each([
+    ['CLEAR', '맑음'],
+    ['PARTLY_CLOUDY', '구름 조금'],
+    ['CLOUDY', '흐림'],
+    ['RAIN', '비'],
+    ['SNOW', '눈'],
+    ['SLEET', '진눈깨비'],
+    ['SHOWER', '소나기'],
+    ['THUNDERSTORM', '천둥·번개'],
+    ['FOG', '안개'],
+    ['UNKNOWN', '상태 미확인'],
+  ] as const)('maps the daily condition %s to the Korean label "%s"', async (condition, label) => {
+    const { element } = await renderForecast('weekly', [
+      dailyEntry({
+        overall: { condition, precipitationProbabilityPercent: 30 },
+        morning: null,
+        afternoon: null,
+      }),
+    ]);
+    const rendered = texts(element);
+
+    expect(rendered).toContain(label);
+    expect(rendered).not.toContain(condition);
+  });
+
+  it('never renders sunrise/sunset values, even when the contract supplies them', async () => {
+    const { element } = await renderForecast('weekly', [
+      dailyEntry({ sunriseAt: '2026-08-29T20:47:00Z', sunsetAt: '2026-08-30T10:12:00Z' }),
+    ]);
+    const rendered = texts(element);
+
+    expect(rendered.some((text) => text.includes(':47') || text.includes(':12'))).toBe(false);
+    expect(rendered.some((text) => text.includes('2026-08-'))).toBe(false);
+  });
+
+  it('never leaks coordinates, grid, request id or provider strings in the weekly view', async () => {
+    const { element } = await renderForecast('weekly');
+    const rendered = texts(element).join('\n');
+
+    for (const leak of ['37.5', '127', 'nx', 'ny', 'requestId', 'KMA', 'Synthetic a']) {
+      expect(rendered).not.toContain(leak);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Weekly SUCCESS with an empty daily array.
+// ---------------------------------------------------------------------------
+
+describe('weekly SUCCESS with empty daily', () => {
+  it('shows the no-weekly-data copy with the region switcher and no retry control', async () => {
+    const { snapshot, element } = await renderForecast('weekly', []);
+
+    expect(texts(element)).toContain('표시할 주간 예보가 없습니다.');
+    expectSingleSwitcher(element, snapshot);
+    expect(contentPressables(element)).toHaveLength(0);
+  });
+
+  it('does not treat an empty daily SUCCESS as an error, and shows no hourly fallback', async () => {
+    const { element } = await renderForecast('weekly', []);
+    const rendered = texts(element);
+
+    expect(rendered).not.toContain('날씨 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.');
+    expect(rendered).not.toContain('표시할 시간별 예보가 없습니다.');
+    expect(rendered).not.toContain('21°');
+    expect(horizontalScrollViews(element)).toHaveLength(0);
+  });
+
+  it('still shows the hourly timeline in the default view for the same response', async () => {
+    const { element } = await renderForecast(undefined, []);
+
+    expect(texts(element)).not.toContain('표시할 주간 예보가 없습니다.');
+    expect(horizontalScrollViews(element)).toHaveLength(1);
   });
 });
