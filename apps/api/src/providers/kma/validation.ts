@@ -144,3 +144,61 @@ export function isKmaCurrentObservationGridNy(value: unknown): value is number {
     value <= KMA_CURRENT_OBSERVATION_GRID_NY_MAX
   );
 }
+
+// ---------------------------------------------------------------------------
+// Mid-term forecast (중기예보, `MidFcstInfoService`) — PR #98
+// ---------------------------------------------------------------------------
+//
+// These two predicates are **mid-term-only**, in the same spirit as the current-observation
+// predicates above: 중기예보 addresses a region by an official 구역코드 (`regId`) rather than a
+// forecast grid point, and identifies an issuance by a single 12-digit `tmFc` stamp rather than a
+// separate `base_date` / `base_time` pair. They live here so the request layer
+// (`midterm-request.ts`) and the response boundary (`midterm-raw-schema.ts`) validate `regId` with
+// the exact same rule and cannot drift apart. Forecast's and current observation's own predicates
+// are unchanged by their addition.
+
+/**
+ * The structural form of an official 중기예보 구역코드 (`regId`): two digits, one ASCII uppercase
+ * letter, then five digits (`11B00000`, `11D10000`, `11H20000` for 육상예보구역; `11B10101`,
+ * `11H20201` for 중기기온 도시). This is a **structural** check only — deliberately *not* an
+ * allow-list of region codes, so no single region (Seoul or otherwise) is hardcoded here and a
+ * code KMA adds later still passes. Resolving a location/administrative area/coordinate to the
+ * correct 육상 or 기온 `regId` is explicitly out of scope for this boundary and remains future
+ * work (see `docs/kma-midterm-provider.md`); this predicate only rejects a value that is not a
+ * 구역코드 at all (`''`, `'11B0000'`, `'11B000000'`, `'11b00000'`, `'1AB00000'`, `' 11B00000 '`).
+ */
+const KMA_MIDTERM_REG_ID_PATTERN = /^\d{2}[A-Z]\d{5}$/;
+
+/**
+ * Whether `value` is a structurally valid 중기예보 `regId` (see {@link KMA_MIDTERM_REG_ID_PATTERN}).
+ * Takes `unknown` and guards with `typeof` because a request `regId` crosses a trust boundary; no
+ * coercion and no trimming — a surrounding-whitespace value is rejected, never silently cleaned.
+ */
+export function isKmaMidtermRegId(value: unknown): value is string {
+  return typeof value === 'string' && KMA_MIDTERM_REG_ID_PATTERN.test(value);
+}
+
+/** `YYYYMMDDHHmm` structural matcher — exactly twelve digits. */
+const YYYYMMDDHHMM_PATTERN = /^\d{12}$/;
+
+/**
+ * Whether `value` is a structurally valid 중기예보 issuance stamp (`tmFc`): exactly twelve digits
+ * whose first eight form a real `YYYYMMDD` calendar date and whose last four form a valid `HHmm`
+ * clock time. Composed from {@link isCalendarDate} / {@link isClockTime} so the mid-term boundary
+ * inherits the exact same leap-year and `HH24MI` rules the forecast/current boundaries use.
+ *
+ * The official 발표시각 **schedule** (`YYYYMMDD0600` / `YYYYMMDD1800`, most recent 24 hours only)
+ * is deliberately **not** enforced: a structurally valid but non-canonical stamp such as
+ * `202608310615` is accepted, exactly as `request.ts` accepts a non-canonical forecast `baseTime`.
+ * Choosing the latest scheduled 06/18 KST issuance — and any publication-delay policy around it —
+ * belongs to a later issuance-selector/application layer, not to this structural validator, which
+ * never reads the system clock and is therefore deterministic across machines and time.
+ */
+export function isKmaMidtermIssuanceStamp(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    YYYYMMDDHHMM_PATTERN.test(value) &&
+    isCalendarDate(value.slice(0, 8)) &&
+    isClockTime(value.slice(8))
+  );
+}

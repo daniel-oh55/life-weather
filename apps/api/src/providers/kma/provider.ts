@@ -7,19 +7,23 @@
  * `parse-current-response.ts`), request/response correlation, and slot grouping
  * (`group-forecast-items.ts` / `group-current-observation-items.ts`).
  *
- * Three independent operations share this file: the PR #5 **forecast** provider
+ * Four independent operations share this file: the PR #5 **forecast** provider
  * (`createKmaForecastProvider`, 단기예보/초단기예보), the PR #63 **current-observation** provider
- * (`createKmaCurrentObservationProvider`, 초단기실황), and the PR #89 **alert-event** provider
+ * (`createKmaCurrentObservationProvider`, 초단기실황), the PR #89 **alert-event** provider
  * (`createKmaAlertEventProvider`, 기상특보 조회서비스 `getPwnCd` — a distinct `WthrWrnInfoService`
- * service family with its own base URL). They share the transport lifecycle — timeout, caller
- * abort, HTTP-status classification, and size-limited body reading — via the private
- * {@link performKmaGetRequest} helper, so the security/timeout/abort/response-size policy is
- * defined exactly once. Everything after the raw body text (JSON parsing, KMA-specific response
- * classification, request/response correlation, slot grouping) stays separate per operation, since
- * the response shapes are genuinely different (forecast's `fcstDate`/`fcstTime`/`fcstValue` vs.
- * current observation's `obsrValue` vs. the alert-event lifecycle-record shape — see
- * `docs/kma-alert-event-provider.md`). `fetchForecast`'s public contract, result/error kinds, and
- * behavior are unchanged from PR #5/#6/#7.
+ * service family with its own base URL), and the PR #98 **mid-term forecast** provider
+ * (`createKmaMidtermForecastProvider`, 중기예보 조회서비스 `getMidTa`/`getMidLandFcst` — a third
+ * `MidFcstInfoService` service family, again with its own base URL). They share the transport
+ * lifecycle — timeout, caller abort, HTTP-status classification, and size-limited body reading —
+ * via the private {@link performKmaGetRequest} helper, so the security/timeout/abort/response-size
+ * policy is defined exactly once. Everything after the raw body text (JSON parsing, KMA-specific
+ * response classification, request/response correlation, slot grouping) stays separate per
+ * operation, since the response shapes are genuinely different (forecast's
+ * `fcstDate`/`fcstTime`/`fcstValue` vs. current observation's `obsrValue` vs. the alert-event
+ * lifecycle-record shape vs. the mid-term per-day `taMin4`…/`wf4Am`… item — see
+ * `docs/kma-alert-event-provider.md` and `docs/kma-midterm-provider.md`). `fetchForecast`'s public
+ * contract, result/error kinds, and behavior are unchanged from PR #5/#6/#7, and the alert-event
+ * and current-observation providers are unchanged by the mid-term addition.
  *
  * Everything except the `fetch` itself is deterministic: the same request + same mocked response
  * always produce the same result. No system clock is read, no environment variable is touched at
@@ -65,6 +69,18 @@ import {
   type KmaForecastSlot,
 } from './group-forecast-items.js';
 import { detectKmaGatewayError } from './gateway-error.js';
+import type {
+  KmaMidtermLandItem,
+  KmaMidtermTemperatureItem,
+} from './midterm-raw-schema.js';
+import {
+  buildKmaMidtermForecastRequestUrl,
+  validateKmaMidtermForecastRequest,
+  KMA_MIDTERM_FIXED_NUM_OF_ROWS,
+  KMA_MIDTERM_FIXED_PAGE_NO,
+  type KmaMidtermForecastRequest,
+  type KmaMidtermRequestIssue,
+} from './midterm-request.js';
 import {
   parseKmaAlertEventResponse,
   type KmaAlertEventPage,
@@ -75,6 +91,13 @@ import {
   type KmaCurrentObservationPage,
   type KmaCurrentResponseIssue,
 } from './parse-current-response.js';
+import {
+  parseKmaMidtermLandResponse,
+  parseKmaMidtermTemperatureResponse,
+  type KmaMidtermLandPage,
+  type KmaMidtermResponseIssue,
+  type KmaMidtermTemperaturePage,
+} from './parse-midterm-response.js';
 import {
   parseKmaForecastResponse,
   type KmaForecastPage,
@@ -1111,6 +1134,341 @@ export function createKmaAlertEventProviderFromEnv(
 ): CreateKmaAlertEventProviderResult {
   const source = env ?? process.env;
   return createKmaAlertEventProvider({
+    serviceKey: source.KMA_SERVICE_KEY as string,
+    fetchImpl: dependencies?.fetchImpl,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Mid-term forecast provider (PR #98 — 중기예보 조회서비스, getMidTa / getMidLandFcst)
+// ---------------------------------------------------------------------------
+
+/**
+ * One validated 중기기온조회 (`getMidTa`) record — the region code plus the D+4~D+10 최저/최고기온
+ * pairs, exactly as `midterm-raw-schema.ts` validated them. Not normalized: this provider does not
+ * build `DailyForecast[]`, derive dates from `tmFc`, or interpret the day offsets.
+ */
+export type KmaMidtermTemperatureRecord = KmaMidtermTemperatureItem;
+
+/**
+ * One validated 중기육상예보조회 (`getMidLandFcst`) record — the region code, the D+4~D+7 오전/오후
+ * 날씨예보·강수확률 pairs, and the D+8~D+10 종일 values. The Korean `wf…` phrases are carried
+ * verbatim; mapping them to the shared `WeatherCondition` is a later normalization PR's job.
+ */
+export type KmaMidtermLandRecord = KmaMidtermLandItem;
+
+/**
+ * A successful mid-term fetch, discriminated by which operation produced it so a caller cannot mix
+ * up the two record shapes. Both variants retain the request identity (`operation`, `regId`,
+ * `tmFc`) and the page total alongside the validated records.
+ *
+ * The records are exposed as an array rather than a single item: one `regId`/`tmFc` pair is
+ * expected to yield exactly one item, but a genuine success with `totalCount === 0` must not
+ * fabricate one (see the module doc of `parse-midterm-response.ts`), and this raw boundary does not
+ * invent an "exactly one item" rule it cannot cite. Selecting the single item — and normalizing it
+ * into the public `DailyForecast` contract — belongs to the next layer.
+ */
+export type KmaMidtermForecastProviderSuccess =
+  | {
+      readonly operation: 'TEMPERATURE';
+      readonly regId: string;
+      readonly tmFc: string;
+      readonly totalCount: number;
+      readonly temperatures: readonly KmaMidtermTemperatureRecord[];
+    }
+  | {
+      readonly operation: 'LAND';
+      readonly regId: string;
+      readonly tmFc: string;
+      readonly totalCount: number;
+      readonly landForecasts: readonly KmaMidtermLandRecord[];
+    };
+
+/**
+ * The field a request/response correlation check found inconsistent. Unlike the alert boundary
+ * (whose response echoes only pagination), the mid-term item **does** echo `regId`, so a response
+ * for the wrong region is detectable and is rejected. `tmFc` is *not* echoed by either item shape,
+ * so no correlation is asserted for it.
+ */
+export type KmaMidtermResponseMismatchField = 'pageNo' | 'numOfRows' | 'regId';
+
+/**
+ * Every way a mid-term fetch can fail. Same shape discipline as {@link KmaForecastProviderError} —
+ * each variant carries only the minimum needed to act on it, never a raw upstream string, URL,
+ * body, or exception. There is no `DUPLICATE_CATEGORY` variant: mid-term items are not grouped by
+ * category — every validated item becomes one record, in response order.
+ */
+export type KmaMidtermForecastProviderError =
+  | { readonly kind: 'INVALID_REQUEST'; readonly issues: readonly KmaMidtermRequestIssue[] }
+  | KmaTransportError
+  | { readonly kind: 'EMPTY_RESPONSE' }
+  | { readonly kind: 'NON_JSON_RESPONSE' }
+  | { readonly kind: 'INVALID_JSON' }
+  | { readonly kind: 'GATEWAY_ERROR'; readonly reasonCode: string | null }
+  | { readonly kind: 'KMA_UPSTREAM_ERROR'; readonly resultCode: string }
+  | { readonly kind: 'KMA_INVALID_RESPONSE'; readonly issues: readonly KmaMidtermResponseIssue[] }
+  | { readonly kind: 'RESPONSE_MISMATCH'; readonly field: KmaMidtermResponseMismatchField }
+  | {
+      readonly kind: 'INCOMPLETE_PAGE';
+      readonly totalCount: number;
+      readonly receivedCount: number;
+    };
+
+export type KmaMidtermForecastProviderResult =
+  | { readonly ok: true; readonly midterm: KmaMidtermForecastProviderSuccess }
+  | { readonly ok: false; readonly error: KmaMidtermForecastProviderError };
+
+/**
+ * The mid-term provider's single public method. One operation-discriminated method (rather than a
+ * `fetchTemperature`/`fetchLand` pair) mirrors `fetchForecast`, whose `product` field likewise
+ * selects between two operations of one service family through a fixed internal path table — the
+ * smallest coherent API consistent with the existing provider patterns.
+ */
+export interface KmaMidtermForecastProvider {
+  fetchMidtermForecast(
+    request: KmaMidtermForecastRequest,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<KmaMidtermForecastProviderResult>;
+}
+
+export type CreateKmaMidtermForecastProviderResult =
+  | { readonly ok: true; readonly provider: KmaMidtermForecastProvider }
+  | { readonly ok: false; readonly error: KmaProviderConfigError };
+
+/** Wrap an error variant into a failed mid-term result. */
+function failMidterm(
+  error: KmaMidtermForecastProviderError,
+): KmaMidtermForecastProviderResult {
+  return { ok: false, error };
+}
+
+/**
+ * The request/response correlation checks shared by both mid-term operations, in a fixed field
+ * order: fixed pagination first (so a paging anomaly is reported ahead of a data mismatch), then
+ * the echoed `regId`. `regId` is checked across *all* items, so the result is independent of item
+ * order. An empty item array trivially passes (a `totalCount === 0` empty page is a valid success).
+ */
+function findMidtermResponseMismatch(
+  request: KmaMidtermForecastRequest,
+  page: {
+    readonly pageNo: number;
+    readonly numOfRows: number;
+    readonly items: readonly { readonly regId: string }[];
+  },
+): KmaMidtermResponseMismatchField | null {
+  if (page.pageNo !== KMA_MIDTERM_FIXED_PAGE_NO) {
+    return 'pageNo';
+  }
+  if (page.numOfRows !== KMA_MIDTERM_FIXED_NUM_OF_ROWS) {
+    return 'numOfRows';
+  }
+  if (page.items.some((item) => item.regId !== request.regId)) {
+    return 'regId';
+  }
+  return null;
+}
+
+/**
+ * The correlation + completeness checks every mid-term success page must pass before its items are
+ * exposed. Returns the failing result, or `null` when the page is consistent and complete.
+ *
+ * This provider always requests a fixed `numOfRows` and never auto-paginates, so a `totalCount`
+ * larger than the number of received items means the caller would silently get a partial answer —
+ * reported truthfully as `INCOMPLETE_PAGE` instead. (`items.length > totalCount` is already
+ * rejected by the raw schema, so this is the only remaining gap.)
+ */
+function checkMidtermPage(
+  request: KmaMidtermForecastRequest,
+  page: {
+    readonly pageNo: number;
+    readonly numOfRows: number;
+    readonly totalCount: number;
+    readonly items: readonly { readonly regId: string }[];
+  },
+): KmaMidtermForecastProviderResult | null {
+  const mismatch = findMidtermResponseMismatch(request, page);
+  if (mismatch !== null) {
+    return failMidterm({ kind: 'RESPONSE_MISMATCH', field: mismatch });
+  }
+
+  if (page.totalCount > page.items.length) {
+    return failMidterm({
+      kind: 'INCOMPLETE_PAGE',
+      totalCount: page.totalCount,
+      receivedCount: page.items.length,
+    });
+  }
+
+  return null;
+}
+
+/** Turn a validated 중기기온조회 page into a provider result. */
+function interpretMidtermTemperaturePage(
+  request: KmaMidtermForecastRequest,
+  page: KmaMidtermTemperaturePage,
+): KmaMidtermForecastProviderResult {
+  const rejected = checkMidtermPage(request, page);
+  if (rejected !== null) {
+    return rejected;
+  }
+
+  return {
+    ok: true,
+    midterm: {
+      operation: 'TEMPERATURE',
+      regId: request.regId,
+      tmFc: request.tmFc,
+      totalCount: page.totalCount,
+      temperatures: page.items,
+    },
+  };
+}
+
+/** Turn a validated 중기육상예보조회 page into a provider result. */
+function interpretMidtermLandPage(
+  request: KmaMidtermForecastRequest,
+  page: KmaMidtermLandPage,
+): KmaMidtermForecastProviderResult {
+  const rejected = checkMidtermPage(request, page);
+  if (rejected !== null) {
+    return rejected;
+  }
+
+  return {
+    ok: true,
+    midterm: {
+      operation: 'LAND',
+      regId: request.regId,
+      tmFc: request.tmFc,
+      totalCount: page.totalCount,
+      landForecasts: page.items,
+    },
+  };
+}
+
+/**
+ * Classify a 2xx mid-term response body (already read to text) into a provider result. Decision
+ * order is identical to the other three operations: empty → gateway XML → other XML/HTML (non-JSON)
+ * → JSON parse → the *operation-specific* parser → page interpretation. Pure and deterministic; the
+ * raw body never leaves this function.
+ *
+ * The operation selects the parser, so a `getMidLandFcst` payload returned for a `TEMPERATURE`
+ * request fails its body schema and surfaces as `KMA_INVALID_RESPONSE` rather than being coerced.
+ */
+function classifyMidtermBody(
+  request: KmaMidtermForecastRequest,
+  text: string,
+): KmaMidtermForecastProviderResult {
+  const trimmed = text.trim();
+  if (trimmed === '') {
+    return failMidterm({ kind: 'EMPTY_RESPONSE' });
+  }
+
+  if (trimmed.startsWith('<')) {
+    const gateway = detectKmaGatewayError(text);
+    return gateway.isGatewayError
+      ? failMidterm({ kind: 'GATEWAY_ERROR', reasonCode: gateway.reasonCode })
+      : failMidterm({ kind: 'NON_JSON_RESPONSE' });
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // The raw SyntaxError message can echo body fragments, so it is never surfaced.
+    return failMidterm({ kind: 'INVALID_JSON' });
+  }
+
+  if (request.operation === 'TEMPERATURE') {
+    const result = parseKmaMidtermTemperatureResponse(parsed);
+    if (!result.ok) {
+      return result.error.kind === 'UPSTREAM_ERROR'
+        ? failMidterm({ kind: 'KMA_UPSTREAM_ERROR', resultCode: result.error.resultCode })
+        : failMidterm({ kind: 'KMA_INVALID_RESPONSE', issues: result.error.issues });
+    }
+    return interpretMidtermTemperaturePage(request, result.page);
+  }
+
+  const result = parseKmaMidtermLandResponse(parsed);
+  if (!result.ok) {
+    return result.error.kind === 'UPSTREAM_ERROR'
+      ? failMidterm({ kind: 'KMA_UPSTREAM_ERROR', resultCode: result.error.resultCode })
+      : failMidterm({ kind: 'KMA_INVALID_RESPONSE', issues: result.error.issues });
+  }
+  return interpretMidtermLandPage(request, result.page);
+}
+
+/**
+ * Perform one mid-term fetch. Request validation and URL building are mid-term-specific; the
+ * transport is the same shared {@link performKmaGetRequest} the forecast, current-observation, and
+ * alert-event providers use, so all four operations are bound by the identical timeout/abort/
+ * HTTP-status/body-size policy.
+ */
+async function fetchMidtermForecast(
+  config: ResolvedKmaProviderConfig,
+  request: KmaMidtermForecastRequest,
+  options?: { readonly signal?: AbortSignal },
+): Promise<KmaMidtermForecastProviderResult> {
+  const validation = validateKmaMidtermForecastRequest(request);
+  if (!validation.ok) {
+    return failMidterm({ kind: 'INVALID_REQUEST', issues: validation.issues });
+  }
+
+  const built = buildKmaMidtermForecastRequestUrl(config.serviceKey, request);
+  if (!built.ok) {
+    // Unreachable in practice (the request already validated), handled for totality.
+    return failMidterm({ kind: 'INVALID_REQUEST', issues: built.issues });
+  }
+
+  const transport = await performKmaGetRequest(config, built.url, options);
+  if (!transport.ok) {
+    return failMidterm(transport.error);
+  }
+
+  return classifyMidtermBody(request, transport.text);
+}
+
+/** Build a mid-term provider bound to a resolved config. */
+function makeMidtermForecastProvider(
+  config: ResolvedKmaProviderConfig,
+): KmaMidtermForecastProvider {
+  return {
+    fetchMidtermForecast(request, options) {
+      return fetchMidtermForecast(config, request, options);
+    },
+  };
+}
+
+/**
+ * Create a mid-term forecast provider from explicit options. Reuses the exact same option shape and
+ * validation as the forecast/current-observation/alert providers
+ * ({@link KmaForecastProviderOptions} / {@link validateKmaProviderOptions}) — all four target the
+ * same `KMA_SERVICE_KEY` and the same defensive timeout/response-size policy, even though
+ * `MidFcstInfoService` is a different service family with its own base URL. No second key env
+ * variable, no mid-term-specific secret, and no separate timeout/body-size policy is introduced.
+ * Returns a `CONFIG_ERROR` result (never throws) when the options are invalid.
+ */
+export function createKmaMidtermForecastProvider(
+  options: KmaForecastProviderOptions,
+): CreateKmaMidtermForecastProviderResult {
+  const validated = validateKmaProviderOptions(options);
+  if (!validated.ok) {
+    return { ok: false, error: validated.error };
+  }
+  return { ok: true, provider: makeMidtermForecastProvider(validated.config) };
+}
+
+/**
+ * Create a mid-term forecast provider from the environment, reading **only** `KMA_SERVICE_KEY` —
+ * identical env-reading policy to {@link createKmaForecastProviderFromEnv} (read at call time,
+ * never at module import; the key value never appears in the error).
+ */
+export function createKmaMidtermForecastProviderFromEnv(
+  env?: NodeJS.ProcessEnv,
+  dependencies?: { readonly fetchImpl?: typeof fetch },
+): CreateKmaMidtermForecastProviderResult {
+  const source = env ?? process.env;
+  return createKmaMidtermForecastProvider({
     serviceKey: source.KMA_SERVICE_KEY as string,
     fetchImpl: dependencies?.fetchImpl,
   });
