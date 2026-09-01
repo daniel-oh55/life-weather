@@ -7,6 +7,7 @@ import type {
 import { useRouter } from 'expo-router';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { TodayBannerAd } from '../../ads/today-banner-ad';
 import { SavedLocationSwitcher } from '../../components/saved-location-switcher';
 import { WeatherFreshnessNotice } from '../../components/weather-freshness-notice';
 import {
@@ -362,6 +363,7 @@ export default function HomeScreen() {
           </>
         ) : null}
 
+        <TodayBannerAd />
       </View>
     </ScrollView>
   );

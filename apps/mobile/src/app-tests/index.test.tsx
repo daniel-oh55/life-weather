@@ -119,6 +119,21 @@ vi.mock('../components/weather-freshness-notice', () => ({
 }));
 
 // ---------------------------------------------------------------------------
+// The Today-only ad banner is replaced with a marker component. Its own runtime-gating, unit-id
+// selection, and adaptive-size contract are covered by `../ads/today-banner-ad.test.tsx`; what this
+// screen still owns — and what is asserted below — is that it mounts exactly one, at the bottom of
+// the screen's content, regardless of saved-location/weather state.
+// ---------------------------------------------------------------------------
+
+const MockTodayBannerAd = vi.hoisted(() => function MockTodayBannerAd(): null {
+  return null;
+});
+
+vi.mock('../ads/today-banner-ad', () => ({
+  TodayBannerAd: MockTodayBannerAd,
+}));
+
+// ---------------------------------------------------------------------------
 // The weather-query React hook is replaced with a call-recording mock so `HomeScreen` can be
 // invoked as a plain function without ever running the hook's real `useEffect` (there is no real
 // renderer/dispatcher in this Node-based setup). The production weather-query store is replaced
@@ -1099,5 +1114,34 @@ describe('hourly preview', () => {
 
     expect(texts(element)).toContain('현재 관측 정보를 확인할 수 없습니다.');
     expect(texts(element)).toContain('표시할 시간별 예보가 없습니다.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Today-only ad banner — reachability and placement only. The banner's own gating/unit-id/size
+// contract is owned by `../ads/today-banner-ad.test.tsx` and is not duplicated here.
+// ---------------------------------------------------------------------------
+
+describe('ad banner placement', () => {
+  it('mounts exactly one Today banner regardless of saved-location/weather state', async () => {
+    const render = await loadScreen();
+
+    function banners(root: unknown): unknown[] {
+      const collected: unknown[] = [];
+      walk(root, (element) => {
+        if (element.type === MockTodayBannerAd) {
+          collected.push(element);
+        }
+      });
+      return collected;
+    }
+
+    expect(banners(render())).toHaveLength(1);
+
+    mockStoredEnvelope('a');
+    useMobileWeatherQueryMock.mockReturnValue(successSnapshot({ current: syntheticCurrent() }));
+    await hydrateAndInitialize();
+
+    expect(banners(render())).toHaveLength(1);
   });
 });

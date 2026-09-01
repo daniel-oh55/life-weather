@@ -1,6 +1,10 @@
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+
+import { isValidHttpsUrl } from '../../ads/android-release-config';
+import { mobileAdsRuntimeStore } from '../../ads/mobile-ads-runtime-production';
+import { useMobileAdsRuntime } from '../../ads/use-mobile-ads-runtime';
 
 const APP_NAME_FALLBACK = 'Life Weather';
 const APP_VERSION_FALLBACK = '확인 불가';
@@ -14,11 +18,31 @@ function resolveAppVersion(): string {
   return version ? version : APP_VERSION_FALLBACK;
 }
 
+function openPrivacyPolicy(url: string): void {
+  // Never let a raw URL-opening exception (e.g. no handler for the scheme) surface to the user.
+  void Linking.openURL(url).catch(() => {});
+}
+
 export default function SettingsScreen() {
   const router = useRouter();
+  const adsRuntime = useMobileAdsRuntime();
+  const configuredPrivacyPolicyUrl = process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL;
+  const privacyPolicyUrl = isValidHttpsUrl(configuredPrivacyPolicyUrl)
+    ? configuredPrivacyPolicyUrl
+    : null;
 
   function handleAddLocation(): void {
     router.push('/locations');
+  }
+
+  function handlePrivacyPolicyPress(): void {
+    if (privacyPolicyUrl !== null) {
+      openPrivacyPolicy(privacyPolicyUrl);
+    }
+  }
+
+  function handlePrivacyOptionsPress(): void {
+    void mobileAdsRuntimeStore.openPrivacyOptions();
   }
 
   return (
@@ -64,7 +88,35 @@ export default function SettingsScreen() {
         <Text style={styles.text}>날씨 정보: 기상청</Text>
         <Text style={styles.text}>지역 검색 자료: 기상청_단기예보 조회서비스</Text>
         <Text style={styles.text}>지역 검색 자료 이용조건: 공공저작물 출처표시 제1유형</Text>
-        <Text style={styles.text}>대기질: 에어코리아 연동 예정</Text>
+        <Text style={styles.text}>대기질: 에어코리아</Text>
+      </View>
+
+      <View style={styles.section}>
+        <Text accessibilityRole="header" style={styles.sectionTitle}>
+          개인정보 및 광고
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="개인정보 처리방침"
+          disabled={privacyPolicyUrl === null}
+          onPress={handlePrivacyPolicyPress}
+          style={styles.button}
+        >
+          <Text style={styles.buttonLabel}>개인정보 처리방침</Text>
+        </Pressable>
+        {privacyPolicyUrl === null ? (
+          <Text style={styles.text}>개인정보 처리방침 주소가 아직 설정되지 않았습니다.</Text>
+        ) : null}
+        {adsRuntime.privacyOptionsRequired ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="광고 개인정보 선택 관리"
+            onPress={handlePrivacyOptionsPress}
+            style={styles.button}
+          >
+            <Text style={styles.buttonLabel}>광고 개인정보 선택 관리</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       <View style={styles.section}>

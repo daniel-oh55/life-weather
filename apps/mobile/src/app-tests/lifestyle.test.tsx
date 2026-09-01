@@ -412,6 +412,15 @@ describe('import and invocation boundaries', () => {
     expect(source).not.toContain('useMobileWeatherQueryLifecycle');
   });
 
+  it('never imports the Today-only ad banner — 1.0 ads are Today-only', async () => {
+    const source = await import('node:fs/promises').then((fs) =>
+      fs.readFile(new URL('../app/(tabs)/lifestyle.tsx', import.meta.url), 'utf-8'),
+    );
+
+    expect(source).not.toContain('today-banner-ad');
+    expect(source).not.toContain('BannerAd');
+  });
+
   it('5. never calls request/reset on the weather-query store, and never fetches directly', async () => {
     useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
     useMobileWeatherQueryMock.mockReturnValue(successQuery('a', successResponse()));
