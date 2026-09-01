@@ -12,12 +12,13 @@ import type { ConfigContext, ExpoConfig } from 'expo/config';
  * when `LIFE_WEATHER_ANDROID_PACKAGE` is absent/invalid, and the Google Mobile Ads Expo config
  * plugin falls back to Google's documented sample Android App ID rather than a fabricated one.
  *
- * This file intentionally does **not** import `../src/ads/android-release-config` (the canonical,
- * unit-tested copy of this same validation logic, used by the app runtime and its tests): Expo's
- * `app.config.ts` loader only transpiles this one entry file, so a relative TypeScript import from
- * it fails to resolve at config-evaluation time (there is no project-wide TS loader registered for
- * this process). The two small validator sets below are kept deliberately minimal and are mirrored
- * exactly by `../src/ads/android-release-config.ts`'s own tests.
+ * The config-time validators below intentionally mirror the runtime validators in
+ * `./src/ads/android-release-config.ts`; Expo config evaluation does not import that TypeScript
+ * module. Expo's `app.config.ts` loader only transpiles this one entry file, so a relative
+ * TypeScript import from it fails to resolve at config-evaluation time (there is no project-wide
+ * TS loader registered for this process). The two small validator sets below are deliberately
+ * minimal, duplicated copies — not a shared import — and must be kept semantically identical to
+ * `./src/ads/android-release-config.ts`.
  */
 
 const GOOGLE_SAMPLE_ADMOB_ANDROID_APP_ID = 'ca-app-pub-3940256099942544~3347511713';
@@ -34,7 +35,7 @@ function isValidAndroidPackageName(value: string | undefined): value is string {
 function isProductionAdMobAndroidAppId(value: string | undefined): value is string {
   return (
     isNonEmptyTrimmed(value) &&
-    /^ca-app-pub-\d{16}~\d+$/.test(value) &&
+    /^ca-app-pub-\d{16}~\d{10}$/.test(value) &&
     !value.includes(GOOGLE_SAMPLE_ADMOB_PUBLISHER_ID)
   );
 }
@@ -42,7 +43,7 @@ function isProductionAdMobAndroidAppId(value: string | undefined): value is stri
 function isProductionAdMobAdUnitId(value: string | undefined): value is string {
   return (
     isNonEmptyTrimmed(value) &&
-    /^ca-app-pub-\d{16}\/\d+$/.test(value) &&
+    /^ca-app-pub-\d{16}\/\d{10}$/.test(value) &&
     !value.includes(GOOGLE_SAMPLE_ADMOB_PUBLISHER_ID)
   );
 }

@@ -1,6 +1,9 @@
 /**
- * Pure Android release-configuration validators and resolvers shared by `app.config.ts` (dynamic
- * Expo config evaluation) and the runtime ads boundary (`./today-banner-ad`).
+ * Pure Android release-configuration validators and resolvers used by the runtime ads boundary
+ * (`./today-banner-ad`) and this module's own tests. `app.config.ts` cannot import this TypeScript
+ * module at config-evaluation time (see that file's header comment), so it keeps its own
+ * deliberately minimal copy of these same validators; their release rules are intentionally
+ * mirrored there and must be kept semantically identical to this file.
  *
  * This module never imports React, React Native, or Expo — it only reads whatever `env`-shaped
  * object is handed to it, so both a plain Node config-evaluation context and the mobile app runtime
@@ -53,12 +56,12 @@ export function isValidAndroidPackageName(value: string | undefined): value is s
   return /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/.test(value);
 }
 
-/** A `ca-app-pub-<16 digits>~<digits>` AdMob Android application-id, valid or sample alike. */
+/** A `ca-app-pub-<16 digits>~<10 digits>` AdMob Android application-id, valid or sample alike. */
 export function isValidAdMobAndroidAppId(value: string | undefined): value is string {
   if (!isNonEmptyTrimmed(value)) {
     return false;
   }
-  return /^ca-app-pub-\d{16}~\d+$/.test(value);
+  return /^ca-app-pub-\d{16}~\d{10}$/.test(value);
 }
 
 /** A valid-shaped AdMob Android App ID that is *not* Google's sample/test publisher id. */
@@ -66,12 +69,12 @@ export function isProductionAdMobAndroidAppId(value: string | undefined): value 
   return isValidAdMobAndroidAppId(value) && !value.includes(GOOGLE_SAMPLE_ADMOB_PUBLISHER_ID);
 }
 
-/** A `ca-app-pub-<16 digits>/<digits>` AdMob ad-unit id, valid or sample alike. */
+/** A `ca-app-pub-<16 digits>/<10 digits>` AdMob ad-unit id, valid or sample alike. */
 export function isValidAdMobAdUnitId(value: string | undefined): value is string {
   if (!isNonEmptyTrimmed(value)) {
     return false;
   }
-  return /^ca-app-pub-\d{16}\/\d+$/.test(value);
+  return /^ca-app-pub-\d{16}\/\d{10}$/.test(value);
 }
 
 /** A valid-shaped AdMob ad-unit id that is *not* Google's sample/test publisher id. */

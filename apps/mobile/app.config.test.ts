@@ -149,6 +149,38 @@ describe('production EAS fail-fast', () => {
     expect(() => configFn(context())).toThrow(/EXPO_PUBLIC_ADMOB_TODAY_BANNER_UNIT_ID/);
   });
 
+  it('fails with a short (9-digit) AdMob Android App ID suffix', async () => {
+    setValidProductionEnv();
+    process.env.LIFE_WEATHER_ADMOB_ANDROID_APP_ID = 'ca-app-pub-1234567890123456~123456789';
+    const configFn = await loadConfigFn();
+
+    expect(() => configFn(context())).toThrow(/LIFE_WEATHER_ADMOB_ANDROID_APP_ID/);
+  });
+
+  it('fails with a long (11-digit) AdMob Android App ID suffix', async () => {
+    setValidProductionEnv();
+    process.env.LIFE_WEATHER_ADMOB_ANDROID_APP_ID = 'ca-app-pub-1234567890123456~12345678901';
+    const configFn = await loadConfigFn();
+
+    expect(() => configFn(context())).toThrow(/LIFE_WEATHER_ADMOB_ANDROID_APP_ID/);
+  });
+
+  it('fails with a short (9-digit) banner unit ID suffix', async () => {
+    setValidProductionEnv();
+    process.env.EXPO_PUBLIC_ADMOB_TODAY_BANNER_UNIT_ID = 'ca-app-pub-1234567890123456/123456789';
+    const configFn = await loadConfigFn();
+
+    expect(() => configFn(context())).toThrow(/EXPO_PUBLIC_ADMOB_TODAY_BANNER_UNIT_ID/);
+  });
+
+  it('fails with a long (11-digit) banner unit ID suffix', async () => {
+    setValidProductionEnv();
+    process.env.EXPO_PUBLIC_ADMOB_TODAY_BANNER_UNIT_ID = 'ca-app-pub-1234567890123456/12345678901';
+    const configFn = await loadConfigFn();
+
+    expect(() => configFn(context())).toThrow(/EXPO_PUBLIC_ADMOB_TODAY_BANNER_UNIT_ID/);
+  });
+
   it('fails with missing privacy policy URL', async () => {
     setValidProductionEnv();
     delete process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL;

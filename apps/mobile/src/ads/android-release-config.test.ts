@@ -78,6 +78,14 @@ describe('AdMob Android App ID validation', () => {
     expect(isProductionAdMobAndroidAppId('not-an-app-id')).toBe(false);
     expect(isProductionAdMobAndroidAppId('ca-app-pub-123~456')).toBe(false);
   });
+
+  it('rejects a short (9-digit) suffix', () => {
+    expect(isProductionAdMobAndroidAppId('ca-app-pub-1234567890123456~123456789')).toBe(false);
+  });
+
+  it('rejects a long (11-digit) suffix', () => {
+    expect(isProductionAdMobAndroidAppId('ca-app-pub-1234567890123456~12345678901')).toBe(false);
+  });
 });
 
 describe('AdMob ad-unit ID validation', () => {
@@ -94,6 +102,14 @@ describe('AdMob ad-unit ID validation', () => {
     expect(isProductionAdMobAdUnitId(undefined)).toBe(false);
     expect(isProductionAdMobAdUnitId('')).toBe(false);
     expect(isProductionAdMobAdUnitId('ca-app-pub-1234567890123456~1234567890')).toBe(false);
+  });
+
+  it('rejects a short (9-digit) suffix', () => {
+    expect(isProductionAdMobAdUnitId('ca-app-pub-1234567890123456/123456789')).toBe(false);
+  });
+
+  it('rejects a long (11-digit) suffix', () => {
+    expect(isProductionAdMobAdUnitId('ca-app-pub-1234567890123456/12345678901')).toBe(false);
   });
 });
 
