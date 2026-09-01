@@ -37,6 +37,11 @@ export {
   type SelectLatestKmaCurrentObservationBaseTimeAfterAvailabilityDelayInput,
 } from './current-observation-api-availability-time.js';
 export {
+  selectLatestKmaMidtermIssuance,
+  type KmaMidtermIssuance,
+  type SelectLatestKmaMidtermIssuanceInput,
+} from './midterm-issue-time.js';
+export {
   selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay,
   type KmaForecastBaseTimeCandidates,
   type SelectKmaForecastBaseTimeCandidatesAfterAvailabilityDelayInput,
