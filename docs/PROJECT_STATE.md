@@ -1,7 +1,7 @@
 # Life Weather 프로젝트 상태
 
-- 기준일: 2026-07-29
-- State baseline: `f19c268c68fa6db82af6b432cc79e8466a3202b1`
+- 기준일: 2026-09-01
+- State baseline: `f41484228c4013ddb4b138f738d85c3deea0a31b`
 
 이 문서는 baseline 시점의 저장소 사실, 미완료 범위와 다음 Owner 결정을 기록합니다.
 
@@ -81,7 +81,7 @@
   `WeatherCondition` 매핑, 최종 source 선택, `WeatherOverview`/`SourceMetadata` 조립, 위치 →
   `regId` 매핑, production composition/route 연결은 모두 여전히 후속 작업입니다. 자세한 내용은
   [kma-midterm-execution-service.md](./kma-midterm-execution-service.md) 참고.
-- PR #102는 **현재 Draft**이며, KMA 중기육상예보(`getMidLandFcst`)의 한국어 `WF` 날씨 문구를
+- PR #102(**MERGED**, main `f41484228c4013ddb4b138f738d85c3deea0a31b`)는 KMA 중기육상예보(`getMidLandFcst`)의 한국어 `WF` 날씨 문구를
   공통 `WeatherCondition` subset으로 정규화하는 `weather-core` **순수 정책**만
   추가합니다(`normalizeKmaMidtermWeatherCondition`,
   `packages/weather-core/src/kma/midterm-condition.ts`) — 기존 단기·초단기 SKY/PTY 숫자 코드
@@ -93,6 +93,82 @@
   `regId` 매핑, production composition/route 연결을 포함하지 않으며, provider/service 변경과 실제
   KMA API 호출도 수행하지 않습니다. 자세한 내용은
   [kma-midterm-condition.md](./kma-midterm-condition.md) 참고.
+
+## Fast-track 1.0 활성 계획
+
+이 섹션은 현재 진행 우선순위의 canonical summary입니다. 아래 PR별 상세 기록(과거 "아직 구현되지
+않은 항목"과 이후 PR 서술)은 해당 PR 시점의 historical context를 포함할 수 있으며, 현재
+완료/미완료 판단과 다음 우선순위는 `현재 baseline`과 이 섹션을 우선합니다.
+
+### 1.0에서 이미 완료된 항목
+
+- 대한민국 수동 지역 검색
+- 여러 저장 지역 + selected location
+- KMA current
+- KMA hourly/short forecast
+- short-forecast 기반 `WeatherOverview.daily`
+- AirKorea current PM10/PM2.5 production integration
+- Today / Hourly·Forecast / Lifestyle / Details / Settings 최소 화면
+- 기존 lifestyle-engine 4개 정책(우산/옷차림/마스크/빨래)
+- mobile weather API/query boundary
+- 주요 loading/error/empty 상태
+
+### 1.0 남은 구현 PR
+
+**다음 구현 PR: Mobile freshness/stale handling**
+
+- 마지막 정상 weather data의 freshness를 사용자에게 구분 가능하게 표시
+- 기존 IDLE/LOADING/SUCCESS/ERROR lifecycle을 불필요하게 재설계하지 않음
+- response cache/server cache를 선행 조건으로 만들지 않음
+- PR 번호는 아직 미확정 future 번호로 과도하게 고정하지 않음
+
+**최종 계획 구현 PR: Android 1.0 release / AdMob / consent / privacy integration**
+
+하나의 vertical slice로 계획합니다.
+
+- Today 하단 adaptive banner 1개
+- AdMob test/production ID separation
+- consent/privacy app-side flow
+- Android release/native configuration에 필요한 최소 변경
+- Settings의 실제 데이터 출처/개인정보 관련 정합성
+- release readiness에 필요한 앱 측 설정
+- 실제 operator-managed 값(AdMob ID, package identifier, production domain 등)은 Owner가
+  제공/승인하기 전 commit하지 않음
+
+### 코드 완료 이후 Owner gate (PR 아님)
+
+1. production/public API base URL 설정
+2. Development Build
+3. 실제 Android 실기기 QA
+4. 승인된 실제 KMA/AirKorea endpoint 검증
+5. 광고/동의 QA
+6. Play / AdMob / Data safety / privacy 관련 외부 콘솔 작업
+7. blocker가 발견된 경우에만 targeted remediation PR
+
+QA 자체는 별도 기능 PR로 계획하지 않습니다.
+
+### 1.1 이후 backlog (1.0 critical path에서 제외)
+
+다음은 1.0 active TODO에서 제외되며, 1.1 이후로 이동합니다. **PR #98~#102가 구축한 KMA
+mid-term(중기예보) 기반은 삭제되거나 deprecated 처리되지 않습니다** — 1.1용으로 검증된
+기반으로 보존되며, 1.0 release critical path에서만 제외됩니다.
+
+- KMA mid-term D+4~D+10 production 완성
+- temperature/land regId resolver
+- short + mid daily 통합
+- KMA 1개월 전망(월간예보) — 1.1 최우선 확장 기능, [product-scope.md](./product-scope.md) 참고
+- alerts production integration
+- AirKorea forecast(예보)
+- response cache
+- Android widget
+- GPS/current-location 권한 흐름
+- push
+- 추가 lifestyle 정책
+- UV 상세 기능
+- location 재정렬/스와이프
+- 추가 광고 형식
+- 정교한 일러스트/animation
+- database/cloud sync
 
 ## 아직 구현되지 않은 항목
 
