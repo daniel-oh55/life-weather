@@ -541,6 +541,15 @@ export {
 } from './kma-location-current-hourly-overview.js';
 
 export {
+  createKmaMidtermRequestPlanFactory,
+  type KmaMidtermIssuanceSelector,
+  type KmaMidtermRequestClock,
+  type KmaMidtermRequestPlan,
+  type KmaMidtermRequestPlanFactory,
+  type KmaMidtermRequestPlanFactoryInput,
+} from './kma-midterm-request-plan.js';
+
+export {
   createAirKoreaLocationCurrentAirQualityService,
   type AirKoreaLocationCurrentAirQualityInput,
   type AirKoreaLocationCurrentAirQualityLocationError,
