@@ -49,8 +49,8 @@
   value-free 정책)을 따르는 별도·병렬 구현이며, 공식 06:00/18:00 KST 발표 스케줄만 선택하고 API
   가용성 지연은 발명하지 않습니다. `regId` 매핑, mid-term request factory, provider/service/
   composition, `POST /weather` 연결은 이 PR 범위가 아니었습니다. 자세한 내용은
-  [kma-midterm-issue-time.md](./kma-midterm-issue-time.md) 참고. 현재 main은
-  `115e9c622b1a6b05dd4da89bd5769d00a39a1903` 입니다.
+  [kma-midterm-issue-time.md](./kma-midterm-issue-time.md) 참고. PR #99 merge 당시 main은
+  `115e9c622b1a6b05dd4da89bd5769d00a39a1903`였습니다.
 - PR #100(**MERGED**)은 PR #98의 `KmaMidtermForecastRequest` provider boundary와 PR #99의
   `selectLatestKmaMidtermIssuance`를 잇는 application-level **request-plan factory**
   (`createKmaMidtermRequestPlanFactory`, `apps/api/src/services/kma-midterm-request-plan.ts`)를
