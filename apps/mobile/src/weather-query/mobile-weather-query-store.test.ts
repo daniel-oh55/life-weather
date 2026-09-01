@@ -634,7 +634,8 @@ describe('refresh', () => {
     store.refresh();
 
     expect(fetchWeather).toHaveBeenCalledTimes(2);
-    expect(fetchWeather).toHaveBeenNthCalledWith(2, request, expect.anything());
+    const refreshedRequest = fetchWeather.mock.calls[1]?.[0];
+    expect(refreshedRequest).toBe(request);
     expect(store.getSnapshot()).toEqual({ status: 'LOADING', locationId: 'a' });
 
     deferred2.resolve(successResultFor(request));

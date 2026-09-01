@@ -332,21 +332,118 @@ describe('one-shot timer', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('clears the previous timer and schedules a fresh one when generatedAt changes', async () => {
+  it('generatedAt change STALE -> FRESH: the stale notice disappears for the new timestamp without waiting for its own deadline', async () => {
     const WeatherFreshnessNotice = await loadComponent();
     const onRefresh = vi.fn();
 
-    WeatherFreshnessNotice({ generatedAt: isoAgo(0), onRefresh });
+    function render(generatedAt: string) {
+      hookCursor = 0;
+      return WeatherFreshnessNotice({ generatedAt, onRefresh });
+    }
+
+    const oldGeneratedAt = isoAgo(ONE_HOUR_MS + 60_000);
+    expect(texts(render(oldGeneratedAt))).toContain('마지막 날씨 업데이트가 1시간 이상 지났어요.');
     const firstCleanup = latestEffect().callback();
     expect(vi.getTimerCount()).toBe(1);
 
-    // React would run the previous effect's cleanup before the new effect body on a prop change.
+    // React runs the previous effect's cleanup before the new effect body on a prop change.
     firstCleanup?.();
     expect(vi.getTimerCount()).toBe(0);
 
-    WeatherFreshnessNotice({ generatedAt: isoAgo(30 * 60 * 1000), onRefresh });
+    const newGeneratedAt = isoAgo(0);
+    render(newGeneratedAt);
     latestEffect().callback();
     expect(vi.getTimerCount()).toBe(1);
+
+    // The new effect's same-tick reconcile timer corrects the visible freshness for the new (fresh)
+    // timestamp immediately — no waiting for its own future stale deadline.
+    vi.runOnlyPendingTimers();
+    expect(render(newGeneratedAt)).toBeNull();
+    expect(vi.getTimerCount()).toBe(1); // exactly one new deadline timer now armed
+
+    // Advancing to the new 60-minute boundary makes it stale again, with no auto-refresh.
+    vi.advanceTimersByTime(ONE_HOUR_MS);
+    expect(texts(render(newGeneratedAt))).toContain('마지막 날씨 업데이트가 1시간 이상 지났어요.');
+    expect(onRefresh).toHaveBeenCalledTimes(0);
+  });
+
+  it('generatedAt change FRESH -> already-STALE: the stale notice becomes visible for the new timestamp immediately', async () => {
+    const WeatherFreshnessNotice = await loadComponent();
+    const onRefresh = vi.fn();
+
+    function render(generatedAt: string) {
+      hookCursor = 0;
+      return WeatherFreshnessNotice({ generatedAt, onRefresh });
+    }
+
+    const oldGeneratedAt = isoAgo(0);
+    expect(render(oldGeneratedAt)).toBeNull();
+    const firstCleanup = latestEffect().callback();
+    expect(vi.getTimerCount()).toBe(1);
+
+    firstCleanup?.();
+    expect(vi.getTimerCount()).toBe(0);
+
+    const newGeneratedAt = isoAgo(ONE_HOUR_MS + 60_000);
+    render(newGeneratedAt);
+    latestEffect().callback();
+    expect(vi.getTimerCount()).toBe(1);
+
+    // The new effect's same-tick reconcile timer corrects the visible freshness for the new
+    // (already-stale) timestamp immediately, and arms no further timer.
+    vi.runOnlyPendingTimers();
+    expect(texts(render(newGeneratedAt))).toContain('마지막 날씨 업데이트가 1시간 이상 지났어요.');
+    expect(vi.getTimerCount()).toBe(0);
+    expect(onRefresh).toHaveBeenCalledTimes(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Refresh remains explicit-only: the presentation timer may change what is visible, but it must
+// never itself invoke `onRefresh`. Only the button press does.
+// ---------------------------------------------------------------------------
+
+describe('refresh is explicit only', () => {
+  it('the FRESH -> STALE deadline timer never calls onRefresh; only the explicit button press does', async () => {
+    const WeatherFreshnessNotice = await loadComponent();
+    const onRefresh = vi.fn();
+    const generatedAt = isoAgo(0);
+
+    function render() {
+      hookCursor = 0;
+      return WeatherFreshnessNotice({ generatedAt, onRefresh });
+    }
+
+    expect(render()).toBeNull();
+    latestEffect().callback();
+    expect(vi.getTimerCount()).toBe(1);
+
+    // Crossing the boundary flips the presentation to STALE without any refresh call.
+    vi.advanceTimersByTime(ONE_HOUR_MS);
+    expect(onRefresh).toHaveBeenCalledTimes(0);
+
+    const element = render();
+    const button = pressables(element).find(
+      (p) => p.props.accessibilityLabel === '날씨 새로고침',
+    );
+    expect(button).toBeDefined();
+
+    // Only the explicit press invokes onRefresh.
+    press(button!);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('the same-tick (0ms) confirmation timer for an already-stale mount never calls onRefresh', async () => {
+    const WeatherFreshnessNotice = await loadComponent();
+    const onRefresh = vi.fn();
+
+    WeatherFreshnessNotice({ generatedAt: isoAgo(ONE_HOUR_MS + 60_000), onRefresh });
+    latestEffect().callback();
+    expect(vi.getTimerCount()).toBe(1);
+
+    vi.runOnlyPendingTimers();
+
+    expect(onRefresh).toHaveBeenCalledTimes(0);
   });
 });
 

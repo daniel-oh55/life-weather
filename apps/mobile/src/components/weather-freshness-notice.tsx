@@ -67,14 +67,21 @@ export interface WeatherFreshnessNoticeProps {
  * rendered it; this component never re-renders, hides, or fabricates any of it.
  *
  * `freshness` is real state, seeded once from a `useState` lazy initializer (the one place a render
- * may read the impure `Date.now()`, since React calls it during commit rather than during the
- * component body itself) and afterwards updated only from inside a `useEffect`'s `setTimeout`
- * callback — never synchronously inside the effect body — so both re-renders of the same mounted
- * instance and a `generatedAt` change reclassify without violating component-purity/set-state-in-
- * effect rules. Exactly one such `setTimeout` (never `setInterval`) is outstanding at a time: its
- * delay is the exact remaining time until the threshold while still `FRESH`, or `0` (a same-tick
- * confirmation, not a poll) when `generatedAt` already classifies as `STALE` at effect-run time. It
- * is cleared on unmount and whenever `generatedAt` changes.
+ * may read the impure `Date.now()`, since it runs during this component's own initial render, before
+ * commit) and afterwards updated only from inside a `setTimeout` callback — never synchronously in
+ * the effect body itself, so every update is a genuine set-state-in-a-callback, never a render-time
+ * or effect-body side effect.
+ *
+ * On the initial mount and on every `generatedAt` change, the effect always arms a same-tick (`0ms`)
+ * reconcile timer first. Its callback reclassifies against the current time, updates `freshness` to
+ * match, and — only if that reclassification is still `FRESH` — arms exactly one further `setTimeout`
+ * for the remaining time until the threshold, which reclassifies (and, by then, necessarily settles
+ * to `STALE`) when it fires. So a mounted instance's visible freshness is corrected on the very next
+ * tick for any `generatedAt` change — it is never left showing a stale notice (or a fresh one) until
+ * some unrelated future deadline — while at most one `setTimeout` (never `setInterval`) is ever
+ * pending at a time. Each reconcile step reassigns the same `timer` variable the effect closes over,
+ * so the effect's cleanup — on unmount or the next `generatedAt` change — always clears whichever
+ * timer is currently outstanding.
  */
 export function WeatherFreshnessNotice({ generatedAt, onRefresh }: WeatherFreshnessNoticeProps) {
   const [freshness, setFreshness] = useState<MobileWeatherFreshness>(() =>
@@ -82,18 +89,23 @@ export function WeatherFreshnessNotice({ generatedAt, onRefresh }: WeatherFreshn
   );
 
   useEffect(() => {
-    const now = Date.now();
-    const current = classifyMobileWeatherFreshness(generatedAt, now);
+    let timer: ReturnType<typeof setTimeout>;
 
-    const generatedAtEpochMilliseconds = Date.parse(generatedAt);
-    const delayMilliseconds =
-      current === 'FRESH' && Number.isFinite(generatedAtEpochMilliseconds)
-        ? Math.max(0, generatedAtEpochMilliseconds + MOBILE_WEATHER_STALE_AFTER_MILLISECONDS - now)
-        : 0;
+    const reconcile = () => {
+      const now = Date.now();
+      const current = classifyMobileWeatherFreshness(generatedAt, now);
+      setFreshness(current);
 
-    const timer = setTimeout(() => {
-      setFreshness(classifyMobileWeatherFreshness(generatedAt, Date.now()));
-    }, delayMilliseconds);
+      if (current === 'FRESH') {
+        const generatedAtEpochMilliseconds = Date.parse(generatedAt);
+        const delayMilliseconds = Number.isFinite(generatedAtEpochMilliseconds)
+          ? Math.max(0, generatedAtEpochMilliseconds + MOBILE_WEATHER_STALE_AFTER_MILLISECONDS - now)
+          : 0;
+        timer = setTimeout(reconcile, delayMilliseconds);
+      }
+    };
+
+    timer = setTimeout(reconcile, 0);
 
     return () => {
       clearTimeout(timer);

@@ -31,12 +31,19 @@ and letting the user explicitly refresh it.
 
 ## Presentation timer
 
-`WeatherFreshnessNotice` classifies freshness synchronously on mount (`useState` initializer) and,
-only while still `FRESH`, schedules exactly **one** `setTimeout` for the exact remaining time until
-the response's `generatedAt + 60m` deadline — never a `setInterval` or polling loop. The timer is
-cleared on unmount and whenever `generatedAt` changes (a new `SUCCESS` response). This lets a
-screen that keeps showing an unchanged `SUCCESS` snapshot still turn visually stale with no new
-network or store event.
+`WeatherFreshnessNotice` classifies freshness synchronously on mount (`useState` initializer). On
+the initial mount and on every subsequent `generatedAt` change, its effect always arms a same-tick
+(`0ms`) reconcile timer first — never a `setInterval` or polling loop. That timer's callback
+re-classifies against the current time, updates the visible freshness to match, and — only if the
+result is still `FRESH` — arms exactly one further `setTimeout` for the exact remaining time until
+the response's `generatedAt + 60m` deadline (which itself reclassifies, necessarily to `STALE`, when
+it fires). At most **one** timer is ever pending at a time. This means a mounted instance's visible
+freshness is corrected on the very next tick for any `generatedAt` change — it never keeps showing a
+stale (or fresh) notice for a timestamp it no longer matches, and never waits on an unrelated future
+deadline. The outstanding timer is cleared on unmount and whenever `generatedAt` changes (a new
+`SUCCESS` response). This lets a screen that keeps showing an unchanged `SUCCESS` snapshot still turn
+visually stale with no new network or store event — the timer itself never calls `onRefresh`; only
+the explicit button press does.
 
 ## Query-store `refresh()`
 
