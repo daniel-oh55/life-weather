@@ -1,7 +1,7 @@
 # Life Weather 프로젝트 상태
 
 - 기준일: 2026-09-01
-- State baseline: `f41484228c4013ddb4b138f738d85c3deea0a31b`
+- State baseline: `3e2cf49f7cc3d908a8d59eda5a09c4e3081d2a80`
 
 이 문서는 baseline 시점의 저장소 사실, 미완료 범위와 다음 Owner 결정을 기록합니다.
 
@@ -93,6 +93,28 @@
   `regId` 매핑, production composition/route 연결을 포함하지 않으며, provider/service 변경과 실제
   KMA API 호출도 수행하지 않습니다. 자세한 내용은
   [kma-midterm-condition.md](./kma-midterm-condition.md) 참고.
+- PR #103(**MERGED**, main `3e2cf49f7cc3d908a8d59eda5a09c4e3081d2a80`)은 docs-only PR로, 이
+  `PROJECT_STATE.md`의 Fast-track 1.0 baseline을 재정리했습니다 — 코드 변경은 없습니다.
+- PR #104(**Draft, 아직 MERGED 아님**)는 1.0 남은 요구사항이었던 **모바일 weather response
+  freshness/stale 표시**를 최소 vertical slice로 구현합니다 — `MobileWeatherQuerySnapshot`은
+  여전히 정확히 `IDLE`/`LOADING`/`SUCCESS`/`ERROR`이며 새 `STALE` query-store variant는 추가하지
+  않습니다. Staleness는 network/lifecycle state가 아니라 현재 `SUCCESS` snapshot의 **presentation
+  freshness**로 취급되며, 오직 이미 계약 검증된 `data.meta.generatedAt`만 사용합니다(device 수신
+  시각, KMA base time, AirKorea data time, 개별 `SourceMetadata`, provider-native timestamp는
+  사용하지 않음). 고정 60분 임계값(`MOBILE_WEATHER_STALE_AFTER_MILLISECONDS`, 정확히 60분은
+  stale)과 순수 classifier(`classifyMobileWeatherFreshness`), 그 자신의 presentation
+  one-shot 타이머(폴링/`setInterval`/background task 아님)를 소유하는 새 공유 컴포넌트
+  (`apps/mobile/src/components/weather-freshness-notice.tsx`, `WeatherFreshnessNotice`)가 네
+  weather 탭(오늘/예보/생활날씨/상세기상) 모두에서 `weatherQuery.status === 'SUCCESS'`일 때만
+  마운트되고, `FRESH`이면 아무것도 렌더링하지 않습니다. `MobileWeatherQueryStore`에는 additive
+  `refresh(): void`만 추가됐습니다 — `SUCCESS`에서만 내부에 보존된 정확히 같은
+  `WeatherRequestV1` 참조로 기존 `beginRequest()` 경로(기존 generation/abort/reentrancy 계약
+  그대로)를 재시작하고, `IDLE`/`LOADING`/`ERROR`에서는 no-op이므로 `LOADING` 중 반복 tap은 중복
+  요청을 만들 수 없습니다. `request()` 시그니처와 기존 `retry()`는 변경되지 않았습니다.
+  `packages/contracts`, `CONTRACT_VERSION`, `packages/weather-core`, API, response
+  cache/persistence는 이 PR에서 변경되지 않았습니다. 자세한 내용은
+  [mobile-weather-freshness.md](./mobile-weather-freshness.md) 참고. Owner Ready 전환과 merge
+  전까지는 1.0 미완료 항목으로 남습니다.
 
 ## Fast-track 1.0 활성 계획
 
@@ -115,14 +137,11 @@
 
 ### 1.0 남은 구현 PR
 
-**다음 구현 PR: Mobile freshness/stale handling**
+Mobile freshness/stale handling은 **PR #104**(Draft, 아직 MERGED 아님)로 구현되었습니다 — 위
+"현재 baseline"의 PR #104 항목 참고. Owner Ready 전환/merge 전까지는 완료로 표시하지 않지만, 코드
+구현 자체는 이 섹션의 "남은 구현 PR"에는 더 이상 해당하지 않습니다.
 
-- 마지막 정상 weather data의 freshness를 사용자에게 구분 가능하게 표시
-- 기존 IDLE/LOADING/SUCCESS/ERROR lifecycle을 불필요하게 재설계하지 않음
-- response cache/server cache를 선행 조건으로 만들지 않음
-- PR 번호는 아직 미확정 future 번호로 과도하게 고정하지 않음
-
-**최종 계획 구현 PR: Android 1.0 release / AdMob / consent / privacy integration**
+**남은 구현 PR: Android 1.0 release / AdMob / consent / privacy integration**
 
 하나의 vertical slice로 계획합니다.
 

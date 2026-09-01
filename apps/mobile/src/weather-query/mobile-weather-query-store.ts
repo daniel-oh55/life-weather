@@ -95,6 +95,17 @@ export interface MobileWeatherQueryStore {
   retry(): void;
 
   /**
+   * Restart the request that produced the current `SUCCESS`, using the internally retained
+   * `WeatherRequestV1` — the exact same reference `retry()` would use. A no-op outside `SUCCESS`.
+   * Delegates to the same `beginRequest()` path as `request()`/`retry()`, so it publishes `LOADING`
+   * and preserves the existing generation/abort/reentrancy contract exactly; no new state, timer,
+   * or automatic re-invocation is introduced. Because a `LOADING` snapshot is never `SUCCESS`, a
+   * second `refresh()` call while the first is still in flight is a no-op — it can never start a
+   * duplicate request.
+   */
+  refresh(): void;
+
+  /**
    * Invalidate and abort any in-flight request, discard the retained retry context, and publish
    * `IDLE`. A semantic no-op when already `IDLE` with no active request.
    */
@@ -306,6 +317,16 @@ export function createMobileWeatherQueryStore(
 
     retry(): void {
       if (cachedSnapshot.status !== 'ERROR') {
+        return;
+      }
+      if (lastRequest === null) {
+        return;
+      }
+      beginRequest(lastRequest);
+    },
+
+    refresh(): void {
+      if (cachedSnapshot.status !== 'SUCCESS') {
         return;
       }
       if (lastRequest === null) {

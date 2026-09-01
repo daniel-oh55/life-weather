@@ -8,6 +8,7 @@ import { useRouter } from 'expo-router';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { SavedLocationSwitcher } from '../../components/saved-location-switcher';
+import { WeatherFreshnessNotice } from '../../components/weather-freshness-notice';
 import {
   createMobileLifestyleOverview,
   type MobileLifestyleCard,
@@ -249,6 +250,10 @@ export default function HomeScreen() {
     mobileWeatherQueryStore.retry();
   }
 
+  function handleWeatherRefresh(): void {
+    mobileWeatherQueryStore.refresh();
+  }
+
   // Explicit, user-initiated retry only — no timer, no backoff, no automatic retry. A repeated tap
   // cannot start a second load: the button exists only in ERROR, and the store's retryInitialization
   // routes to whichever boundary (saved-location hydration or selected-location initialization) is
@@ -313,6 +318,13 @@ export default function HomeScreen() {
         {savedLocations.status === 'READY' && selectedLocation !== null ? (
           <>
             {renderHero(weatherQuery, handleWeatherRetry)}
+
+            {weatherQuery.status === 'SUCCESS' ? (
+              <WeatherFreshnessNotice
+                generatedAt={weatherQuery.data.meta.generatedAt}
+                onRefresh={handleWeatherRefresh}
+              />
+            ) : null}
 
             {weatherQuery.status === 'SUCCESS' ? (
               <View style={styles.section}>

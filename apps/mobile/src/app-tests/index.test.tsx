@@ -101,6 +101,24 @@ vi.mock('../components/saved-location-switcher', () => ({
 }));
 
 // ---------------------------------------------------------------------------
+// The shared stale-data notice is replaced with a marker component too. Its own freshness
+// classifier, one-shot timer, and refresh-button contract are covered by
+// `../components/weather-freshness-notice.test.tsx`; what this screen still owns — and what is
+// asserted below — is that it mounts exactly one, only on SUCCESS, wired to the exact
+// `data.meta.generatedAt` and the store's `refresh()`.
+// ---------------------------------------------------------------------------
+
+const MockWeatherFreshnessNotice = vi.hoisted(
+  () => function MockWeatherFreshnessNotice(): null {
+    return null;
+  },
+);
+
+vi.mock('../components/weather-freshness-notice', () => ({
+  WeatherFreshnessNotice: MockWeatherFreshnessNotice,
+}));
+
+// ---------------------------------------------------------------------------
 // The weather-query React hook is replaced with a call-recording mock so `HomeScreen` can be
 // invoked as a plain function without ever running the hook's real `useEffect` (there is no real
 // renderer/dispatcher in this Node-based setup). The production weather-query store is replaced
@@ -117,6 +135,7 @@ vi.mock('../weather-query/use-mobile-weather-query', () => ({
 
 const mobileWeatherQueryStoreMock = vi.hoisted(() => ({
   retry: vi.fn(),
+  refresh: vi.fn(),
 }));
 
 vi.mock('../weather-query/mobile-weather-query-production', () => ({
@@ -231,6 +250,17 @@ function switchers(root: unknown): ElementLike[] {
   return collected;
 }
 
+/** Every shared weather freshness notice the screen rendered, in render order. */
+function freshnessNotices(root: unknown): ElementLike[] {
+  const collected: ElementLike[] = [];
+  walk(root, (element) => {
+    if (element.type === MockWeatherFreshnessNotice) {
+      collected.push(element);
+    }
+  });
+  return collected;
+}
+
 /**
  * Asserts the screen delegates its region control to exactly one shared switcher, and passes that
  * switcher the *exact* saved-location snapshot reference (never a copy, and never a re-read).
@@ -308,6 +338,7 @@ beforeEach(async () => {
   });
   useMobileWeatherQueryMock.mockReturnValue({ status: 'IDLE' });
   mobileWeatherQueryStoreMock.retry.mockImplementation(() => {});
+  mobileWeatherQueryStoreMock.refresh.mockImplementation(() => {});
 });
 
 afterEach(() => {
@@ -856,6 +887,51 @@ describe('weather hero', () => {
 
     expect(texts(element)).not.toContain('24°');
     expect(texts(element)).not.toContain('맑음');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Weather freshness notice — reachability and wiring only. The shared notice's own freshness
+// classification (including "a fresh SUCCESS renders nothing"), one-shot timer, and refresh-button
+// contract are owned by `../components/weather-freshness-notice.test.tsx` and are not duplicated
+// here.
+// ---------------------------------------------------------------------------
+
+describe('weather freshness notice', () => {
+  it('mounts exactly one notice on SUCCESS, wired to the exact generatedAt and store refresh', async () => {
+    mockStoredEnvelope('a');
+    const snapshot = successSnapshot({ current: syntheticCurrent() });
+    useMobileWeatherQueryMock.mockReturnValue(snapshot);
+
+    const render = await loadScreen();
+    await hydrateAndInitialize();
+    const element = render();
+
+    const notices = freshnessNotices(element);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.props.generatedAt).toBe(snapshot.data.meta.generatedAt);
+
+    (notices[0]?.props.onRefresh as () => void)();
+    expect(mobileWeatherQueryStoreMock.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('mounts no notice outside SUCCESS (IDLE/LOADING/ERROR)', async () => {
+    mockStoredEnvelope('a');
+    const render = await loadScreen();
+
+    useMobileWeatherQueryMock.mockReturnValue({ status: 'IDLE' });
+    await hydrateAndInitialize();
+    expect(freshnessNotices(render())).toHaveLength(0);
+
+    useMobileWeatherQueryMock.mockReturnValue({ status: 'LOADING', locationId: 'a' });
+    expect(freshnessNotices(render())).toHaveLength(0);
+
+    useMobileWeatherQueryMock.mockReturnValue({
+      status: 'ERROR',
+      locationId: 'a',
+      presentation: 'NETWORK',
+    });
+    expect(freshnessNotices(render())).toHaveLength(0);
   });
 });
 

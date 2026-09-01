@@ -614,6 +614,92 @@ describe('retry', () => {
 });
 
 // ---------------------------------------------------------------------------
+// refresh().
+// ---------------------------------------------------------------------------
+
+describe('refresh', () => {
+  it('restarts from SUCCESS using the exact retained request reference', async () => {
+    const { store, fetchWeather } = setup();
+    const deferred1 = createDeferred<WeatherApiResult>();
+    fetchWeather.mockReturnValueOnce(deferred1.promise);
+
+    const request = requestForLocation('a');
+    store.request(request);
+    deferred1.resolve(successResultFor(request));
+    await deferred1.promise;
+    expect(store.getSnapshot().status).toBe('SUCCESS');
+
+    const deferred2 = createDeferred<WeatherApiResult>();
+    fetchWeather.mockReturnValueOnce(deferred2.promise);
+    store.refresh();
+
+    expect(fetchWeather).toHaveBeenCalledTimes(2);
+    const refreshedRequest = fetchWeather.mock.calls[1]?.[0];
+    expect(refreshedRequest).toBe(request);
+    expect(store.getSnapshot()).toEqual({ status: 'LOADING', locationId: 'a' });
+
+    deferred2.resolve(successResultFor(request));
+    await deferred2.promise;
+    expect(store.getSnapshot().status).toBe('SUCCESS');
+  });
+
+  it('is a no-op outside SUCCESS (IDLE, LOADING, ERROR)', async () => {
+    const { store, fetchWeather } = setup();
+
+    store.refresh(); // IDLE
+    expect(fetchWeather).toHaveBeenCalledTimes(0);
+
+    const deferred = createDeferred<WeatherApiResult>();
+    fetchWeather.mockReturnValue(deferred.promise);
+    store.request(requestForLocation('a'));
+    store.refresh(); // LOADING
+    expect(fetchWeather).toHaveBeenCalledTimes(1);
+
+    deferred.resolve(clientErrorResult('networkError'));
+    await deferred.promise;
+    store.refresh(); // ERROR
+    expect(fetchWeather).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts only one request across repeated refresh presses while the refresh is LOADING', async () => {
+    const { store, fetchWeather } = setup();
+    const deferred1 = createDeferred<WeatherApiResult>();
+    fetchWeather.mockReturnValueOnce(deferred1.promise);
+
+    const request = requestForLocation('a');
+    store.request(request);
+    deferred1.resolve(successResultFor(request));
+    await deferred1.promise;
+
+    fetchWeather.mockReturnValueOnce(createDeferred<WeatherApiResult>().promise);
+    store.refresh();
+    store.refresh();
+    store.refresh();
+
+    expect(fetchWeather).toHaveBeenCalledTimes(2);
+  });
+
+  it('a refresh failure uses the existing ERROR classification, not a refresh-specific one', async () => {
+    const { store, fetchWeather } = setup();
+    const deferred1 = createDeferred<WeatherApiResult>();
+    fetchWeather.mockReturnValueOnce(deferred1.promise);
+
+    const request = requestForLocation('a');
+    store.request(request);
+    deferred1.resolve(successResultFor(request));
+    await deferred1.promise;
+
+    const deferred2 = createDeferred<WeatherApiResult>();
+    fetchWeather.mockReturnValueOnce(deferred2.promise);
+    store.refresh();
+    deferred2.resolve(apiErrorResult());
+    await deferred2.promise;
+
+    expect(store.getSnapshot()).toEqual({ status: 'ERROR', locationId: 'a', presentation: 'API' });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Snapshot reference identity, notification semantics, and freezing.
 // ---------------------------------------------------------------------------
 
