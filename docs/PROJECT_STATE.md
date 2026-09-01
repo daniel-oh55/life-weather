@@ -42,14 +42,29 @@
   **여전히 후속 작업**입니다. 이 PR에서 실제 KMA API 호출·배포·env 변경은 수행하지 않았습니다.
   자세한 내용은 [kma-midterm-provider.md](./kma-midterm-provider.md) 참고. 현재 main은
   `50d03e013589f5b4d73d33cc2497c7024a882aee` 입니다.
-- PR #99는 **현재 Draft**이며, PR #98이 추가한 mid-term provider boundary가 아직 다루지 않은 최신
-  06/18 KST issuance selector — `selectLatestKmaMidtermIssuance`
-  (`packages/weather-core/src/kma/midterm-issue-time.ts`)만 추가합니다. forecast/current-observation
+- PR #99(**MERGED**)는 PR #98이 추가한 mid-term provider boundary가 아직 다루지 않은 최신 06/18
+  KST issuance selector — `selectLatestKmaMidtermIssuance`
+  (`packages/weather-core/src/kma/midterm-issue-time.ts`)만 추가했습니다. forecast/current-observation
   selector와 같은 원칙(순수, 결정론적, clock/환경/I-O 없음, KST 고정 `UTC+09:00`, `RangeError`
   value-free 정책)을 따르는 별도·병렬 구현이며, 공식 06:00/18:00 KST 발표 스케줄만 선택하고 API
   가용성 지연은 발명하지 않습니다. `regId` 매핑, mid-term request factory, provider/service/
-  composition, `POST /weather` 연결은 이 PR 범위가 아니며 여전히 후속 작업입니다. 자세한 내용은
-  [kma-midterm-issue-time.md](./kma-midterm-issue-time.md) 참고.
+  composition, `POST /weather` 연결은 이 PR 범위가 아니었습니다. 자세한 내용은
+  [kma-midterm-issue-time.md](./kma-midterm-issue-time.md) 참고. 현재 main은
+  `115e9c622b1a6b05dd4da89bd5769d00a39a1903` 입니다.
+- PR #100은 **현재 Draft**이며, PR #98의 `KmaMidtermForecastRequest` provider boundary와 PR #99의
+  `selectLatestKmaMidtermIssuance`를 잇는 application-level **request-plan factory**
+  (`createKmaMidtermRequestPlanFactory`, `apps/api/src/services/kma-midterm-request-plan.ts`)를
+  추가합니다. 이 factory는 injected clock을 정확히 1회 읽고 injected issuance selector를 정확히
+  1회 호출해, 그 하나의 `tmFc`로 TEMPERATURE(`getMidTa`)와 LAND(`getMidLandFcst`) 두 complete
+  request를 만듭니다 — 두 independent single-request factory 호출로 구현하지 않으므로
+  `temperature.tmFc === land.tmFc`가 항상 보장됩니다. `temperatureRegId`/`landRegId`는 별도로
+  이름 붙은 caller-supplied 입력이며, 이 PR은 위치/행정구역/좌표 → `regId` 매핑을 추가하지
+  않습니다. 기본 issuance selector는 여전히 PR #99의 schedule-only
+  `selectLatestKmaMidtermIssuance`이고, API availability delay/fallback/retry는 발명하지
+  않습니다. provider를 호출하지 않고, 실제 KMA API 호출도 수행하지 않습니다. 자세한 내용은
+  [kma-midterm-request-plan.md](./kma-midterm-request-plan.md) 참고. 남은 후속 작업: 위치 →
+  temperature/land `regId` 해석, provider 실행/service, 중기 정규화, 한국어 문구 →
+  `WeatherCondition` 매핑, composition, `POST /weather` 연결.
 
 ## 아직 구현되지 않은 항목
 
