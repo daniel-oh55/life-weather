@@ -65,14 +65,55 @@ describe('normalizeKmaMidtermWeatherCondition — precedence', () => {
     expect(normalizeKmaMidtermWeatherCondition('눈/비')).toBe('SLEET');
   });
 
-  it('소나기 wins over generic rain detection when both tokens occur', () => {
-    // 소나기 does not itself contain the 비 character, so this proves the SHOWER check runs
-    // before the RAIN check would otherwise apply to a co-occurring standalone 비 mention.
-    expect(normalizeKmaMidtermWeatherCondition('소나기 후 비')).toBe('SHOWER');
+  it('소나기 wins over sky when both a connective prefix and 소나기 occur', () => {
+    expect(normalizeKmaMidtermWeatherCondition('구름많고 소나기')).toBe('SHOWER');
   });
 
   it('precipitation wins over sky, even when sky and precipitation wording contradict', () => {
     expect(normalizeKmaMidtermWeatherCondition('맑고 비')).toBe('RAIN');
+  });
+
+  it('mixed rain/snow atom wins over sky prefix wording', () => {
+    expect(normalizeKmaMidtermWeatherCondition('흐리고 비/눈')).toBe('SLEET');
+  });
+});
+
+describe('normalizeKmaMidtermWeatherCondition — adversarial substring rejection', () => {
+  const unsupportedPrecipitationLookingCases: string[] = [
+    '비교적 맑음',
+    '비슷함',
+    '비정상',
+    '눈부심',
+    '눈부신 날',
+    '눈높이',
+  ];
+
+  it.each(unsupportedPrecipitationLookingCases)(
+    '%s → UNKNOWN (unrelated word containing a precipitation syllable)',
+    (phrase) => {
+      expect(normalizeKmaMidtermWeatherCondition(phrase)).toBe('UNKNOWN');
+    },
+  );
+
+  const unsupportedSkyLookingCases: string[] = [
+    '매우맑음주의',
+    '구름많음주의',
+    '흐림예상외문구',
+  ];
+
+  it.each(unsupportedSkyLookingCases)(
+    '%s → UNKNOWN (complete sky token embedded in unsupported surrounding text)',
+    (phrase) => {
+      expect(normalizeKmaMidtermWeatherCondition(phrase)).toBe('UNKNOWN');
+    },
+  );
+
+  it('rejects an unsupported connective prefix even though the atom is supported', () => {
+    expect(normalizeKmaMidtermWeatherCondition('아마도 비')).toBe('UNKNOWN');
+  });
+
+  it('rejects an unsupported modifier even though the atom is supported', () => {
+    expect(normalizeKmaMidtermWeatherCondition('종종 비')).toBe('UNKNOWN');
   });
 });
 
@@ -161,11 +202,17 @@ describe('normalizeKmaMidtermWeatherCondition — determinism', () => {
 // compiles this test file, and also run trivially at test time. `AssertAssignableNotAny`
 // resolves to `never` — a compile error at `const … = true` — if the return type is `any` or
 // is not assignable to the contract's `WeatherCondition`, so an `any` return cannot pass.
+//
+// The `[Actual] extends [Expected]` tuple wrapping makes the check non-distributive: a bare
+// `Actual extends Expected` distributes over a union `Actual`, so an invalid member could be
+// checked in isolation and silently pass. Wrapping both sides in a one-tuple forces TypeScript
+// to compare the union as a single whole, so one invalid member correctly fails the entire
+// check.
 // ---------------------------------------------------------------------------
 type IsAny<T> = 0 extends 1 & T ? true : false;
 type AssertAssignableNotAny<Actual, Expected> = IsAny<Actual> extends true
   ? never
-  : Actual extends Expected
+  : [Actual] extends [Expected]
     ? true
     : never;
 
@@ -182,5 +229,18 @@ describe('normalizeKmaMidtermWeatherCondition — contract type compatibility', 
 
     expect(returnAssignable).toBe(true);
     expect(unionAssignable).toBe(true);
+  });
+
+  it('rejects `any` and a partially incompatible union at compile time (negative controls)', () => {
+    // @ts-expect-error — `any` must not satisfy the helper.
+    const rejectsAny: AssertAssignableNotAny<any, WeatherCondition> = true;
+    // @ts-expect-error — one invalid union member must reject the whole union.
+    const rejectsInvalidUnion: AssertAssignableNotAny<
+      KmaMidtermWeatherCondition | '__INVALID__',
+      WeatherCondition
+    > = true;
+
+    expect(rejectsAny).toBe(true);
+    expect(rejectsInvalidUnion).toBe(true);
   });
 });

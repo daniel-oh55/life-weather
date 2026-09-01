@@ -39,16 +39,11 @@ export type KmaMidtermWeatherCondition =
   | 'SHOWER'
   | 'UNKNOWN';
 
-/** Official precipitation semantic tokens (see `docs/kma-midterm-condition.md`). */
-const RAIN_TOKEN = '비';
-const SNOW_TOKEN = '눈';
-const SHOWER_TOKEN = '소나기';
-
 /**
- * Official mid-term sky (WF_SKY_CD) semantic tokens, consulted only once no precipitation token
- * matched. `구름조금` is an official mid-term value (`WB02`) even though the separate short-term
- * SKY normalizer treats numeric code `2` as retired — the two policies are deliberately not
- * merged.
+ * Official mid-term sky (WF_SKY_CD) semantic tokens, consulted only when the entire normalized
+ * phrase is one of these exact values (no substring matching). `구름조금` is an official mid-term
+ * value (`WB02`) even though the separate short-term SKY normalizer treats numeric code `2` as
+ * retired — the two policies are deliberately not merged.
  */
 const SKY_CONDITION = new Map<string, KmaMidtermWeatherCondition>([
   ['맑음', 'CLEAR'],
@@ -56,6 +51,27 @@ const SKY_CONDITION = new Map<string, KmaMidtermWeatherCondition>([
   ['구름많음', 'PARTLY_CLOUDY'],
   ['흐림', 'CLOUDY'],
 ]);
+
+/**
+ * Official precipitation semantic tokens (see `docs/kma-midterm-condition.md`), keyed by the
+ * exact normalized atom captured by {@link PRECIPITATION_PATTERN}.
+ */
+const PRECIPITATION_CONDITION = new Map<string, KmaMidtermWeatherCondition>([
+  ['비/눈', 'SLEET'],
+  ['눈/비', 'SLEET'],
+  ['소나기', 'SHOWER'],
+  ['비', 'RAIN'],
+  ['눈', 'SNOW'],
+]);
+
+/**
+ * Anchored grammar for the narrow set of precipitation phrasings evidenced by this PR:
+ * an optional sky/connective prefix, an optional frequency modifier, then exactly one
+ * precipitation atom — nothing else. This intentionally rejects any text that merely contains a
+ * precipitation syllable (`비교적 맑음`, `눈부심`) without being one of these supported forms.
+ */
+const PRECIPITATION_PATTERN =
+  /^(?:맑고|구름많고|흐리고)?(?:한때|가끔)?(비\/눈|눈\/비|소나기|비|눈)$/u;
 
 /**
  * Normalize a KMA 중기육상예보 (`getMidLandFcst`) Korean `WF` phrase into a common
@@ -67,15 +83,20 @@ const SKY_CONDITION = new Map<string, KmaMidtermWeatherCondition>([
  * 1. A non-string, `null`, `undefined`, empty, or whitespace-only phrase is `UNKNOWN`.
  * 2. Presentation whitespace is stripped for matching only (`weatherPhrase` itself is never
  *    mutated); it carries no weather semantics.
- * 3. **Precipitation wins over sky.** A phrase mentioning both `비` and `눈` is `SLEET` (mixed
- *    rain/snow, checked first); otherwise `소나기` is `SHOWER`; otherwise `비` is `RAIN`;
- *    otherwise `눈` is `SNOW`. This intentionally tolerates connector/modifier wording around the
- *    token (`흐리고 비`, `흐리고 한때 비`, `흐리고 가끔 비`, even the contradictory `맑고 비`) without
- *    maintaining an exhaustive phrase list.
- * 4. Only when no precipitation token matched is the sky token consulted: `맑음` → `CLEAR`,
+ * 3. **Precipitation wins over sky**, but only when the *entire* normalized phrase conforms to a
+ *    narrow anchored grammar: an optional sky/connective prefix (`맑고`, `구름많고`, `흐리고`), an
+ *    optional frequency modifier (`한때`, `가끔`), then exactly one precipitation atom (`비`, `눈`,
+ *    `소나기`, `비/눈`, `눈/비`) — see {@link PRECIPITATION_PATTERN}. `비/눈` and `눈/비` map to
+ *    `SLEET`; `소나기` maps to `SHOWER`; `비` maps to `RAIN`; `눈` maps to `SNOW`. This tolerates the
+ *    evidenced connector/modifier wording (`흐리고 비`, `흐리고 한때 비`, `흐리고 가끔 비`, even the
+ *    contradictory `맑고 비`) while rejecting any text that merely contains a precipitation
+ *    syllable without matching the grammar (`비교적 맑음`, `눈부심`).
+ * 4. Only when the phrase does not match the precipitation grammar is it checked against the sky
+ *    map using **exact whole-string matching** (no substring matching): `맑음` → `CLEAR`,
  *    `구름조금` / `구름많음` → `PARTLY_CLOUDY`, `흐림` → `CLOUDY`.
- * 5. Anything else (e.g. `안개`, `천둥번개`, unrecognized/malformed text) is `UNKNOWN`. This never
- *    throws and never invents a `WeatherCondition` value the mid-term product does not provide.
+ * 5. Anything else (e.g. `안개`, `천둥번개`, unrecognized/malformed text, a recognized token
+ *    embedded in unsupported surrounding text) is `UNKNOWN`. This never throws and never invents
+ *    a `WeatherCondition` value the mid-term product does not provide.
  *
  * Pure and deterministic; does not mutate `weatherPhrase`.
  */
@@ -91,27 +112,13 @@ export function normalizeKmaMidtermWeatherCondition(
     return 'UNKNOWN';
   }
 
-  const hasRain = normalized.includes(RAIN_TOKEN);
-  const hasSnow = normalized.includes(SNOW_TOKEN);
-
-  if (hasRain && hasSnow) {
-    return 'SLEET';
-  }
-  if (normalized.includes(SHOWER_TOKEN)) {
-    return 'SHOWER';
-  }
-  if (hasRain) {
-    return 'RAIN';
-  }
-  if (hasSnow) {
-    return 'SNOW';
-  }
-
-  for (const [skyToken, condition] of SKY_CONDITION) {
-    if (normalized.includes(skyToken)) {
+  const precipitationMatch = PRECIPITATION_PATTERN.exec(normalized);
+  if (precipitationMatch) {
+    const condition = PRECIPITATION_CONDITION.get(precipitationMatch[1]!);
+    if (condition) {
       return condition;
     }
   }
 
-  return 'UNKNOWN';
+  return SKY_CONDITION.get(normalized) ?? 'UNKNOWN';
 }
