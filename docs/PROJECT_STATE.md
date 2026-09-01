@@ -40,8 +40,8 @@
   않았습니다. 위치 → `regId` resolver, 최신 06/18 KST issuance selector, `DailyForecast`
   정규화, 한국어 날씨 문구 → `WeatherCondition` 매핑, `POST /weather` production wiring은
   **여전히 후속 작업**입니다. 이 PR에서 실제 KMA API 호출·배포·env 변경은 수행하지 않았습니다.
-  자세한 내용은 [kma-midterm-provider.md](./kma-midterm-provider.md) 참고. 현재 main은
-  `50d03e013589f5b4d73d33cc2497c7024a882aee` 입니다.
+  자세한 내용은 [kma-midterm-provider.md](./kma-midterm-provider.md) 참고. PR #98 merge 당시
+  main은 `50d03e013589f5b4d73d33cc2497c7024a882aee`였습니다.
 - PR #99(**MERGED**)는 PR #98이 추가한 mid-term provider boundary가 아직 다루지 않은 최신 06/18
   KST issuance selector — `selectLatestKmaMidtermIssuance`
   (`packages/weather-core/src/kma/midterm-issue-time.ts`)만 추가했습니다. forecast/current-observation
