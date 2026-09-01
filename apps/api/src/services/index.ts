@@ -550,6 +550,14 @@ export {
 } from './kma-midterm-request-plan.js';
 
 export {
+  createKmaMidtermExecutionService,
+  type KmaMidtermExecutionResult,
+  type KmaMidtermExecutionService,
+  type KmaMidtermExecutionServiceInput,
+  type KmaMidtermExecutionServiceOptions,
+} from './kma-midterm-execution.js';
+
+export {
   createAirKoreaLocationCurrentAirQualityService,
   type AirKoreaLocationCurrentAirQualityInput,
   type AirKoreaLocationCurrentAirQualityLocationError,

@@ -49,12 +49,12 @@
   value-free 정책)을 따르는 별도·병렬 구현이며, 공식 06:00/18:00 KST 발표 스케줄만 선택하고 API
   가용성 지연은 발명하지 않습니다. `regId` 매핑, mid-term request factory, provider/service/
   composition, `POST /weather` 연결은 이 PR 범위가 아니었습니다. 자세한 내용은
-  [kma-midterm-issue-time.md](./kma-midterm-issue-time.md) 참고. 현재 main은
-  `115e9c622b1a6b05dd4da89bd5769d00a39a1903` 입니다.
-- PR #100은 **현재 Draft**이며, PR #98의 `KmaMidtermForecastRequest` provider boundary와 PR #99의
+  [kma-midterm-issue-time.md](./kma-midterm-issue-time.md) 참고. PR #99 merge 당시 main은
+  `115e9c622b1a6b05dd4da89bd5769d00a39a1903`였습니다.
+- PR #100(**MERGED**)은 PR #98의 `KmaMidtermForecastRequest` provider boundary와 PR #99의
   `selectLatestKmaMidtermIssuance`를 잇는 application-level **request-plan factory**
   (`createKmaMidtermRequestPlanFactory`, `apps/api/src/services/kma-midterm-request-plan.ts`)를
-  추가합니다. 이 factory는 injected clock을 정확히 1회 읽고 injected issuance selector를 정확히
+  추가했습니다. 이 factory는 injected clock을 정확히 1회 읽고 injected issuance selector를 정확히
   1회 호출해, 그 하나의 `tmFc`로 TEMPERATURE(`getMidTa`)와 LAND(`getMidLandFcst`) 두 complete
   request를 만듭니다 — 두 independent single-request factory 호출로 구현하지 않으므로
   `temperature.tmFc === land.tmFc`가 항상 보장됩니다. `temperatureRegId`/`landRegId`는 별도로
@@ -62,9 +62,25 @@
   않습니다. 기본 issuance selector는 여전히 PR #99의 schedule-only
   `selectLatestKmaMidtermIssuance`이고, API availability delay/fallback/retry는 발명하지
   않습니다. provider를 호출하지 않고, 실제 KMA API 호출도 수행하지 않습니다. 자세한 내용은
-  [kma-midterm-request-plan.md](./kma-midterm-request-plan.md) 참고. 남은 후속 작업: 위치 →
-  temperature/land `regId` 해석, provider 실행/service, 중기 정규화, 한국어 문구 →
-  `WeatherCondition` 매핑, composition, `POST /weather` 연결.
+  [kma-midterm-request-plan.md](./kma-midterm-request-plan.md) 참고. PR #100 merge 당시 main은
+  `92ec4e1ce3df8e75df3a015a1939d8a35880c92c`였습니다.
+- PR #101은 **현재 Draft**이며, PR #100의 request-plan factory와 PR #98의
+  `KmaMidtermForecastProvider.fetchMidtermForecast`를 잇는 application-level **execution
+  service**(`createKmaMidtermExecutionService`, `apps/api/src/services/kma-midterm-execution.ts`)를
+  추가합니다. 한 호출에서 request-plan factory를 정확히 1회 호출하고, plan의 `temperature`
+  request를 provider에 정확히 1회 전달하고, 그 호출이 정상적으로 result union으로 resolve되면
+  성공/실패와 관계없이 plan의 `land` request도 provider에 정확히 1회 전달하며, 두 provider result를
+  그대로 보존한 execution result를 반환합니다. 정상적인 provider-domain 실패(`{ ok: false, error }`)는
+  resolved된 application 값이지 예외가 아니므로 TEMPERATURE가 `ok: false`로 resolve되어도 LAND
+  호출을 막지 않습니다 — 이 서비스는 error kind를 검사해 LAND 실행 여부를 결정하지 않습니다.
+  실행 순서는 TEMPERATURE → LAND 결정적 순차 실행이며 `Promise.all`/race/concurrency 정책은
+  추가하지 않습니다. plan-factory/provider의 throw/rejection은 동일 error reference로 그대로
+  전파되고 partial execution result는 반환되지 않습니다. caller의 `options`(`AbortSignal` 포함)는
+  정확히 같은 참조로 두 호출 모두에 전달되며, 이 서비스는 abort policy를 소유하지 않습니다. 이
+  PR은 정규화하지 않습니다 — `DailyForecast[]` 생성, TEMPERATURE/LAND 병합, 한국어 문구 →
+  `WeatherCondition` 매핑, 최종 source 선택, `WeatherOverview`/`SourceMetadata` 조립, 위치 →
+  `regId` 매핑, production composition/route 연결은 모두 여전히 후속 작업입니다. 자세한 내용은
+  [kma-midterm-execution-service.md](./kma-midterm-execution-service.md) 참고.
 
 ## 아직 구현되지 않은 항목
 
