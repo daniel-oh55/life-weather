@@ -62,8 +62,25 @@
 - push 알림
 - 추가 광고 형식
 - 중기·자외선 상세
+- **월간예보**(1.1 최우선 확장 기능 — 아래 참고)
 - 정교한 일러스트/animation
 - 지역 재정렬·스와이프 등 확장 UX
+
+### 1.1 최우선 확장: 월간예보 (Owner 확정)
+
+- 약 4~5주를 캘린더 형태로 한눈에 보는 화면
+- 기존 Forecast 화면의 확장으로 고려: `시간별 | 주간 | 월간`
+- 신뢰 가능한 일별 예보 범위에서는 날짜, 대표 날씨, 최고기온, 최저기온을 표시
+- 장기 범위에는 가짜 일별 날씨/기온을 생성하지 않음
+- KMA 장기전망이 주 단위 정보만 제공하는 범위에서는 주 단위 전망으로 표시
+- 일별 예보와 장기 전망의 데이터 정밀도 차이를 UI에서 숨기지 않음
+- 생활밀착형 요약과 향후 연결 가능
+
+**Technical sequencing note**: PR #98~#102의 existing KMA mid-term foundation을 이후 재사용합니다.
+1.1에서 구현할 때도 mid-term `DailyForecast` completion, `regId` resolution, production
+integration, monthly outlook, monthly presentation을 여러 micro-PR로 기계적으로 분할하지
+않는 방향을 기록합니다 — 독립 contract/policy 위험이 없다면 vertical slice 단위로 합칠 수
+있습니다. 정확한 future PR 번호는 지정하지 않습니다.
 
 ### 원칙
 
@@ -74,6 +91,15 @@
   포함합니다 — 이 선택 상태 자체는 1.0 범위이며, 지역 재정렬·좌우 스와이프·상단 dropdown의 최종
   디자인만 1.1 이후 확장 UX입니다. 자세한 내용은
   [mobile-selected-location.md](./mobile-selected-location.md) 참고.
+
+## PR 구성 원칙
+
+PR을 단순히 계층별로(`factory → service → facade → composition → wiring`) 기계적으로 분리하지
+않습니다. 별도 PR이 필요한 경우는 주로 새 외부 provider boundary, 새 public contract, 독립적인
+domain/policy decision, 별도 검증이 필요한 HIGH-risk boundary입니다. 그 외 glue/assembler/
+composition은 가능하면 하나의 사용자 가치 또는 production vertical slice에서 함께 구현합니다.
+단, one PR = one purpose, protected boundary, HIGH independent review, Owner Ready/merge gate는
+그대로 유지합니다.
 
 ## 후속 확장 (MVP 이후)
 
