@@ -42,6 +42,10 @@ export {
   type SelectLatestKmaMidtermIssuanceInput,
 } from './midterm-issue-time.js';
 export {
+  normalizeKmaMidtermWeatherCondition,
+  type KmaMidtermWeatherCondition,
+} from './midterm-condition.js';
+export {
   selectKmaForecastBaseTimeCandidatesAfterAvailabilityDelay,
   type KmaForecastBaseTimeCandidates,
   type SelectKmaForecastBaseTimeCandidatesAfterAvailabilityDelayInput,

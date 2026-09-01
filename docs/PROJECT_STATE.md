@@ -64,7 +64,7 @@
   않습니다. provider를 호출하지 않고, 실제 KMA API 호출도 수행하지 않습니다. 자세한 내용은
   [kma-midterm-request-plan.md](./kma-midterm-request-plan.md) 참고. PR #100 merge 당시 main은
   `92ec4e1ce3df8e75df3a015a1939d8a35880c92c`였습니다.
-- PR #101은 **현재 Draft**이며, PR #100의 request-plan factory와 PR #98의
+- PR #101(**MERGED**, main `6c39d5e6703f63dfab8cf4ff2a53525455182be4`)은 PR #100의 request-plan factory와 PR #98의
   `KmaMidtermForecastProvider.fetchMidtermForecast`를 잇는 application-level **execution
   service**(`createKmaMidtermExecutionService`, `apps/api/src/services/kma-midterm-execution.ts`)를
   추가합니다. 한 호출에서 request-plan factory를 정확히 1회 호출하고, plan의 `temperature`
@@ -81,6 +81,18 @@
   `WeatherCondition` 매핑, 최종 source 선택, `WeatherOverview`/`SourceMetadata` 조립, 위치 →
   `regId` 매핑, production composition/route 연결은 모두 여전히 후속 작업입니다. 자세한 내용은
   [kma-midterm-execution-service.md](./kma-midterm-execution-service.md) 참고.
+- PR #102는 **현재 Draft**이며, KMA 중기육상예보(`getMidLandFcst`)의 한국어 `WF` 날씨 문구를
+  공통 `WeatherCondition` subset으로 정규화하는 `weather-core` **순수 정책**만
+  추가합니다(`normalizeKmaMidtermWeatherCondition`,
+  `packages/weather-core/src/kma/midterm-condition.ts`) — 기존 단기·초단기 SKY/PTY 숫자 코드
+  정규화(`condition.ts`)와는 별도·병렬인 sibling 정책입니다. 강수 semantic이 하늘상태 설명보다
+  우선하고, 비/눈 혼합은 `SLEET`로, `소나기`는 `SHOWER`로 먼저 판정되며, 중기예보 공식 DB 정의가
+  여전히 명시하는 `WB02 = 구름조금`을 단기예보의 폐지된 숫자 SKY 코드 `2`와 다르게
+  `PARTLY_CLOUDY`로 지원합니다. 알 수 없는 문구는 예외 없이 `UNKNOWN`이며 `FOG`/`THUNDERSTORM`
+  같은 새 값을 발명하지 않습니다. 이 PR은 `DailyForecast[]` 생성, TEMPERATURE/LAND 병합, 위치 →
+  `regId` 매핑, production composition/route 연결을 포함하지 않으며, provider/service 변경과 실제
+  KMA API 호출도 수행하지 않습니다. 자세한 내용은
+  [kma-midterm-condition.md](./kma-midterm-condition.md) 참고.
 
 ## 아직 구현되지 않은 항목
 
