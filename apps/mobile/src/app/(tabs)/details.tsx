@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { SavedLocationSwitcher } from '../../components/saved-location-switcher';
+import { WeatherFreshnessNotice } from '../../components/weather-freshness-notice';
 import {
   createMobileWeatherDetails,
   type MobileWeatherAlertCard,
@@ -146,6 +147,10 @@ export default function DetailsScreen() {
     mobileWeatherQueryStore.retry();
   }
 
+  function handleWeatherRefresh(): void {
+    mobileWeatherQueryStore.refresh();
+  }
+
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent}>
       <View style={styles.page}>
@@ -229,6 +234,13 @@ export default function DetailsScreen() {
                   <Text style={styles.secondaryButtonLabel}>다시 시도</Text>
                 </Pressable>
               </View>
+            ) : null}
+
+            {weatherQuery.status === 'SUCCESS' ? (
+              <WeatherFreshnessNotice
+                generatedAt={weatherQuery.data.meta.generatedAt}
+                onRefresh={handleWeatherRefresh}
+              />
             ) : null}
 
             {weatherQuery.status === 'SUCCESS'

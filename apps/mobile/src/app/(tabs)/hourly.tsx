@@ -8,6 +8,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { SavedLocationSwitcher } from '../../components/saved-location-switcher';
+import { WeatherFreshnessNotice } from '../../components/weather-freshness-notice';
 import { mobileSavedLocationApplicationStore } from '../../locations/mobile-saved-location-application-production';
 import type { SavedLocationApplicationSnapshot } from '../../locations/mobile-saved-location-application-store';
 import { useMobileSavedLocations } from '../../locations/use-mobile-saved-locations';
@@ -727,6 +728,10 @@ export default function HourlyScreen() {
     mobileWeatherQueryStore.retry();
   }
 
+  function handleWeatherRefresh(): void {
+    mobileWeatherQueryStore.refresh();
+  }
+
   function handleForecastViewSelect(option: ForecastViewOption): void {
     router.replace(option.href);
   }
@@ -809,6 +814,13 @@ export default function HourlyScreen() {
                   <Text style={styles.secondaryButtonLabel}>다시 시도</Text>
                 </Pressable>
               </View>
+            ) : null}
+
+            {weatherQuery.status === 'SUCCESS' ? (
+              <WeatherFreshnessNotice
+                generatedAt={weatherQuery.data.meta.generatedAt}
+                onRefresh={handleWeatherRefresh}
+              />
             ) : null}
 
             {weatherQuery.status === 'SUCCESS' ? (

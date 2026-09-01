@@ -68,6 +68,24 @@ vi.mock('../components/saved-location-switcher', () => ({
 }));
 
 // ---------------------------------------------------------------------------
+// The shared stale-data notice is replaced with a marker component too. Its own freshness
+// classifier, one-shot timer, and refresh-button contract are covered by
+// `../components/weather-freshness-notice.test.tsx`; what this screen still owns — and what is
+// asserted below — is that it mounts exactly one, only on SUCCESS, wired to the exact
+// `data.meta.generatedAt` and the store's `refresh()`.
+// ---------------------------------------------------------------------------
+
+const MockWeatherFreshnessNotice = vi.hoisted(
+  () => function MockWeatherFreshnessNotice(): null {
+    return null;
+  },
+);
+
+vi.mock('../components/weather-freshness-notice', () => ({
+  WeatherFreshnessNotice: MockWeatherFreshnessNotice,
+}));
+
+// ---------------------------------------------------------------------------
 // Both read-only hooks are replaced with call-recording mocks: this screen owns only the
 // presentation of whatever snapshot each hook returns, never the hook's own subscription or
 // lifecycle contract (each is covered by its own dedicated test file).
@@ -99,6 +117,7 @@ vi.mock('../locations/mobile-saved-location-application-production', () => ({
 
 const mobileWeatherQueryStoreMock = vi.hoisted(() => ({
   retry: vi.fn(),
+  refresh: vi.fn(),
 }));
 
 vi.mock('../weather-query/mobile-weather-query-production', () => ({
@@ -354,6 +373,17 @@ function expectSingleSwitcher(root: unknown, snapshot: unknown): void {
   const rendered = switchers(root);
   expect(rendered).toHaveLength(1);
   expect(rendered[0]?.props.savedLocations).toBe(snapshot);
+}
+
+/** Every shared weather freshness notice the screen rendered, in render order. */
+function freshnessNotices(root: unknown): ElementLike[] {
+  const collected: ElementLike[] = [];
+  walk(root, (element) => {
+    if (element.type === MockWeatherFreshnessNotice) {
+      collected.push(element);
+    }
+  });
+  return collected;
 }
 
 function scrollViews(root: unknown): ElementLike[] {
@@ -708,6 +738,45 @@ describe('READY + weather ERROR', () => {
     press(pressableByLabel(render(), '시간별 날씨 다시 시도'));
 
     expect(mobileWeatherQueryStoreMock.retry).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Weather freshness notice — reachability and wiring only. The shared notice's own freshness
+// classification (including "a fresh SUCCESS renders nothing"), one-shot timer, and refresh-button
+// contract are owned by `../components/weather-freshness-notice.test.tsx` and are not duplicated
+// here.
+// ---------------------------------------------------------------------------
+
+describe('weather freshness notice', () => {
+  it('mounts exactly one notice on SUCCESS, wired to the exact generatedAt and store refresh', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
+    const response = successResponse([hourlyEntry()]);
+    useMobileWeatherQueryMock.mockReturnValue(successQuery('a', response));
+    const render = await loadScreen();
+
+    const element = render();
+
+    const notices = freshnessNotices(element);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.props.generatedAt).toBe(response.meta.generatedAt);
+
+    (notices[0]?.props.onRefresh as () => void)();
+    expect(mobileWeatherQueryStoreMock.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('mounts no notice outside SUCCESS (IDLE/LOADING/ERROR)', async () => {
+    useMobileSavedLocationsMock.mockReturnValue(readySnapshot([savedLocationRecord('a', 0)], 'a'));
+    const render = await loadScreen();
+
+    useMobileWeatherQueryMock.mockReturnValue(idleQuery());
+    expect(freshnessNotices(render())).toHaveLength(0);
+
+    useMobileWeatherQueryMock.mockReturnValue(loadingQuery('a'));
+    expect(freshnessNotices(render())).toHaveLength(0);
+
+    useMobileWeatherQueryMock.mockReturnValue(errorQuery('a', 'NETWORK'));
+    expect(freshnessNotices(render())).toHaveLength(0);
   });
 });
 
