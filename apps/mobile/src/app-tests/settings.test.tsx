@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ---------------------------------------------------------------------------
 // `react-native` primitives are replaced with minimal marker components, matching the other
@@ -18,12 +18,37 @@ const MockScrollView = vi.hoisted(() => function MockScrollView(): null {
   return null;
 });
 
+const linkingMock = vi.hoisted(() => ({
+  openURL: vi.fn(async () => true),
+}));
+
 vi.mock('react-native', () => ({
   View: MockView,
   Text: MockText,
   Pressable: MockPressable,
   ScrollView: MockScrollView,
+  Linking: linkingMock,
   StyleSheet: { create: (styles: unknown) => styles },
+}));
+
+// ---------------------------------------------------------------------------
+// The shared mobile ads runtime hook/production store are replaced with call-recording mocks, so
+// this screen's own privacy-options wiring can be asserted without loading the real
+// `react-native-google-mobile-ads` native module or its consent store (covered by
+// `../ads/mobile-ads-runtime-store.test.ts`).
+// ---------------------------------------------------------------------------
+
+const useMobileAdsRuntimeMock = vi.hoisted(() => vi.fn());
+const mobileAdsRuntimeStoreMock = vi.hoisted(() => ({
+  openPrivacyOptions: vi.fn(async () => {}),
+}));
+
+vi.mock('../ads/use-mobile-ads-runtime', () => ({
+  useMobileAdsRuntime: useMobileAdsRuntimeMock,
+}));
+
+vi.mock('../ads/mobile-ads-runtime-production', () => ({
+  mobileAdsRuntimeStore: mobileAdsRuntimeStoreMock,
 }));
 
 // ---------------------------------------------------------------------------
@@ -133,11 +158,29 @@ async function readSource(): Promise<string> {
   return fs.readFile(new URL('../app/(tabs)/settings.tsx', import.meta.url), 'utf-8');
 }
 
+const ORIGINAL_PRIVACY_POLICY_URL = process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL;
+
 beforeEach(() => {
   vi.resetModules();
   vi.resetAllMocks();
   useRouterMock.mockReturnValue(routerMock);
   constantsMock.expoConfig = null;
+  delete process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL;
+  useMobileAdsRuntimeMock.mockReturnValue({
+    canRequestAds: false,
+    adsInitialized: false,
+    privacyOptionsRequired: false,
+  });
+  mobileAdsRuntimeStoreMock.openPrivacyOptions.mockReset().mockResolvedValue(undefined);
+  linkingMock.openURL.mockReset().mockResolvedValue(true);
+});
+
+afterEach(() => {
+  if (ORIGINAL_PRIVACY_POLICY_URL === undefined) {
+    delete process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL;
+  } else {
+    process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL = ORIGINAL_PRIVACY_POLICY_URL;
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -174,13 +217,20 @@ describe('screen title and sections', () => {
     expect(headerTexts[0]).toBe('설정');
   });
 
-  it('shows the four section headings in order: 지역 → 단위 → 데이터 출처 → 앱 정보', async () => {
+  it('shows the five section headings in order: 지역 → 단위 → 데이터 출처 → 개인정보 및 광고 → 앱 정보', async () => {
     const render = await loadScreen();
 
     const element = render();
 
     const headerTexts = headers(element).map((header) => header.props.children);
-    expect(headerTexts).toEqual(['설정', '지역', '단위', '데이터 출처', '앱 정보']);
+    expect(headerTexts).toEqual([
+      '설정',
+      '지역',
+      '단위',
+      '데이터 출처',
+      '개인정보 및 광고',
+      '앱 정보',
+    ]);
   });
 });
 
@@ -278,12 +328,11 @@ describe('data-source section', () => {
     expect(rendered).toContain('지역 검색 자료 이용조건: 공공저작물 출처표시 제1유형');
   });
 
-  it('shows AirKorea as planned-only, never as currently provided', async () => {
+  it('shows AirKorea as a currently integrated data source (the stale "연동 예정" copy is corrected)', async () => {
     const rendered = texts((await loadScreen())());
 
-    expect(rendered).toContain('대기질: 에어코리아 연동 예정');
-    expect(rendered).not.toContain('에어코리아 제공');
-    expect(rendered).not.toContain('대기질 정보: 에어코리아');
+    expect(rendered).toContain('대기질: 에어코리아');
+    expect(rendered).not.toContain('대기질: 에어코리아 연동 예정');
   });
 });
 
@@ -334,48 +383,156 @@ describe('app-info section', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Legal/operator information and forbidden controls are absent.
+// Legal/operator information: no invented/hardcoded value, ever — only the approved env-sourced
+// URL and the fixed section copy below may appear.
 // ---------------------------------------------------------------------------
 
-describe('no legal/operator/forbidden content', () => {
-  it('never shows a URL, mailto link, support email, package id, or ad/EAS id', async () => {
-    const rendered = texts((await loadScreen())()).join('\n');
-
-    expect(rendered).not.toContain('http://');
-    expect(rendered).not.toContain('https://');
-    expect(rendered).not.toContain('mailto:');
-    expect(rendered).not.toContain('@');
-  });
-
-  it('never imports or calls Linking, fetch, storage, or weather hooks', async () => {
+describe('no invented legal/operator content', () => {
+  it('never hard-codes a URL, mailto link, support email, package id, or ad/EAS id in source', async () => {
     const source = await readSource();
 
-    expect(source).not.toContain('Linking');
+    expect(source).not.toContain('mailto:');
+    expect(source).not.toContain('@');
+    expect(source).not.toContain('http://');
+    expect(source).not.toContain('https://');
+    expect(source).not.toContain('ca-app-pub-');
+    expect(source).not.toContain('com.life');
+  });
+
+  it('never imports fetch, storage, or weather hooks directly', async () => {
+    const source = await readSource();
+
     expect(source).not.toContain('fetch(');
     expect(source).not.toContain('AsyncStorage');
     expect(source).not.toContain('weather-query');
     expect(source).not.toContain('saved-location');
-    expect(source).not.toContain('http://');
-    expect(source).not.toContain('https://');
-    expect(source).not.toContain('mailto:');
   });
 
-  it('renders no privacy/ad/notification/widget controls', async () => {
+  it('renders no notification/widget controls (out of 1.0 scope)', async () => {
     const rendered = texts((await loadScreen())()).join('\n');
 
-    expect(rendered).not.toContain('개인정보');
-    expect(rendered).not.toContain('광고');
     expect(rendered).not.toContain('알림');
     expect(rendered).not.toContain('위젯');
   });
 
-  it('renders exactly one pressable: "지역 추가"', async () => {
+  it('renders exactly two pressables outside the privacy section: "지역 추가" and "개인정보 처리방침"', async () => {
     const render = await loadScreen();
 
-    const buttons = pressables(render());
+    const buttons = pressables(render()).map((button) => button.props.accessibilityLabel);
 
-    expect(buttons).toHaveLength(1);
-    expect(buttons[0]?.props.accessibilityLabel).toBe('지역 추가');
+    expect(buttons).toContain('지역 추가');
+    expect(buttons).toContain('개인정보 처리방침');
+    expect(buttons).not.toContain('광고 개인정보 선택 관리');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Privacy policy control — sourced only from EXPO_PUBLIC_PRIVACY_POLICY_URL, never a guessed URL.
+// ---------------------------------------------------------------------------
+
+describe('privacy policy control', () => {
+  it('renders a disabled "개인정보 처리방침" button with a placeholder message when the URL is not configured', async () => {
+    const render = await loadScreen();
+
+    const element = render();
+    const button = pressableByLabel(element, '개인정보 처리방침');
+
+    expect(button.props.disabled).toBe(true);
+    expect(texts(element)).toContain('개인정보 처리방침 주소가 아직 설정되지 않았습니다.');
+  });
+
+  it('does not crash when the URL is missing and the button is pressed', async () => {
+    const render = await loadScreen();
+
+    expect(() => press(pressableByLabel(render(), '개인정보 처리방침'))).not.toThrow();
+    expect(linkingMock.openURL).toHaveBeenCalledTimes(0);
+  });
+
+  it('enables the button and opens the configured HTTPS URL via Linking when pressed', async () => {
+    process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL = 'https://example.test/privacy';
+    const render = await loadScreen();
+
+    const element = render();
+    const button = pressableByLabel(element, '개인정보 처리방침');
+    expect(button.props.disabled).toBe(false);
+    expect(texts(element)).not.toContain('개인정보 처리방침 주소가 아직 설정되지 않았습니다.');
+
+    press(button);
+
+    expect(linkingMock.openURL).toHaveBeenCalledTimes(1);
+    expect(linkingMock.openURL).toHaveBeenCalledWith('https://example.test/privacy');
+  });
+
+  it('rejects a non-HTTPS configured URL rather than opening it (treated as unconfigured)', async () => {
+    process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL = 'http://example.test/privacy';
+    const render = await loadScreen();
+
+    const button = pressableByLabel(render(), '개인정보 처리방침');
+    expect(button.props.disabled).toBe(true);
+  });
+
+  it('never exposes a raw Linking.openURL rejection to the user', async () => {
+    process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL = 'https://example.test/privacy';
+    linkingMock.openURL.mockRejectedValue(new Error('synthetic no-handler-for-url failure'));
+    const render = await loadScreen();
+
+    expect(() => press(pressableByLabel(render(), '개인정보 처리방침'))).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// UMP privacy-options control — visible only while the shared ads runtime reports it REQUIRED.
+// ---------------------------------------------------------------------------
+
+describe('privacy-options control', () => {
+  it('is hidden when privacyOptionsRequired is false', async () => {
+    useMobileAdsRuntimeMock.mockReturnValue({
+      canRequestAds: false,
+      adsInitialized: false,
+      privacyOptionsRequired: false,
+    });
+    const render = await loadScreen();
+
+    expect(() => pressableByLabel(render(), '광고 개인정보 선택 관리')).toThrow();
+  });
+
+  it('is shown when privacyOptionsRequired is true', async () => {
+    useMobileAdsRuntimeMock.mockReturnValue({
+      canRequestAds: true,
+      adsInitialized: true,
+      privacyOptionsRequired: true,
+    });
+    const render = await loadScreen();
+
+    const button = pressableByLabel(render(), '광고 개인정보 선택 관리');
+    expect(button.props.accessibilityRole).toBe('button');
+  });
+
+  it('calls the shared ads runtime store\'s openPrivacyOptions exactly once per press', async () => {
+    useMobileAdsRuntimeMock.mockReturnValue({
+      canRequestAds: true,
+      adsInitialized: true,
+      privacyOptionsRequired: true,
+    });
+    const render = await loadScreen();
+
+    press(pressableByLabel(render(), '광고 개인정보 선택 관리'));
+
+    expect(mobileAdsRuntimeStoreMock.openPrivacyOptions).toHaveBeenCalledTimes(1);
+  });
+
+  it('never calls openPrivacyOptions merely by rendering', async () => {
+    useMobileAdsRuntimeMock.mockReturnValue({
+      canRequestAds: true,
+      adsInitialized: true,
+      privacyOptionsRequired: true,
+    });
+    const render = await loadScreen();
+
+    render();
+    render();
+
+    expect(mobileAdsRuntimeStoreMock.openPrivacyOptions).toHaveBeenCalledTimes(0);
   });
 });
 

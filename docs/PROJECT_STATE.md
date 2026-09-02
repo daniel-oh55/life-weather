@@ -1,7 +1,7 @@
 # Life Weather 프로젝트 상태
 
 - 기준일: 2026-09-01
-- State baseline: `3e2cf49f7cc3d908a8d59eda5a09c4e3081d2a80`
+- State baseline: `afa35a2f9dc938aeda033d71b88edf89739b67bf` (PR #104 merge 이후 main)
 
 이 문서는 baseline 시점의 저장소 사실, 미완료 범위와 다음 Owner 결정을 기록합니다.
 
@@ -95,7 +95,7 @@
   [kma-midterm-condition.md](./kma-midterm-condition.md) 참고.
 - PR #103(**MERGED**, main `3e2cf49f7cc3d908a8d59eda5a09c4e3081d2a80`)은 docs-only PR로, 이
   `PROJECT_STATE.md`의 Fast-track 1.0 baseline을 재정리했습니다 — 코드 변경은 없습니다.
-- PR #104(**Draft, 아직 MERGED 아님**)는 1.0 남은 요구사항이었던 **모바일 weather response
+- PR #104(**MERGED**, main `afa35a2f9dc938aeda033d71b88edf89739b67bf`)는 1.0 남은 요구사항이었던 **모바일 weather response
   freshness/stale 표시**를 최소 vertical slice로 구현합니다 — `MobileWeatherQuerySnapshot`은
   여전히 정확히 `IDLE`/`LOADING`/`SUCCESS`/`ERROR`이며 새 `STALE` query-store variant는 추가하지
   않습니다. Staleness는 network/lifecycle state가 아니라 현재 `SUCCESS` snapshot의 **presentation
@@ -113,8 +113,25 @@
   요청을 만들 수 없습니다. `request()` 시그니처와 기존 `retry()`는 변경되지 않았습니다.
   `packages/contracts`, `CONTRACT_VERSION`, `packages/weather-core`, API, response
   cache/persistence는 이 PR에서 변경되지 않았습니다. 자세한 내용은
-  [mobile-weather-freshness.md](./mobile-weather-freshness.md) 참고. Owner Ready 전환과 merge
-  전까지는 1.0 미완료 항목으로 남습니다.
+  [mobile-weather-freshness.md](./mobile-weather-freshness.md) 참고.
+- PR #105(**Draft, 아직 MERGED 아님**)는 Fast-track 1.0의 마지막 남은 구현 vertical
+  slice였던 **Android 1.0 release / AdMob / consent / privacy 통합**을 구현합니다 —
+  `react-native-google-mobile-ads@16.5.0` 의존성, `app.json`을 정적 base로 유지하는 동적
+  `apps/mobile/app.config.ts`(`EAS_BUILD === 'true' && EAS_BUILD_PROFILE === 'production'`일 때만
+  5개 필수 release 값을 변수명만 노출하는 fail-fast로 검증하고, 그 외에는 Google 공식 sample AdMob
+  Android App ID로 안전하게 대체), `eas.json`의 신규 `production` 프로필(EAS project 연결·실제
+  Build는 미수행), `apps/mobile/src/ads/`의 provider-neutral ads runtime store(UMP consent
+  gather/실패 시 이전 세션 정보로 대체, `canRequestAds`일 때만 최대 한 번
+  `mobileAds().initialize()`, consent 자체 영속화 없음)와 그 store를 시작하는 `_layout.tsx`의 기존
+  단일 mount effect, Today 탭 전용 단일 adaptive banner(`TodayBannerAd`, dev/production ad-unit
+  분리, 위치·좌표·날씨 상태 targeting 없음), Settings의 `대기질: 에어코리아 연동 예정` → `대기질:
+  에어코리아` 수정과 새 `개인정보 및 광고` section(환경변수 기반 개인정보 처리방침 링크, UMP
+  `privacyOptionsRequirementStatus === REQUIRED`일 때만 노출되는 광고 개인정보 선택 관리
+  버튼)까지입니다. 실제 operator-managed 값(package identifier, AdMob ID, EAS project ID,
+  production URL)은 어디에도 commit되지 않았습니다. 실제 KMA/AirKorea endpoint 호출, native
+  prebuild, EAS Build, Play/AdMob 콘솔 변경, production 배포는 이 PR에서 수행하지 않았습니다.
+  자세한 내용은 [android-1.0-release-admob.md](./android-1.0-release-admob.md) 참고. Owner Ready
+  전환과 merge 전까지는 1.0 미완료 항목으로 남습니다.
 
 ## Fast-track 1.0 활성 계획
 
@@ -137,22 +154,15 @@
 
 ### 1.0 남은 구현 PR
 
-Mobile freshness/stale handling은 **PR #104**(Draft, 아직 MERGED 아님)로 구현되었습니다 — 위
-"현재 baseline"의 PR #104 항목 참고. Owner Ready 전환/merge 전까지는 완료로 표시하지 않지만, 코드
-구현 자체는 이 섹션의 "남은 구현 PR"에는 더 이상 해당하지 않습니다.
+Mobile freshness/stale handling은 **PR #104**(MERGED)로 구현되었습니다 — 위 "현재 baseline"의 PR
+#104 항목 참고. Android 1.0 release / AdMob / consent / privacy integration은 **PR #105**(Draft,
+아직 MERGED 아님)로 구현되었습니다 — 위 "현재 baseline"의 PR #105 항목 참고. Owner Ready 전환/merge
+전까지는 완료로 표시하지 않지만, 코드 구현 자체는 더 이상 이 섹션의 "남은 구현 PR"에 해당하지
+않습니다.
 
-**남은 구현 PR: Android 1.0 release / AdMob / consent / privacy integration**
-
-하나의 vertical slice로 계획합니다.
-
-- Today 하단 adaptive banner 1개
-- AdMob test/production ID separation
-- consent/privacy app-side flow
-- Android release/native configuration에 필요한 최소 변경
-- Settings의 실제 데이터 출처/개인정보 관련 정합성
-- release readiness에 필요한 앱 측 설정
-- 실제 operator-managed 값(AdMob ID, package identifier, production domain 등)은 Owner가
-  제공/승인하기 전 commit하지 않음
+**PR #105 코드 구현이 완료되면, Fast-track 1.0에는 더 이상 계획된 feature PR이 남지 않습니다.**
+남은 작업은 모두 아래 "코드 완료 이후 Owner gate"의 Owner 외부 작업이거나, blocker가 발견된 경우의
+targeted remediation PR뿐입니다.
 
 ### 코드 완료 이후 Owner gate (PR 아님)
 

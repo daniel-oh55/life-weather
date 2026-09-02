@@ -55,6 +55,21 @@ vi.mock('expo-router', () => ({
   Stack: MockStack,
 }));
 
+// ---------------------------------------------------------------------------
+// The production ads runtime store is replaced with a call-recording mock so this test can assert
+// `RootLayout` starts it exactly once from the same single mount effect, without loading the real
+// `react-native-google-mobile-ads` native module. The store's own consent/initialize contract is
+// covered by `../ads/mobile-ads-runtime-store.test.ts`.
+// ---------------------------------------------------------------------------
+
+const mobileAdsRuntimeStoreMock = vi.hoisted(() => ({
+  start: vi.fn(async () => {}),
+}));
+
+vi.mock('../ads/mobile-ads-runtime-production', () => ({
+  mobileAdsRuntimeStore: mobileAdsRuntimeStoreMock,
+}));
+
 beforeEach(() => {
   vi.resetModules();
   vi.resetAllMocks();
@@ -67,6 +82,7 @@ beforeEach(() => {
   asyncStorageMock.getItem.mockResolvedValue(null);
   asyncStorageMock.setItem.mockResolvedValue(undefined);
   asyncStorageMock.removeItem.mockResolvedValue(undefined);
+  mobileAdsRuntimeStoreMock.start.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -158,6 +174,7 @@ describe('mount effect execution', () => {
     // Join the same startup promise the effect kicked off, rather than starting a new one.
     await startMobileLocationApplicationOnce();
 
+    expect(mobileAdsRuntimeStoreMock.start).toHaveBeenCalledTimes(1);
     expect(asyncStorageMock.getItem).toHaveBeenCalledTimes(2);
     expect(asyncStorageMock.getItem).toHaveBeenCalledWith(SAVED_LOCATION_PERSISTENCE_KEY);
     expect(asyncStorageMock.getItem).toHaveBeenCalledWith(SELECTED_LOCATION_PERSISTENCE_KEY);
@@ -172,6 +189,7 @@ describe('mount effect execution', () => {
     expect(cleanupFromSecondRun).toBeUndefined();
     await startMobileLocationApplicationOnce();
 
+    expect(mobileAdsRuntimeStoreMock.start).toHaveBeenCalledTimes(2);
     expect(asyncStorageMock.getItem).toHaveBeenCalledTimes(2);
     expect(asyncStorageMock.setItem).toHaveBeenCalledTimes(0);
     expect(asyncStorageMock.removeItem).toHaveBeenCalledTimes(0);
