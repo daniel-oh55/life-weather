@@ -1,8 +1,9 @@
 # Android 1.0 release / AdMob / consent / privacy integration
 
 PR #105이 구현한 Fast-track 1.0의 마지막 구현 vertical slice를 기록합니다. 실제 operator-managed
-값(Android package, AdMob ID, EAS project ID, production URL)은 이 문서와 저장소 어디에도
-commit되어 있지 않습니다.
+값(Android package, AdMob ID, production URL)은 이 문서와 저장소 어디에도 commit되어 있지
+않습니다. EAS project linkage는 PR #106에서 Owner가 생성한 project와 연결됐으며(아래 "EAS 설정"
+참고) 실제 project ID는 이 문서에 중복 기록하지 않습니다.
 
 ## 저장소 구현 범위
 
@@ -41,10 +42,18 @@ commit되어 있지 않습니다.
 
 ### EAS 설정 (`apps/mobile/eas.json`)
 
-기존 `development` 프로필은 그대로 두고 `production` 프로필만 추가했습니다
-(`distribution: store`, `environment: production`, `android.buildType: app-bundle`). EAS project
-ID 추가, `eas init`, project 연결, auto-submit, credentials, Play service-account 설정, 실제 EAS
-Build 실행은 이 PR에서 하지 않았습니다.
+PR #105은 기존 `development` 프로필을 그대로 두고 `production` 프로필만 추가했습니다
+(`distribution: store`, `environment: production`, `android.buildType: app-bundle`). auto-submit,
+credentials, Play service-account 설정, 실제 EAS Build 실행은 PR #105에서 하지 않았습니다.
+
+PR #106에서는 Owner가 외부에서 생성·연결한 EAS project의 linkage 결과(`app.json`의 Expo `owner`와
+`extra.eas.projectId`)를 저장소에 반영하고, `development` 프로필에 `environment: "development"`만
+추가했습니다 — `developmentClient: true`, `distribution: internal`, `android.buildType: apk`
+의미는 그대로입니다. Owner가 EAS Development environment에 `LIFE_WEATHER_ANDROID_PACKAGE`를
+등록했으므로, Android package identifier는 저장소에 hard-code되지 않은 채 아래 build-time env
+계약을 통해 Development Build의 app config 평가에 공급됩니다. 실제 Development APK/native build,
+`eas build`, credentials, prebuild는 PR #106에서도 실행하지 않았습니다. production release 값,
+AdMob/UMP 콘솔 설정, production environment와 Play release는 여전히 별도 Owner gate입니다.
 
 ### 환경 변수 계약 (`apps/mobile/.env.example`)
 
@@ -129,7 +138,8 @@ request, Today 화면 하나에만 배너 1개.
 4. AdMob Privacy & Messaging(UMP) 설정
 5. production `EXPO_PUBLIC_API_BASE_URL`
 6. 공개 HTTPS privacy-policy URL(Play Console에도 동일하게 등록)
-7. EAS project/link/environment 실제 연결
+7. EAS project/link/environment 실제 연결 — project 생성·link와 Development environment의
+   `LIFE_WEATHER_ANDROID_PACKAGE` 등록은 완료(PR #106). production environment 값은 미완료
 8. Play Console 앱 생성/등록 정보
 9. Play "광고 포함" 선언
 10. Advertising ID(AD_ID) 선언 — 이 SDK는 자체 라이브러리 manifest로 `AD_ID` permission을
@@ -144,7 +154,7 @@ request, Today 화면 하나에만 배너 1개.
     않았기 때문). **Play 대상 연령층에 아동이 포함된다면, release 전에 반드시 별도의
     Families/광고 정책 검토를 먼저 수행해야 합니다.**
 13. privacy-policy Play Console URL 등록
-14. Development/production 네이티브 build QA
+14. Development/production 네이티브 build QA — Development APK build/설치는 아직 미실행
 15. 실제 광고/동의(consent) QA
 16. 승인된 실제 KMA/AirKorea live 검증
 
