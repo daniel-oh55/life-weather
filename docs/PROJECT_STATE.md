@@ -1,7 +1,7 @@
 # Life Weather 프로젝트 상태
 
-- 기준일: 2026-09-01
-- State baseline: `afa35a2f9dc938aeda033d71b88edf89739b67bf` (PR #104 merge 이후 main)
+- 기준일: 2026-09-04
+- State baseline: `1e6acbb8c8ada402490be6f4d99064a6906af413` (PR #105 merge 이후 main)
 
 이 문서는 baseline 시점의 저장소 사실, 미완료 범위와 다음 Owner 결정을 기록합니다.
 
@@ -114,8 +114,8 @@
   `packages/contracts`, `CONTRACT_VERSION`, `packages/weather-core`, API, response
   cache/persistence는 이 PR에서 변경되지 않았습니다. 자세한 내용은
   [mobile-weather-freshness.md](./mobile-weather-freshness.md) 참고.
-- PR #105(**Draft, 아직 MERGED 아님**)는 Fast-track 1.0의 마지막 남은 구현 vertical
-  slice였던 **Android 1.0 release / AdMob / consent / privacy 통합**을 구현합니다 —
+- PR #105(**MERGED**, main `1e6acbb8c8ada402490be6f4d99064a6906af413`)는 Fast-track 1.0의 마지막
+  남은 구현 vertical slice였던 **Android 1.0 release / AdMob / consent / privacy 통합**을 구현합니다 —
   `react-native-google-mobile-ads@16.5.0` 의존성, `app.json`을 정적 base로 유지하는 동적
   `apps/mobile/app.config.ts`(`EAS_BUILD === 'true' && EAS_BUILD_PROFILE === 'production'`일 때만
   5개 필수 release 값을 변수명만 노출하는 fail-fast로 검증하고, 그 외에는 Google 공식 sample AdMob
@@ -128,10 +128,21 @@
   에어코리아` 수정과 새 `개인정보 및 광고` section(환경변수 기반 개인정보 처리방침 링크, UMP
   `privacyOptionsRequirementStatus === REQUIRED`일 때만 노출되는 광고 개인정보 선택 관리
   버튼)까지입니다. 실제 operator-managed 값(package identifier, AdMob ID, EAS project ID,
-  production URL)은 어디에도 commit되지 않았습니다. 실제 KMA/AirKorea endpoint 호출, native
+  production URL)은 이 PR에서 어디에도 commit되지 않았습니다. 실제 KMA/AirKorea endpoint 호출, native
   prebuild, EAS Build, Play/AdMob 콘솔 변경, production 배포는 이 PR에서 수행하지 않았습니다.
-  자세한 내용은 [android-1.0-release-admob.md](./android-1.0-release-admob.md) 참고. Owner Ready
-  전환과 merge 전까지는 1.0 미완료 항목으로 남습니다.
+  자세한 내용은 [android-1.0-release-admob.md](./android-1.0-release-admob.md) 참고.
+- PR #106(**Draft**)은 Galaxy 실기기 Development Build를 위한 **EAS Development Build
+  repository setup** 단계입니다 — Owner가 외부에서 EAS project를 생성하고 현재 app과 link한
+  결과(`apps/mobile/app.json`의 Expo `owner`와 `extra.eas.projectId`)를 저장소에 반영하고,
+  `apps/mobile/eas.json`의 기존 `development` 프로필(`developmentClient: true`,
+  `distribution: internal`, `android.buildType: apk`)에 `environment: "development"`만
+  추가했습니다. 이로써 Owner가 EAS Development environment에 등록한
+  `LIFE_WEATHER_ANDROID_PACKAGE`가 Development Build의 app config 평가에 공급됩니다 — Android
+  package identifier는 여전히 PR #105의 build-time env 계약으로만 공급되며 `app.json`/
+  `eas.json`/`.env.example` 어디에도 hard-code되어 있지 않습니다. 실제 Development APK/native
+  build, `eas build`, credentials, prebuild, 외부 콘솔 변경은 이 PR에서 수행하지 않았습니다.
+  실제 AdMob production ID, privacy-policy URL, production `EXPO_PUBLIC_API_BASE_URL`,
+  production environment 값과 Play release는 여전히 미완료 Owner gate입니다.
 
 ## Fast-track 1.0 활성 계획
 
@@ -155,19 +166,17 @@
 ### 1.0 남은 구현 PR
 
 Mobile freshness/stale handling은 **PR #104**(MERGED)로 구현되었습니다 — 위 "현재 baseline"의 PR
-#104 항목 참고. Android 1.0 release / AdMob / consent / privacy integration은 **PR #105**(Draft,
-아직 MERGED 아님)로 구현되었습니다 — 위 "현재 baseline"의 PR #105 항목 참고. Owner Ready 전환/merge
-전까지는 완료로 표시하지 않지만, 코드 구현 자체는 더 이상 이 섹션의 "남은 구현 PR"에 해당하지
-않습니다.
+#104 항목 참고. Android 1.0 release / AdMob / consent / privacy integration은 **PR #105**(MERGED)로
+구현되었으며 현재 baseline에 포함되어 있습니다 — 위 "현재 baseline"의 PR #105 항목 참고.
 
-**PR #105 코드 구현이 완료되면, Fast-track 1.0에는 더 이상 계획된 feature PR이 남지 않습니다.**
-남은 작업은 모두 아래 "코드 완료 이후 Owner gate"의 Owner 외부 작업이거나, blocker가 발견된 경우의
-targeted remediation PR뿐입니다.
+**Fast-track 1.0에는 더 이상 계획된 feature PR이 남지 않습니다.** 남은 작업은 모두 아래 "코드 완료
+이후 Owner gate"의 Owner 외부 작업이거나, blocker가 발견된 경우의 targeted remediation PR뿐입니다.
 
 ### 코드 완료 이후 Owner gate (PR 아님)
 
 1. production/public API base URL 설정
-2. Development Build
+2. Development Build 실행 — EAS project link와 Development environment의 Android package 변수
+   등록은 완료됐고, 실제 Development APK build/설치는 아직 미실행
 3. 실제 Android 실기기 QA
 4. 승인된 실제 KMA/AirKorea endpoint 검증
 5. 광고/동의 QA

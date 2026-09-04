@@ -36,6 +36,13 @@
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "74e180ed-969e-4f57-8008-a288a7f93d43"
+      }
+    },
+    "owner": "ollele"
   }
 }
