@@ -9,9 +9,11 @@ PR #105이 구현한 Fast-track 1.0의 마지막 구현 vertical slice를 기록
 
 ### 의존성
 
-- `react-native-google-mobile-ads@16.5.0` (`apps/mobile/package.json`, `pnpm-lock.yaml`). Firebase,
+- `react-native-google-mobile-ads@16.3.4` (`apps/mobile/package.json`, `pnpm-lock.yaml`). Firebase,
   별도 analytics SDK, `expo-build-properties`, `react-native-permissions`, tracking-transparency,
-  다른 consent 패키지는 추가하지 않았습니다.
+  다른 consent 패키지는 추가하지 않았습니다. PR #105는 이 의존성을 `16.5.0`으로 도입했고, PR
+  #107이 아래 "Android Kotlin 호환성"의 이유로 exact `16.3.4`로 내렸습니다 — caret/tilde 없는
+  정확한 버전 고정입니다.
 
 ### 동적 Expo 설정 (`apps/mobile/app.config.ts`)
 
@@ -39,6 +41,35 @@ PR #105이 구현한 Fast-track 1.0의 마지막 구현 vertical slice를 기록
   App ID가 없거나 무효하면 Google이 공식 문서화한 **sample/test** Android App ID
   (`ca-app-pub-3940256099942544~3347511713`)만 사용합니다 — 이 저장소가 스스로 지어낸 `ca-app-pub`
   값은 어디에도 없습니다.
+
+### Android Kotlin 호환성 (PR #107)
+
+PR #106 이후 Owner가 실행한 **첫 Android Development Build는 native Gradle 단계에서
+실패했습니다**. EAS project/package env 공급과 Android keystore 생성은 성공했고, 실패 지점은
+`react-native-google-mobile-ads:compileDebugKotlin`이었습니다.
+
+- 실패 조합: `react-native-google-mobile-ads@16.5.0` → Android Google Mobile Ads SDK
+  `25.4.0`(`play-services-ads-25.4.0-api.jar`). 이 artifact의 Kotlin metadata binary version은
+  `2.3.0`인데 현재 build가 기대하는 버전은 `2.1.0`이라 metadata 비호환 컴파일 실패가 납니다.
+- 이 SDK 버전은 패키지 자신의 `sdkVersions.android.googleMobileAds` 값으로 결정됩니다
+  (`android/build.gradle`이 그 값으로 `com.google.android.gms:play-services-ads`를 가져옵니다).
+  `16.4.0`이 이 값을 `25.4.0`으로 올렸고, 그 직전 릴리스인 `16.3.4`는 아직 `25.0.0`입니다.
+- 따라서 PR #107은 `react-native-google-mobile-ads`를 exact `16.3.4`로 고정하고 `pnpm-lock.yaml`을
+  그 변경만큼만 갱신하는 **dependency rollback으로 실패 원인의 dependency path를
+  remediation했습니다** — native build 성공 여부는 아직 증명되지 않았습니다. Kotlin 버전,
+  Gradle/AGP, Gradle wrapper, `expo-build-properties`, dependency resolution/force 블록,
+  Kotlin metadata skip 플래그, patch-package 같은 **native override는 추가하지 않았습니다**.
+- 필요한 광고 형식은 그대로 사용할 수 있습니다 — Today 배너가 쓰는
+  `BannerAdSize.LARGE_ANCHORED_ADAPTIVE_BANNER`는 `16.2.0`부터 제공되므로 `16.3.4`에 존재하며,
+  `AdsConsent`/`AdsConsentPrivacyOptionsRequirementStatus`/`mobileAds()`/`TestIds` 등 이 앱이
+  사용하는 나머지 API 표면과 Expo config plugin도 동일합니다.
+- AdMob runtime, UMP consent 흐름, privacy-options 노출 조건, 광고 gating과 targeting 금지 정책
+  같은 **동작상의 계약은 전혀 바뀌지 않았습니다**. `app.config.ts`, `eas.json`, `app.json`,
+  `.env.example`도 이 변경으로 수정되지 않았습니다.
+- Kotlin metadata 비호환은 JS 레이어에서 재현·검증할 수 없습니다. 첫 Development Build는 native
+  단계에서 실패했으며, 성공한 APK 산출/설치는 아직 완료되지 않았습니다. **PR #107 merge 후
+  Owner-approved native rebuild로 remediation의 실효성을 확인해야 합니다** — 그전까지 이
+  dependency rollback이 실제로 native build를 성공시키는지는 미확인 상태입니다.
 
 ### EAS 설정 (`apps/mobile/eas.json`)
 
@@ -154,7 +185,10 @@ request, Today 화면 하나에만 배너 1개.
     않았기 때문). **Play 대상 연령층에 아동이 포함된다면, release 전에 반드시 별도의
     Families/광고 정책 검토를 먼저 수행해야 합니다.**
 13. privacy-policy Play Console URL 등록
-14. Development/production 네이티브 build QA — Development APK build/설치는 아직 미실행
+14. Development/production 네이티브 build QA — 첫 Development Build 시도는 native 단계(Kotlin
+    metadata 비호환)에서 실패했고, PR #107이 그 dependency path를 remediation했습니다. 성공한
+    Development APK 산출/설치는 아직 완료되지 않았으며, PR #107 merge 후 Owner-approved
+    rebuild로 확인이 필요합니다
 15. 실제 광고/동의(consent) QA
 16. 승인된 실제 KMA/AirKorea live 검증
 

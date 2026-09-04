@@ -1,7 +1,7 @@
 # Life Weather 프로젝트 상태
 
 - 기준일: 2026-09-04
-- State baseline: `1e6acbb8c8ada402490be6f4d99064a6906af413` (PR #105 merge 이후 main)
+- State baseline: `60cdb275ebd4a67c919e82f1cd42b0c6e226144c` (PR #106 merge 이후 main)
 
 이 문서는 baseline 시점의 저장소 사실, 미완료 범위와 다음 Owner 결정을 기록합니다.
 
@@ -131,18 +131,32 @@
   production URL)은 이 PR에서 어디에도 commit되지 않았습니다. 실제 KMA/AirKorea endpoint 호출, native
   prebuild, EAS Build, Play/AdMob 콘솔 변경, production 배포는 이 PR에서 수행하지 않았습니다.
   자세한 내용은 [android-1.0-release-admob.md](./android-1.0-release-admob.md) 참고.
-- PR #106(**Draft**)은 Galaxy 실기기 Development Build를 위한 **EAS Development Build
-  repository setup** 단계입니다 — Owner가 외부에서 EAS project를 생성하고 현재 app과 link한
-  결과(`apps/mobile/app.json`의 Expo `owner`와 `extra.eas.projectId`)를 저장소에 반영하고,
-  `apps/mobile/eas.json`의 기존 `development` 프로필(`developmentClient: true`,
-  `distribution: internal`, `android.buildType: apk`)에 `environment: "development"`만
-  추가했습니다. 이로써 Owner가 EAS Development environment에 등록한
+- PR #106(**MERGED**, main `60cdb275ebd4a67c919e82f1cd42b0c6e226144c`)은 Galaxy 실기기
+  Development Build를 위한 **EAS Development Build repository setup** 단계입니다 — Owner가 외부에서
+  EAS project를 생성하고 현재 app과 link한 결과(`apps/mobile/app.json`의 Expo `owner`와
+  `extra.eas.projectId`)를 저장소에 반영하고, `apps/mobile/eas.json`의 기존 `development`
+  프로필(`developmentClient: true`, `distribution: internal`, `android.buildType: apk`)에
+  `environment: "development"`만 추가했습니다. 이로써 Owner가 EAS Development environment에 등록한
   `LIFE_WEATHER_ANDROID_PACKAGE`가 Development Build의 app config 평가에 공급됩니다 — Android
   package identifier는 여전히 PR #105의 build-time env 계약으로만 공급되며 `app.json`/
   `eas.json`/`.env.example` 어디에도 hard-code되어 있지 않습니다. 실제 Development APK/native
   build, `eas build`, credentials, prebuild, 외부 콘솔 변경은 이 PR에서 수행하지 않았습니다.
   실제 AdMob production ID, privacy-policy URL, production `EXPO_PUBLIC_API_BASE_URL`,
   production environment 값과 Play release는 여전히 미완료 Owner gate입니다.
+- PR #107(**Draft**)은 PR #106 이후 실행한 첫 Android Development Build 시도가 native Gradle
+  단계에서 실패한 데 대한 targeted remediation입니다. EAS project/package env 공급과 Android
+  keystore 생성은 성공했지만, build는 `react-native-google-mobile-ads:compileDebugKotlin`에서
+  중단됐습니다 — `react-native-google-mobile-ads@16.5.0`이 가져오는 Android Google Mobile Ads
+  SDK 25.4.0(`play-services-ads-25.4.0-api.jar`)의 Kotlin metadata binary version이 `2.3.0`인
+  반면 현재 build가 기대하는 버전은 `2.1.0`이기 때문입니다. 이 PR은 Kotlin/Gradle/AGP/native
+  override 없이 `apps/mobile/package.json`의 `react-native-google-mobile-ads`를 exact `16.3.4`로
+  내리고 `pnpm-lock.yaml`을 그 변경만큼만 갱신합니다 — 16.3.4의 Android Google Mobile Ads SDK는
+  25.0.0이며(25.4.0은 16.4.0에서 도입), Today 배너가 쓰는
+  `BannerAdSize.LARGE_ANCHORED_ADAPTIVE_BANNER`를 포함한 기존 ads/UMP API 표면과 PR #105/#106의
+  런타임·설정 계약은 그대로입니다. AdMob runtime/UMP/policy 동작, `app.config.ts`, `eas.json`,
+  `app.json`은 변경되지 않았습니다. 실제 Development APK는 여전히 존재하지 않으며, native
+  rebuild와 EAS Build 재시도는 merge 이후 Owner gate입니다. 자세한 내용은
+  [android-1.0-release-admob.md](./android-1.0-release-admob.md) 참고.
 
 ## Fast-track 1.0 활성 계획
 
@@ -175,8 +189,12 @@ Mobile freshness/stale handling은 **PR #104**(MERGED)로 구현되었습니다 
 ### 코드 완료 이후 Owner gate (PR 아님)
 
 1. production/public API base URL 설정
-2. Development Build 실행 — EAS project link와 Development environment의 Android package 변수
-   등록은 완료됐고, 실제 Development APK build/설치는 아직 미실행
+2. Development Build 실행 — EAS project link, Development environment의 Android package 변수
+   등록과 Android keystore 생성은 완료됐지만, 첫 build 시도는 PR #107이 대상으로 하는 AdMob
+   Kotlin metadata 비호환으로 native 단계에서 실패했습니다. PR #107은 그 원인이 된 dependency
+   path를 remediation했으나 native build 성공 여부는 아직 증명되지 않았습니다 — 성공한
+   Development APK build/설치는 여전히 완료되지 않았으며, PR #107 merge 이후 Owner-approved
+   rebuild로 실효성 확인이 필요합니다
 3. 실제 Android 실기기 QA
 4. 승인된 실제 KMA/AirKorea endpoint 검증
 5. 광고/동의 QA
