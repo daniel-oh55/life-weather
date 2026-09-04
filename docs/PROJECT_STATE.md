@@ -191,8 +191,10 @@ Mobile freshness/stale handling은 **PR #104**(MERGED)로 구현되었습니다 
 1. production/public API base URL 설정
 2. Development Build 실행 — EAS project link, Development environment의 Android package 변수
    등록과 Android keystore 생성은 완료됐지만, 첫 build 시도는 PR #107이 대상으로 하는 AdMob
-   Kotlin metadata 비호환으로 native 단계에서 실패했습니다. 실제 Development APK build/설치는
-   여전히 미실행이며 PR #107 merge 이후 재시도가 필요합니다
+   Kotlin metadata 비호환으로 native 단계에서 실패했습니다. PR #107은 그 원인이 된 dependency
+   path를 remediation했으나 native build 성공 여부는 아직 증명되지 않았습니다 — 성공한
+   Development APK build/설치는 여전히 완료되지 않았으며, PR #107 merge 이후 Owner-approved
+   rebuild로 실효성 확인이 필요합니다
 3. 실제 Android 실기기 QA
 4. 승인된 실제 KMA/AirKorea endpoint 검증
 5. 광고/동의 QA
